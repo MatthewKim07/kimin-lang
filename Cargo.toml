@@ -1,0 +1,16 @@
+[package]
+name = "forge"
+version = "0.1.0"
+edition = "2021"
+description = "The Forge programming language - Milestone 1"
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[lib]
+name = "forge"
+path = "src/lib.rs"
