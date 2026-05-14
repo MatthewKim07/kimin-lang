@@ -38,9 +38,10 @@ impl Env {
 
     /// Define or shadow a variable in the current (innermost) scope.
     pub fn set(&mut self, name: String, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, value);
-        }
+        self.scopes
+            .last_mut()
+            .expect("scope stack is empty — this is a bug in Forge")
+            .insert(name, value);
     }
 }
 

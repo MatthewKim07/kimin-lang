@@ -4,7 +4,7 @@ use crate::error::RuntimeError;
 use crate::value::Value;
 
 pub struct Interpreter {
-    pub env: Env,
+    env: Env,
 }
 
 impl Interpreter {
@@ -19,7 +19,6 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Look up a variable by name (used in tests).
     pub fn get_var(&self, name: &str) -> Option<Value> {
         self.env.get(name)
     }

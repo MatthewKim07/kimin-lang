@@ -287,3 +287,106 @@ fn check_missing_condition_in_if() {
     // `if { }` — `{` is not a valid expression
     assert!(matches!(check("if { }"), Err(ForgeError::Parse(_))));
 }
+
+// --- string operations ---
+
+#[test]
+fn string_concatenation() {
+    let interp = run(r#"let s = "hello" + " world""#).unwrap();
+    assert_eq!(
+        interp.get_var("s"),
+        Some(Value::Str("hello world".to_string()))
+    );
+}
+
+#[test]
+fn string_plus_number_is_error() {
+    assert!(matches!(
+        run(r#"let x = "hello" + 1"#),
+        Err(ForgeError::Runtime(_))
+    ));
+}
+
+// --- equality and comparison return values ---
+
+#[test]
+fn equality_same_values_is_true() {
+    let interp = run("let r = 1 == 1").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn equality_different_values_is_false() {
+    let interp = run("let r = 1 == 2").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn inequality_different_values_is_true() {
+    let interp = run("let r = 1 != 2").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn equality_across_types_is_false_not_error() {
+    // 1 == "1" should be false, not a runtime error
+    let interp = run(r#"let r = 1 == "1""#).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+// --- truthiness ---
+
+#[test]
+fn truthy_zero_is_truthy() {
+    // Only false and nil are falsy; 0 is truthy
+    run("if 0 { let x = 1 }").unwrap();
+}
+
+#[test]
+fn truthy_not_on_number_gives_false() {
+    // !0 — 0 is truthy, so !truthy == false
+    let interp = run("let r = !0").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn truthy_not_on_string_gives_false() {
+    let interp = run(r#"let r = !"nonempty""#).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+// --- nested blocks ---
+
+#[test]
+fn nested_blocks_scope_isolation() {
+    let interp = run("let x = 1\n{ let x = 2\n  { let x = 3 }\n}").unwrap();
+    // After all blocks close, outer x is still 1
+    assert_eq!(interp.get_var("x"), Some(Value::Number(1.0)));
+}
+
+// --- lex errors ---
+
+#[test]
+fn lex_error_unterminated_string() {
+    assert!(matches!(
+        run(r#"let x = "unterminated"#),
+        Err(ForgeError::Lex(_))
+    ));
+}
+
+#[test]
+fn lex_error_unexpected_char() {
+    assert!(matches!(run("let x = @5"), Err(ForgeError::Lex(_))));
+}
+
+// --- parse errors ---
+
+#[test]
+fn parse_error_unclosed_paren() {
+    assert!(matches!(check("let x = (1 + 2"), Err(ForgeError::Parse(_))));
+}
+
+#[test]
+fn parse_error_missing_closing_brace() {
+    assert!(matches!(check("{ let x = 1"), Err(ForgeError::Parse(_))));
+}

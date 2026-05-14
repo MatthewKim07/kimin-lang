@@ -39,7 +39,7 @@ pub enum TokenKind {
 }
 
 /// Source location for error reporting and future span-aware features.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub line: usize,
     pub col: usize,

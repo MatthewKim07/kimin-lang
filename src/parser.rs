@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
 use crate::error::ParseError;
-use crate::token::{Token, TokenKind};
+use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
@@ -58,13 +58,11 @@ impl Parser {
     fn parse_let(&mut self) -> Result<Stmt, ParseError> {
         self.advance(); // consume `let`
 
-        let (name, span) = match self.current().clone() {
-            Token {
-                kind: TokenKind::Ident(n),
-                span,
-            } => (n, span),
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
             _ => return Err(self.error("expected identifier after 'let'")),
         };
+        let span = self.current_span();
         self.advance(); // consume identifier
 
         self.expect_kind(TokenKind::Eq, "expected '=' after variable name")?;
@@ -260,8 +258,8 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
-    fn current_span(&self) -> crate::token::Span {
-        self.tokens[self.pos].span.clone()
+    fn current_span(&self) -> Span {
+        self.tokens[self.pos].span
     }
 
     fn advance(&mut self) {
