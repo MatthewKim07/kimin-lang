@@ -144,3 +144,7 @@ vite.config.ts.timestamp-*
 
 # Rust build artifacts
 /target/
+
+# Local AI assistant notes
+CLAUDE.md
+AGENTS.md
