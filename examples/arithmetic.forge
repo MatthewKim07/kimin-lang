@@ -1,0 +1,10 @@
+// Operator precedence: * before +
+print(1 + 2 * 3)
+
+// Grouping overrides precedence
+print((1 + 2) * 3)
+
+// More arithmetic
+let a = 100 / 4
+let b = a - 3
+print(b)

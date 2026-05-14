@@ -1,0 +1,19 @@
+// Blocks create a new scope.
+let x = 5
+
+{
+  let inner = 99
+  print(inner)   // 99
+  print(x)       // 5 — outer variable is readable
+}
+
+// inner is gone here; x is still 5
+print(x)
+
+// Shadowing: inner block's x does not affect outer x
+{
+  let x = 1000
+  print(x)  // 1000
+}
+
+print(x)  // still 5

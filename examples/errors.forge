@@ -1,0 +1,20 @@
+// errors.forge — demonstrates Forge error messages.
+//
+// Uncomment each block to see the corresponding error.
+
+// RuntimeError: undefined variable 'z'
+// print(z)
+
+// RuntimeError: cannot add Number and Bool
+// let bad = 1 + true
+
+// RuntimeError: division by zero
+// let oops = 10 / 0
+
+// ParseError: expected identifier after 'let'
+// let = 5
+
+// For now run this file cleanly:
+let x = 10
+print("No errors. Forge is healthy.")
+print(x)

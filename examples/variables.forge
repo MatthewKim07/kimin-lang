@@ -1,0 +1,4 @@
+let name = "Matthew"
+let score = 42
+print(name)
+print(score)
