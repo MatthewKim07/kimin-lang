@@ -1,13 +1,13 @@
 use std::io::{self, Write};
 
-use crate::error::ForgeError;
+use crate::error::KiminError;
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
 pub fn run_repl() {
     let mut interp = Interpreter::new();
-    println!("Forge REPL v{}", env!("CARGO_PKG_VERSION"));
+    println!("Kimin REPL v{}", env!("CARGO_PKG_VERSION"));
     println!("Type 'exit' or press Ctrl-C to quit.\n");
 
     loop {
@@ -38,7 +38,7 @@ pub fn run_repl() {
     }
 }
 
-fn exec_line(source: &str, interp: &mut Interpreter) -> Result<(), ForgeError> {
+fn exec_line(source: &str, interp: &mut Interpreter) -> Result<(), KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
     let stmts = Parser::new(tokens).parse()?;
     interp.run(&stmts)?;

@@ -40,7 +40,7 @@ impl Env {
     pub fn set(&mut self, name: String, value: Value) {
         self.scopes
             .last_mut()
-            .expect("scope stack is empty — this is a bug in Forge")
+            .expect("scope stack is empty — this is a bug in Kimin")
             .insert(name, value);
     }
 }

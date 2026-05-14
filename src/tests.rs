@@ -1,5 +1,5 @@
 use crate::{
-    error::ForgeError, interpreter::Interpreter, lexer::Lexer, parser::Parser, token::TokenKind,
+    error::KiminError, interpreter::Interpreter, lexer::Lexer, parser::Parser, token::TokenKind,
     value::Value,
 };
 
@@ -14,7 +14,7 @@ fn tokenize(source: &str) -> Vec<TokenKind> {
         .collect()
 }
 
-fn run(source: &str) -> Result<Interpreter, ForgeError> {
+fn run(source: &str) -> Result<Interpreter, KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
     let stmts = Parser::new(tokens).parse()?;
     let mut interp = Interpreter::new();
@@ -22,7 +22,7 @@ fn run(source: &str) -> Result<Interpreter, ForgeError> {
     Ok(interp)
 }
 
-fn check(source: &str) -> Result<(), ForgeError> {
+fn check(source: &str) -> Result<(), KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
     Parser::new(tokens).parse()?;
     Ok(())
@@ -159,10 +159,10 @@ fn let_number() {
 
 #[test]
 fn let_string() {
-    let interp = run(r#"let name = "Forge""#).unwrap();
+    let interp = run(r#"let name = "Kimin""#).unwrap();
     assert_eq!(
         interp.get_var("name"),
-        Some(Value::Str("Forge".to_string()))
+        Some(Value::Str("Kimin".to_string()))
     );
 }
 
@@ -231,7 +231,7 @@ fn if_comparison_true_branch() {
 #[test]
 fn error_undefined_variable() {
     match run("print(not_defined)") {
-        Err(ForgeError::Runtime(e)) => {
+        Err(KiminError::Runtime(e)) => {
             assert!(
                 e.msg.contains("not_defined"),
                 "expected 'not_defined' in: {}",
@@ -246,7 +246,7 @@ fn error_undefined_variable() {
 #[test]
 fn error_add_number_and_bool() {
     match run("let x = 1 + true") {
-        Err(ForgeError::Runtime(e)) => {
+        Err(KiminError::Runtime(e)) => {
             assert!(
                 e.msg.contains("Number") && e.msg.contains("Bool"),
                 "expected type names in error, got: {}",
@@ -261,7 +261,7 @@ fn error_add_number_and_bool() {
 #[test]
 fn error_division_by_zero() {
     let result = run("let x = 5 / 0");
-    assert!(matches!(result, Err(ForgeError::Runtime(_))));
+    assert!(matches!(result, Err(KiminError::Runtime(_))));
 }
 
 // --- check command (parse only) ---
@@ -279,13 +279,13 @@ fn check_valid_if_else() {
 #[test]
 fn check_missing_ident_after_let() {
     // `let = 5` is a syntax error
-    assert!(matches!(check("let = 5"), Err(ForgeError::Parse(_))));
+    assert!(matches!(check("let = 5"), Err(KiminError::Parse(_))));
 }
 
 #[test]
 fn check_missing_condition_in_if() {
     // `if { }` — `{` is not a valid expression
-    assert!(matches!(check("if { }"), Err(ForgeError::Parse(_))));
+    assert!(matches!(check("if { }"), Err(KiminError::Parse(_))));
 }
 
 // --- string operations ---
@@ -303,7 +303,7 @@ fn string_concatenation() {
 fn string_plus_number_is_error() {
     assert!(matches!(
         run(r#"let x = "hello" + 1"#),
-        Err(ForgeError::Runtime(_))
+        Err(KiminError::Runtime(_))
     ));
 }
 
@@ -370,23 +370,23 @@ fn nested_blocks_scope_isolation() {
 fn lex_error_unterminated_string() {
     assert!(matches!(
         run(r#"let x = "unterminated"#),
-        Err(ForgeError::Lex(_))
+        Err(KiminError::Lex(_))
     ));
 }
 
 #[test]
 fn lex_error_unexpected_char() {
-    assert!(matches!(run("let x = @5"), Err(ForgeError::Lex(_))));
+    assert!(matches!(run("let x = @5"), Err(KiminError::Lex(_))));
 }
 
 // --- parse errors ---
 
 #[test]
 fn parse_error_unclosed_paren() {
-    assert!(matches!(check("let x = (1 + 2"), Err(ForgeError::Parse(_))));
+    assert!(matches!(check("let x = (1 + 2"), Err(KiminError::Parse(_))));
 }
 
 #[test]
 fn parse_error_missing_closing_brace() {
-    assert!(matches!(check("{ let x = 1"), Err(ForgeError::Parse(_))));
+    assert!(matches!(check("{ let x = 1"), Err(KiminError::Parse(_))));
 }

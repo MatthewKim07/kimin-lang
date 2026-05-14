@@ -47,36 +47,36 @@ impl fmt::Display for RuntimeError {
 
 /// Top-level error type covering all phases of execution.
 #[derive(Debug)]
-pub enum ForgeError {
+pub enum KiminError {
     Lex(LexError),
     Parse(ParseError),
     Runtime(RuntimeError),
 }
 
-impl fmt::Display for ForgeError {
+impl fmt::Display for KiminError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ForgeError::Lex(e) => write!(f, "{}", e),
-            ForgeError::Parse(e) => write!(f, "{}", e),
-            ForgeError::Runtime(e) => write!(f, "{}", e),
+            KiminError::Lex(e) => write!(f, "{}", e),
+            KiminError::Parse(e) => write!(f, "{}", e),
+            KiminError::Runtime(e) => write!(f, "{}", e),
         }
     }
 }
 
-impl From<LexError> for ForgeError {
+impl From<LexError> for KiminError {
     fn from(e: LexError) -> Self {
-        ForgeError::Lex(e)
+        KiminError::Lex(e)
     }
 }
 
-impl From<ParseError> for ForgeError {
+impl From<ParseError> for KiminError {
     fn from(e: ParseError) -> Self {
-        ForgeError::Parse(e)
+        KiminError::Parse(e)
     }
 }
 
-impl From<RuntimeError> for ForgeError {
+impl From<RuntimeError> for KiminError {
     fn from(e: RuntimeError) -> Self {
-        ForgeError::Runtime(e)
+        KiminError::Runtime(e)
     }
 }

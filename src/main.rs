@@ -3,12 +3,12 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 
-use forge::{
-    error::ForgeError, interpreter::Interpreter, lexer::Lexer, parser::Parser as ForgeParser, repl,
+use kimin::{
+    error::KiminError, interpreter::Interpreter, lexer::Lexer, parser::Parser as KiminParser, repl,
 };
 
 #[derive(Parser)]
-#[command(name = "forge", version, about = "The Forge programming language")]
+#[command(name = "kimin", version, about = "The Kimin programming language")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -16,14 +16,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Execute a .forge source file
+    /// Execute a .kimin source file
     Run {
-        /// Path to the .forge file
+        /// Path to the .kimin file
         file: String,
     },
-    /// Check syntax of a .forge file without executing it
+    /// Check syntax of a .kimin file without executing it
     Check {
-        /// Path to the .forge file
+        /// Path to the .kimin file
         file: String,
     },
     /// Start the interactive REPL
@@ -64,16 +64,16 @@ fn read_file(path: &str) -> String {
     })
 }
 
-fn run_source(source: &str) -> Result<(), ForgeError> {
+fn run_source(source: &str) -> Result<(), KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
-    let stmts = ForgeParser::new(tokens).parse()?;
+    let stmts = KiminParser::new(tokens).parse()?;
     let mut interp = Interpreter::new();
     interp.run(&stmts)?;
     Ok(())
 }
 
-fn check_source(source: &str) -> Result<(), ForgeError> {
+fn check_source(source: &str) -> Result<(), KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
-    ForgeParser::new(tokens).parse()?;
+    KiminParser::new(tokens).parse()?;
     Ok(())
 }

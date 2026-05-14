@@ -1,4 +1,4 @@
-# Forge Language Specification — Milestone 1
+# Kimin Language Specification — Milestone 1
 
 This document describes the syntax and semantics implemented in Milestone 1.
 
@@ -10,7 +10,7 @@ This document describes the syntax and semantics implemented in Milestone 1.
 
 Line comments start with `//` and extend to end of line.
 
-```forge
+```kimin
 // This is a comment
 let x = 1  // inline comment
 ```
@@ -23,7 +23,7 @@ Spaces, tabs, carriage returns, and newlines are all treated as whitespace and i
 
 **Numbers** — integer and floating-point:
 
-```forge
+```kimin
 42
 3.14
 0.5
@@ -33,14 +33,14 @@ Internally stored as `f64`. Whole numbers are printed without a decimal point.
 
 **Strings** — double-quoted, single-line:
 
-```forge
+```kimin
 "hello"
 "Matthew"
 ```
 
 **Booleans:**
 
-```forge
+```kimin
 true
 false
 ```
@@ -108,7 +108,7 @@ let  if  else  print  true  false
 
 ### 3.2 Arithmetic
 
-```forge
+```kimin
 1 + 2 * 3    // 7  (multiplication before addition)
 (1 + 2) * 3  // 9
 -5           // unary negation
@@ -116,13 +116,13 @@ let  if  else  print  true  false
 
 String concatenation uses `+`:
 
-```forge
+```kimin
 "hello" + " world"  // "hello world"
 ```
 
 ### 3.3 Comparisons
 
-```forge
+```kimin
 score > 10
 x == 5
 name != "error"
@@ -132,14 +132,14 @@ All comparison operators return `Bool`.
 
 ### 3.4 Unary Operators
 
-```forge
+```kimin
 -x       // numeric negation
 !cond    // logical NOT; truthy = non-nil, non-false
 ```
 
 ### 3.5 Variables
 
-```forge
+```kimin
 score
 name
 ```
@@ -148,7 +148,7 @@ Reading an undefined variable is a `RuntimeError`.
 
 ### 3.6 Grouping
 
-```forge
+```kimin
 (1 + 2) * 3
 ```
 
@@ -160,13 +160,13 @@ Programs are sequences of statements. No semicolons required.
 
 ### 4.1 Variable Declaration
 
-```forge
+```kimin
 let <name> = <expr>
 ```
 
 Declares `<name>` in the current scope. Re-declaring in the same scope shadows the previous binding.
 
-```forge
+```kimin
 let x = 10
 let name = "Matthew"
 let flag = true
@@ -174,21 +174,21 @@ let flag = true
 
 ### 4.2 Print
 
-```forge
+```kimin
 print(<expr>)
 ```
 
 Evaluates `<expr>` and writes it to stdout followed by a newline. `print` is a statement keyword, not a user-definable function.
 
-```forge
-print("Hello from Forge")
+```kimin
+print("Hello from Kimin")
 print(1 + 2)
 print(x)
 ```
 
 ### 4.3 Block
 
-```forge
+```kimin
 {
   <stmt>*
 }
@@ -196,7 +196,7 @@ print(x)
 
 Creates a new lexical scope. Variables declared inside the block are not visible outside.
 
-```forge
+```kimin
 let x = 5
 {
   let inner = 99
@@ -208,7 +208,7 @@ print(x)        // still 5
 
 ### 4.4 If / Else
 
-```forge
+```kimin
 if <expr> {
   <stmts>
 }
@@ -222,7 +222,7 @@ if <expr> {
 
 The condition is truthy if it is not `false` and not `nil`. Braces are required.
 
-```forge
+```kimin
 if score > 10 {
   print("high")
 } else {
@@ -234,7 +234,7 @@ if score > 10 {
 
 Any expression used as a statement; its value is discarded.
 
-```forge
+```kimin
 1 + 1   // evaluated, result dropped
 ```
 
@@ -242,7 +242,7 @@ Any expression used as a statement; its value is discarded.
 
 ## 5. Scoping Rules
 
-Forge uses **lexical (static) scoping**:
+Kimin uses **lexical (static) scoping**:
 
 - Each `{...}` block creates a new scope.
 - A name lookup walks from the innermost scope outward.

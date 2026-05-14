@@ -1,4 +1,4 @@
-// errors.forge — demonstrates Forge error messages.
+// errors.forge — demonstrates Kimin error messages.
 //
 // Uncomment each block to see the corresponding error.
 
@@ -16,5 +16,5 @@
 
 // For now run this file cleanly:
 let x = 10
-print("No errors. Forge is healthy.")
+print("No errors. Kimin is healthy.")
 print(x)

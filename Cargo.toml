@@ -1,16 +1,16 @@
 [package]
-name = "forge"
+name = "kimin"
 version = "0.1.0"
 edition = "2021"
-description = "The Forge programming language - Milestone 1"
+description = "The Kimin programming language - Milestone 1"
 
 [[bin]]
-name = "forge"
+name = "kimin"
 path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 
 [lib]
-name = "forge"
+name = "kimin"
 path = "src/lib.rs"

@@ -1,6 +1,6 @@
-# Forge
+# Kimin
 
-An experimental programming language designed by Matthew Kim. Forge is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
+An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
 This repository contains **Milestone 1**: a working tree-walk interpreter written in Rust.
 
@@ -35,7 +35,7 @@ cd kimin-lang
 cargo build --release
 ```
 
-The binary is at `target/release/forge`.
+The binary is at `target/release/kimin`.
 
 ---
 
@@ -44,13 +44,13 @@ The binary is at `target/release/forge`.
 ### Run a file
 
 ```sh
-cargo run -- run examples/hello.forge
+cargo run -- run examples/hello.kimin
 ```
 
 ### Check syntax (no execution)
 
 ```sh
-cargo run -- check examples/conditionals.forge
+cargo run -- check examples/conditionals.kimin
 ```
 
 ### Start the REPL
@@ -63,19 +63,19 @@ cargo run -- repl
 
 ## Examples
 
-### hello.forge
+### hello.kimin
 
-```forge
-print("Hello from Forge")
+```kimin
+print("Hello from Kimin")
 ```
 
 ```
-Hello from Forge
+Hello from Kimin
 ```
 
-### arithmetic.forge
+### arithmetic.kimin
 
-```forge
+```kimin
 print(1 + 2 * 3)
 print((1 + 2) * 3)
 ```
@@ -85,9 +85,9 @@ print((1 + 2) * 3)
 9
 ```
 
-### variables.forge
+### variables.kimin
 
-```forge
+```kimin
 let name = "Matthew"
 let score = 42
 print(name)
@@ -99,9 +99,9 @@ Matthew
 42
 ```
 
-### conditionals.forge
+### conditionals.kimin
 
-```forge
+```kimin
 let score = 12
 
 if score > 10 {
@@ -115,9 +115,9 @@ if score > 10 {
 high
 ```
 
-### blocks.forge
+### blocks.kimin
 
-```forge
+```kimin
 let x = 5
 
 {
@@ -166,12 +166,12 @@ src/
   repl.rs         Interactive REPL
   tests.rs        Unit tests
 examples/
-  hello.forge
-  arithmetic.forge
-  variables.forge
-  conditionals.forge
-  blocks.forge
-  errors.forge
+  hello.kimin
+  arithmetic.kimin
+  variables.kimin
+  conditionals.kimin
+  blocks.kimin
+  errors.kimin
 ```
 
 ---
