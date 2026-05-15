@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 1
+# Kimin Language Specification — Milestone 2A
 
-This document describes the syntax and semantics implemented in Milestone 1.
+This document describes the syntax and semantics implemented through Milestone 2A.
 
 ---
 
@@ -56,7 +56,7 @@ foo  bar_baz  _x  score1
 ### 1.5 Keywords
 
 ```
-let  if  else  print  true  false
+let  if  else  print  fn  return  true  false
 ```
 
 ### 1.6 Operators and Delimiters
@@ -79,6 +79,7 @@ let  if  else  print  true  false
 | `)`   | Close group |
 | `{`   | Open block |
 | `}`   | Close block |
+| `,`   | Parameter / argument separator |
 
 ---
 
@@ -242,12 +243,89 @@ Any expression used as a statement; its value is discarded.
 
 ## 5. Scoping Rules
 
-Kimin uses **lexical (static) scoping**:
+Kimin uses **lexical (static) scoping** for variables and blocks:
 
 - Each `{...}` block creates a new scope.
 - A name lookup walks from the innermost scope outward.
 - Variables in inner scopes **shadow** outer ones without mutating them.
 - Variables do not leak out of the block they were declared in.
+
+---
+
+## 5B. Functions (Milestone 2A)
+
+### 5B.1 Function Declarations
+
+```kimin
+fn name(param1, param2) {
+  statements
+}
+```
+
+- Declared at any statement position (top level or inside a block).
+- Parameters are identifiers, comma-separated. Zero parameters allowed.
+- Binds the function name in the current scope as a `Function` value.
+
+```kimin
+fn greet(name) {
+  print("Hello, " + name)
+}
+
+fn add(a, b) {
+  return a + b
+}
+
+fn zero() {
+  return 0
+}
+```
+
+### 5B.2 Function Calls
+
+```kimin
+name(arg1, arg2)
+name()
+add(1, 2)
+square(add(2, 3))
+```
+
+- Call expressions have the highest expression precedence (postfix).
+- Arguments are evaluated left to right before the body executes.
+- Nested calls work: `square(add(2, 3))` → `square(5)` → `25`.
+- Calling a non-function value: `RuntimeError: attempted to call non-function value Number`
+- Wrong argument count: `RuntimeError: function 'add' expected 2 arguments but got 1`
+
+### 5B.3 Return Statement
+
+```kimin
+return expr
+return
+```
+
+- `return expr` exits the current function and yields `expr` as the call result.
+- Bare `return` exits the function and yields `nil`.
+- A function that falls off the end without a `return` also yields `nil`.
+- `return` propagates through nested blocks and `if` statements until it exits the function.
+- `return` at the top level (outside any function): `RuntimeError: cannot return outside of a function`
+
+### 5B.4 Recursion
+
+Recursive calls are supported. The function name is bound before the body executes, so it is visible in recursive calls.
+
+```kimin
+fn fact(n) {
+  if n <= 1 {
+    return 1
+  }
+  return n * fact(n - 1)
+}
+
+print(fact(5))  // 120
+```
+
+### 5B.5 Scoping Notes (Milestone 2A)
+
+Function calls push a new scope on the existing scope stack. Parameters and locals are visible only within the call. The global scope (including function names) remains visible through the stack. Full closure capture is not yet implemented — see Milestone 2B.
 
 ---
 
@@ -277,6 +355,9 @@ RuntimeError: undefined variable 'x'
 RuntimeError: cannot add Number and Bool
 RuntimeError: cannot apply '-' to String and Number
 RuntimeError: division by zero
+RuntimeError: function 'add' expected 2 arguments but got 1
+RuntimeError: attempted to call non-function value Number
+RuntimeError: cannot return outside of a function
 ```
 
 ---
@@ -284,19 +365,25 @@ RuntimeError: division by zero
 ## 7. Grammar (EBNF)
 
 ```
-program    = stmt* EOF
-stmt       = let_stmt | print_stmt | if_stmt | block | expr_stmt
-let_stmt   = "let" IDENT "=" expr
-print_stmt = "print" "(" expr ")"
-if_stmt    = "if" expr block ("else" block)?
-block      = "{" stmt* "}"
-expr_stmt  = expr
+program     = stmt* EOF
+stmt        = fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+fn_decl     = "fn" IDENT "(" params ")" fn_body
+return_stmt = "return" expr?
+let_stmt    = "let" IDENT "=" expr
+print_stmt  = "print" "(" expr ")"
+if_stmt     = "if" expr block ("else" block)?
+block       = "{" stmt* "}"
+fn_body     = "{" stmt* "}"
+params      = (IDENT ("," IDENT)*)?
+expr_stmt   = expr
 
-expr       = equality
-equality   = comparison (("==" | "!=") comparison)*
-comparison = term (("<" | "<=" | ">" | ">=") term)*
-term       = factor (("+" | "-") factor)*
-factor     = unary (("*" | "/") unary)*
-unary      = ("-" | "!") unary | primary
-primary    = NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
+expr        = equality
+equality    = comparison (("==" | "!=") comparison)*
+comparison  = term (("<" | "<=" | ">" | ">=") term)*
+term        = factor (("+" | "-") factor)*
+factor      = unary (("*" | "/") unary)*
+unary       = ("-" | "!") unary | call
+call        = primary ("(" args ")")*
+primary     = NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
+args        = (expr ("," expr)*)?
 ```
