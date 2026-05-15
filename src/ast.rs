@@ -51,6 +51,9 @@ pub enum BinaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeAnnotation {
     Number,
+    /// A numeric value annotated with a physical unit (e.g., `meters`, `seconds`).
+    /// The String is the canonical unit name as returned by the parser's unit registry.
+    NumberWithUnit(String),
     Text,
     Bool,
     Nil,

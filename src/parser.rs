@@ -126,7 +126,7 @@ impl Parser {
         Ok(Param { name, ty, span })
     }
 
-    /// Parse a type annotation identifier: Number | Text | Bool | Nil
+    /// Parse a type annotation: Number | Text | Bool | Nil | <unit name>
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, ParseError> {
         if matches!(self.current_kind(), TokenKind::Ident(_)) {
             let span = self.current_span();
@@ -140,17 +140,23 @@ impl Parser {
                 "Text" => Ok(TypeAnnotation::Text),
                 "Bool" => Ok(TypeAnnotation::Bool),
                 "Nil" => Ok(TypeAnnotation::Nil),
-                other => Err(ParseError {
-                    msg: format!(
-                        "unknown type '{}', expected Number, Text, Bool, or Nil",
-                        other
-                    ),
-                    line: span.line,
-                    col: span.col,
-                }),
+                other => {
+                    if let Some(canonical) = resolve_unit(other) {
+                        Ok(TypeAnnotation::NumberWithUnit(canonical.to_string()))
+                    } else {
+                        Err(ParseError {
+                            msg: format!(
+                                "unknown type '{}'; expected Number, Text, Bool, Nil, or a known unit (meters, seconds, kilograms, ...)",
+                                other
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                }
             }
         } else {
-            Err(self.error("expected type annotation (Number, Text, Bool, or Nil)"))
+            Err(self.error("expected type annotation (Number, Text, Bool, Nil, or a known unit)"))
         }
     }
 
@@ -472,5 +478,40 @@ impl Parser {
             line: span.line,
             col: span.col,
         }
+    }
+}
+
+/// Returns the canonical unit name if `name` is a known unit name or alias, else None.
+///
+/// Supported units and their aliases:
+///   meters    (m)
+///   seconds   (s)
+///   kilograms (kg)
+///   amperes   (A, amps)
+///   kelvin    (K)
+///   moles     (mol)
+///   candela   (cd)
+///   radians   (rad)
+///   degrees   (deg)
+///   volts     (V)
+///   watts     (W)
+///   joules    (J)
+///   newtons   (N)
+pub fn resolve_unit(name: &str) -> Option<&'static str> {
+    match name {
+        "m" | "meters" => Some("meters"),
+        "s" | "seconds" => Some("seconds"),
+        "kg" | "kilograms" => Some("kilograms"),
+        "A" | "amps" | "amperes" => Some("amperes"),
+        "K" | "kelvin" => Some("kelvin"),
+        "mol" | "moles" => Some("moles"),
+        "cd" | "candela" => Some("candela"),
+        "rad" | "radians" => Some("radians"),
+        "deg" | "degrees" => Some("degrees"),
+        "V" | "volts" => Some("volts"),
+        "W" | "watts" => Some("watts"),
+        "J" | "joules" => Some("joules"),
+        "N" | "newtons" => Some("newtons"),
+        _ => None,
     }
 }
