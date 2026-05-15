@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 3
+# Kimin Language Specification — Milestone 4
 
-This document describes the syntax and semantics implemented through Milestone 3.
+This document describes the syntax and semantics implemented through Milestone 4.
 
 ---
 
@@ -97,11 +97,71 @@ let  if  else  print  fn  return  true  false
 | Nil      | (runtime only)      | No literal syntax |
 | Function | (runtime only)      | `FunctionValue` in the interpreter |
 
-### 2.2 Static types (Milestone 3)
+### 2.2 Static types (Milestones 3–4)
 
-The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, or `Nil`.
+The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, or any unit name from the unit registry.
 
 Functions without a return type annotation are assigned `Unknown` — the gradual-typing escape hatch. Operations involving an `Unknown` value propagate `Unknown` without error, so unannotated code remains valid.
+
+### 2.3 Unit types (Milestone 4)
+
+A unit type is a `Number` annotated with a physical unit. Unit types are **static-only**: the runtime sees plain `f64` values; no unit information is stored at execution time.
+
+```kimin
+let distance: meters = 10   // type is meters (a NumberWithUnit)
+let time: seconds = 2       // type is seconds
+```
+
+**Unit registry** — recognized unit names and their canonical forms:
+
+| Annotation(s) | Canonical name |
+|---------------|---------------|
+| `m`, `meters` | `meters` |
+| `s`, `seconds` | `seconds` |
+| `kg`, `kilograms` | `kilograms` |
+| `A`, `amps`, `amperes` | `amperes` |
+| `K`, `kelvin` | `kelvin` |
+| `mol`, `moles` | `moles` |
+| `cd`, `candela` | `candela` |
+| `rad`, `radians` | `radians` |
+| `deg`, `degrees` | `degrees` |
+| `V`, `volts` | `volts` |
+| `W`, `watts` | `watts` |
+| `J`, `joules` | `joules` |
+| `N`, `newtons` | `newtons` |
+
+**Promotion** — a plain `Number` literal or expression satisfies a unit annotation:
+
+```kimin
+let d: meters = 10      // ok: Number literal promoted to meters
+let d2: meters = d      // ok: meters assigned to meters
+// let n: Number = d    // TypeError: cannot strip unit
+```
+
+**Unit arithmetic rules:**
+
+| Operation | Result |
+|-----------|--------|
+| `u + u` (same unit) | `u` |
+| `u + v` (different units) | TypeError |
+| `u - u` (same unit) | `u` |
+| `u - v` (different units) | TypeError |
+| `Number * u` | `u` |
+| `u * Number` | `u` |
+| `u * v` (two units) | TypeError (compound units not supported yet) |
+| `u / Number` | `u` |
+| `u / u` (same unit) | `Number` (dimensionless ratio) |
+| `u / v` (different units) | TypeError (derived units not supported yet) |
+| `Number / u` | TypeError (reciprocal units not supported yet) |
+
+**Unit comparison rules:**
+
+| Operation | Result |
+|-----------|--------|
+| `u < u`, `u <= u`, `u > u`, `u >= u` (same unit) | `Bool` |
+| `u < v` etc. (different units) | TypeError |
+| `u == u`, `u != u` (same unit) | `Bool` |
+| `u == v`, `u != v` (different units) | TypeError |
 
 ---
 
@@ -132,7 +192,7 @@ String concatenation uses `+`:
 "hello" + " world"  // "hello world"
 ```
 
-Static rule: `+` requires `Number + Number` or `Text + Text`. Mixing types is a `TypeError`.
+Static rule: `+` requires `Number + Number`, `Text + Text`, or `u + u` (same unit). Mixing incompatible types is a `TypeError`.
 
 ### 3.3 Comparisons
 
@@ -144,16 +204,16 @@ name != "error"
 
 All comparison operators return `Bool`.
 
-Static rule: `<`, `<=`, `>`, `>=` require `Number` operands. `==` and `!=` require both operands to be the same type.
+Static rule: `<`, `<=`, `>`, `>=` require `Number` operands or same-unit operands. `==` and `!=` require both operands to be the same type (including same unit).
 
 ### 3.4 Unary Operators
 
 ```kimin
--x       // numeric negation; requires Number
+-x       // numeric negation; requires Number or unit type
 !cond    // logical NOT; requires Bool
 ```
 
-Static rule: `-` requires `Number`; `!` requires `Bool`.
+Static rule: `-` requires `Number` or a unit type (result preserves the unit); `!` requires `Bool`.
 
 ### 3.5 Variables
 
@@ -365,16 +425,18 @@ The type checker runs as a separate pass between the parser and the interpreter.
 
 | Construct | Rule |
 |-----------|------|
-| `let x: T = e` | `e` must have type `T` |
+| `let x: T = e` | `e` must have type `T` (Number promotes to unit) |
 | `let x = e` | type inferred from `e` |
-| `fn f(p: T) -> R` | body must return `R`; args must match param types |
+| `fn f(p: T) -> R` | body must return `R`; args must match param types (Number promotes to unit) |
 | `if cond` | `cond` must be `Bool` |
 | `!x` | `x` must be `Bool` |
-| `-x` | `x` must be `Number` |
-| `a + b` | both `Number`, or both `Text` |
-| `a - b`, `a * b`, `a / b` | both `Number` |
-| `a < b`, `a <= b`, `a > b`, `a >= b` | both `Number` |
-| `a == b`, `a != b` | both same type |
+| `-x` | `x` must be `Number` or a unit type |
+| `a + b` | both `Number`, both `Text`, or both same unit |
+| `a - b` | both `Number` or both same unit |
+| `a * b` | `Number * Number`, `Number * unit`, or `unit * Number` |
+| `a / b` | `Number / Number`, `unit / Number`, or `unit / unit` (same unit → `Number`) |
+| `a < b`, `a <= b`, `a > b`, `a >= b` | both `Number` or both same unit |
+| `a == b`, `a != b` | both same type (including same unit) |
 
 ### 6.2 Gradual typing
 
@@ -406,7 +468,7 @@ ParseError at line 2, column 5: expected expression
 ParseError at line 1, column 5: expected identifier after 'let'
 ParseError at line 4, column 3: expected '}'
 ParseError at line 1, column 8: expected ':' after parameter name (parameters require type annotations)
-ParseError at line 1, column 10: unknown type 'Numbr'; expected Number, Text, Bool, or Nil
+ParseError at line 1, column 10: unknown type 'Numbr'; expected Number, Text, Bool, Nil, or a known unit (meters, seconds, kilograms, ...)
 ```
 
 ### 7.3 Type Errors
@@ -423,6 +485,11 @@ TypeError: operator '+' expected Number + Number or Text + Text, got Number + Te
 TypeError: operator '==' requires same-type operands, got Number and Text
 TypeError: undefined variable 'x'
 TypeError: cannot return outside of a function
+TypeError at line 3, column 5: cannot add meters and seconds
+TypeError at line 2, column 5: variable 'bad' declared as seconds but initializer has type meters
+TypeError at line 3, column 5: compound units not supported yet: meters * seconds
+TypeError at line 3, column 5: compound units not supported yet: meters / seconds
+TypeError at line 3, column 5: reciprocal units not supported yet: Number / meters
 ```
 
 ### 7.4 Runtime Errors
@@ -449,7 +516,12 @@ block        = "{" stmt* "}"
 fn_body      = "{" stmt* "}"
 params       = (typed_param ("," typed_param)*)?
 typed_param  = IDENT ":" type_ann
-type_ann     = "Number" | "Text" | "Bool" | "Nil"
+type_ann     = "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME
+UNIT_NAME    = "m" | "meters" | "s" | "seconds" | "kg" | "kilograms"
+             | "A" | "amps" | "amperes" | "K" | "kelvin"
+             | "mol" | "moles" | "cd" | "candela"
+             | "rad" | "radians" | "deg" | "degrees"
+             | "V" | "volts" | "W" | "watts" | "J" | "joules" | "N" | "newtons"
 expr_stmt    = expr
 
 expr         = equality
