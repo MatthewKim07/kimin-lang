@@ -22,6 +22,11 @@ pub enum Expr {
         right: Box<Expr>,
     },
     Grouping(Box<Expr>),
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -61,5 +66,16 @@ pub enum Stmt {
         cond: Expr,
         then_block: Box<Stmt>,
         else_block: Option<Box<Stmt>>,
+    },
+    FnDecl {
+        name: String,
+        params: Vec<String>,
+        /// Body statements; scope is managed by the interpreter's call_function, not a Block wrapper.
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    Return {
+        value: Option<Expr>,
+        span: Span,
     },
 }

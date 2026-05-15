@@ -12,6 +12,8 @@ pub enum TokenKind {
     If,
     Else,
     Print,
+    Fn,
+    Return,
 
     // Arithmetic operators
     Plus,
@@ -34,6 +36,7 @@ pub enum TokenKind {
     RParen,
     LBrace,
     RBrace,
+    Comma,
 
     Eof,
 }
