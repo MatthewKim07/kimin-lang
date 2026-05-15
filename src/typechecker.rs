@@ -1,16 +1,113 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::ast::{BinaryOp, Expr, Param, Stmt, TypeAnnotation, UnaryOp};
 use crate::error::TypeError;
 use crate::token::Span;
 
+/// Structured representation of a physical unit dimension.
+///
+/// Internally a sparse map from canonical unit name → integer exponent.
+///   `meters`        → `{ "meters": 1 }`
+///   `meters/seconds`→ `{ "meters": 1, "seconds": -1 }`
+///   `meters^2`      → `{ "meters": 2 }`
+///   dimensionless   → `{}` (treated as plain Number by the type checker)
+///
+/// BTreeMap gives deterministic alphabetical key ordering for display and equality.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnitDimension {
+    exponents: BTreeMap<String, i32>,
+}
+
+impl UnitDimension {
+    /// Base unit with exponent 1 (e.g., `UnitDimension::base("meters")`).
+    pub fn base(unit: &str) -> Self {
+        let mut exponents = BTreeMap::new();
+        exponents.insert(unit.to_string(), 1);
+        UnitDimension { exponents }
+    }
+
+    /// Dimensionless unit (empty map). Used as the `1` in `Number / unit = 1/unit`.
+    pub fn dimensionless() -> Self {
+        UnitDimension {
+            exponents: BTreeMap::new(),
+        }
+    }
+
+    /// Multiply two dimensions by adding exponents. Zero exponents are removed.
+    pub fn mul(&self, other: &Self) -> Self {
+        let mut exponents = self.exponents.clone();
+        for (k, v) in &other.exponents {
+            let e = exponents.entry(k.clone()).or_insert(0);
+            *e += v;
+        }
+        exponents.retain(|_, v| *v != 0);
+        UnitDimension { exponents }
+    }
+
+    /// Divide two dimensions by subtracting the other's exponents. Zero exponents are removed.
+    pub fn div(&self, other: &Self) -> Self {
+        let mut exponents = self.exponents.clone();
+        for (k, v) in &other.exponents {
+            let e = exponents.entry(k.clone()).or_insert(0);
+            *e -= v;
+        }
+        exponents.retain(|_, v| *v != 0);
+        UnitDimension { exponents }
+    }
+
+    /// True when all exponents have cancelled — equivalent to plain Number.
+    pub fn is_dimensionless(&self) -> bool {
+        self.exponents.is_empty()
+    }
+
+    /// Human-readable display string.
+    ///
+    /// - `{ meters: 1 }`                          → `"meters"`
+    /// - `{ meters: 2 }`                          → `"meters^2"`
+    /// - `{ meters: 1, seconds: -1 }`             → `"meters/seconds"`
+    /// - `{ seconds: -1 }`                        → `"1/seconds"`
+    /// - `{ kilograms: 1, meters: 1, seconds: -2 }` → `"kilograms*meters/seconds^2"`
+    ///
+    /// Positive exponents: numerator, sorted alphabetically, joined with `*`.
+    /// Negative exponents: denominator, sorted alphabetically, joined with `*`.
+    pub fn display_name(&self) -> String {
+        if self.exponents.is_empty() {
+            return "Number".to_string();
+        }
+        let mut num: Vec<String> = Vec::new();
+        let mut den: Vec<String> = Vec::new();
+        for (unit, &exp) in &self.exponents {
+            if exp > 0 {
+                if exp == 1 {
+                    num.push(unit.clone());
+                } else {
+                    num.push(format!("{}^{}", unit, exp));
+                }
+            } else {
+                let abs_exp = -exp;
+                if abs_exp == 1 {
+                    den.push(unit.clone());
+                } else {
+                    den.push(format!("{}^{}", unit, abs_exp));
+                }
+            }
+        }
+        match (num.is_empty(), den.is_empty()) {
+            (false, true) => num.join("*"),
+            (true, false) => format!("1/{}", den.join("*")),
+            (false, false) => format!("{}/{}", num.join("*"), den.join("*")),
+            (true, true) => "Number".to_string(),
+        }
+    }
+}
+
 /// Static type representation used by the type checker.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Number,
-    /// A numeric value with a physical unit. The String is the canonical unit name
-    /// (e.g., "meters", "seconds"). User-facing errors display just the unit name.
-    NumberWithUnit(String),
+    /// A numeric value with a physical unit dimension.
+    /// User-facing errors call `UnitDimension::display_name()`.
+    NumberWithUnit(UnitDimension),
     Text,
     Bool,
     Nil,
@@ -28,7 +125,7 @@ impl Type {
     pub fn name(&self) -> String {
         match self {
             Type::Number => "Number".into(),
-            Type::NumberWithUnit(u) => u.clone(),
+            Type::NumberWithUnit(dim) => dim.display_name(),
             Type::Text => "Text".into(),
             Type::Bool => "Bool".into(),
             Type::Nil => "Nil".into(),
@@ -418,7 +515,11 @@ impl TypeChecker {
                         Ok(Type::NumberWithUnit(u.clone()))
                     } else {
                         Err(TypeError {
-                            msg: format!("cannot add {} and {}", u, v),
+                            msg: format!(
+                                "cannot add {} and {}",
+                                u.display_name(),
+                                v.display_name()
+                            ),
                             line: span.line,
                             col: span.col,
                         })
@@ -441,7 +542,11 @@ impl TypeChecker {
                         Ok(Type::NumberWithUnit(u.clone()))
                     } else {
                         Err(TypeError {
-                            msg: format!("cannot subtract {} and {}", u, v),
+                            msg: format!(
+                                "cannot subtract {} and {}",
+                                u.display_name(),
+                                v.display_name()
+                            ),
                             line: span.line,
                             col: span.col,
                         })
@@ -461,11 +566,15 @@ impl TypeChecker {
                 (Type::Number, Type::Number) => Ok(Type::Number),
                 (Type::Number, Type::NumberWithUnit(u)) => Ok(Type::NumberWithUnit(u.clone())),
                 (Type::NumberWithUnit(u), Type::Number) => Ok(Type::NumberWithUnit(u.clone())),
-                (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => Err(TypeError {
-                    msg: format!("compound units not supported yet: {} * {}", u, v),
-                    line: span.line,
-                    col: span.col,
-                }),
+                // Unit * unit: infer compound dimension. Dimensionless result simplifies to Number.
+                (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
+                    let result = u.mul(v);
+                    if result.is_dimensionless() {
+                        Ok(Type::Number)
+                    } else {
+                        Ok(Type::NumberWithUnit(result))
+                    }
+                }
                 _ => Err(TypeError {
                     msg: format!(
                         "operator '*' requires Number operands, got {} and {}",
@@ -479,22 +588,20 @@ impl TypeChecker {
             BinaryOp::Div => match (&lt, &rt) {
                 (Type::Number, Type::Number) => Ok(Type::Number),
                 (Type::NumberWithUnit(u), Type::Number) => Ok(Type::NumberWithUnit(u.clone())),
+                // Unit / unit: infer compound dimension. Dimensionless (same unit) simplifies to Number.
                 (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
-                    if u == v {
+                    let result = u.div(v);
+                    if result.is_dimensionless() {
                         Ok(Type::Number)
                     } else {
-                        Err(TypeError {
-                            msg: format!("compound units not supported yet: {} / {}", u, v),
-                            line: span.line,
-                            col: span.col,
-                        })
+                        Ok(Type::NumberWithUnit(result))
                     }
                 }
-                (Type::Number, Type::NumberWithUnit(u)) => Err(TypeError {
-                    msg: format!("reciprocal units not supported yet: Number / {}", u),
-                    line: span.line,
-                    col: span.col,
-                }),
+                // Number / unit: infer reciprocal unit (e.g., Number / seconds → 1/seconds).
+                (Type::Number, Type::NumberWithUnit(v)) => {
+                    let result = UnitDimension::dimensionless().div(v);
+                    Ok(Type::NumberWithUnit(result))
+                }
                 _ => Err(TypeError {
                     msg: format!(
                         "operator '/' requires Number operands, got {} and {}",
@@ -538,7 +645,9 @@ impl TypeChecker {
                             Err(TypeError {
                                 msg: format!(
                                     "operator '{}' cannot compare {} and {}",
-                                    sym, u, v
+                                    sym,
+                                    u.display_name(),
+                                    v.display_name()
                                 ),
                                 line: span.line,
                                 col: span.col,
@@ -572,7 +681,7 @@ impl Default for TypeChecker {
 pub fn annotation_to_type(ann: &TypeAnnotation) -> Type {
     match ann {
         TypeAnnotation::Number => Type::Number,
-        TypeAnnotation::NumberWithUnit(u) => Type::NumberWithUnit(u.clone()),
+        TypeAnnotation::NumberWithUnit(u) => Type::NumberWithUnit(UnitDimension::base(u)),
         TypeAnnotation::Text => Type::Text,
         TypeAnnotation::Bool => Type::Bool,
         TypeAnnotation::Nil => Type::Nil,
