@@ -555,6 +555,95 @@ fn fn_recursion_factorial() {
     assert_eq!(interp.get_var("r"), Some(Value::Number(120.0)));
 }
 
+// --- Milestone 2A audit: scoping behavior ---
+
+#[test]
+fn scoping_global_variable_readable_in_function() {
+    // Sanity: global variable visible from function body
+    let interp = run("let x = 42\nfn get_x() { return x }\nlet r = get_x()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn scoping_dynamic_caller_local_visible_in_callee() {
+    // DOCUMENTS CURRENT BEHAVIOR: DYNAMIC SCOPING.
+    //
+    // show() is defined at global scope where x = 10.
+    // caller() creates its own local x = 99 and then calls show().
+    // With the current scope stack (dynamic scoping):
+    //   show() finds x = 99 from the call stack (caller's scope sits above global).
+    // With lexical scoping (Milestone 2B target):
+    //   show() would find x = 10 from the environment captured at its definition site.
+    //
+    // This test will need to be updated in M2B; the assertion will change to 10.0.
+    let interp = run(
+        "let x = 10\nfn show() { return x }\nfn caller() { let x = 99\nreturn show() }\nlet r = caller()"
+    ).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(99.0))); // dynamic: 99, lexical would be: 10
+}
+
+#[test]
+fn scoping_prompt_example_dynamic() {
+    // Exact example from the M2A audit prompt:
+    //   let x = 10
+    //   fn show() { return x }
+    //   { let x = 99
+    //     print(show()) }
+    //
+    // Current (dynamic scoping): prints 99 — show() finds x=99 from the block scope on the stack.
+    // After M2B (lexical scoping): would print 10 — show() captured x=10 at definition.
+    //
+    // We verify the program runs without error. The dynamic behavior is asserted in
+    // scoping_dynamic_caller_local_visible_in_callee (same mechanism, easier to inspect).
+    assert!(run("let x = 10\nfn show() { return x }\n{ let x = 99\nprint(show()) }").is_ok());
+}
+
+#[test]
+fn scoping_fn_param_shadows_global() {
+    // A parameter named x shadows the global x inside the function only
+    let interp = run("let x = 10\nfn f(x) { return x }\nlet r = f(99)").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(99.0)));
+    assert_eq!(interp.get_var("x"), Some(Value::Number(10.0))); // global unchanged
+}
+
+#[test]
+fn scoping_function_scope_popped_after_call() {
+    // Function's locals are not visible in the caller's scope after the call returns
+    let interp = run("fn f() { let inner = 55\nreturn inner }\nlet r = f()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(55.0)));
+    assert_eq!(interp.get_var("inner"), None);
+}
+
+#[test]
+fn scoping_forward_reference_fails() {
+    // Calling a function before it is declared produces undefined variable error
+    match run("let r = add(1, 2)\nfn add(a, b) { return a + b }") {
+        Err(KiminError::Runtime(e)) => {
+            assert!(e.msg.contains("add"), "expected 'add' in: {}", e.msg);
+        }
+        Ok(_) => panic!("expected RuntimeError, got Ok"),
+        Err(e) => panic!("expected RuntimeError, got: {}", e),
+    }
+}
+
+#[test]
+fn scoping_mutual_recursion_works() {
+    // Mutual recursion works with the current design because function names are looked up
+    // at call time (dynamic), and both names are in global scope by the time either is called.
+    // is_even(4) → is_odd(3) → is_even(2) → is_odd(1) → is_even(0) → true
+    let interp = run(
+        "fn is_even(n) { if n == 0 { return true }\nreturn is_odd(n - 1) }\nfn is_odd(n) { if n == 0 { return false }\nreturn is_even(n - 1) }\nlet r = is_even(4)"
+    ).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn return_propagates_through_multiple_nested_blocks() {
+    // return inside two levels of nested blocks exits the whole function
+    let interp = run("fn f() { { { return 42 } } }\nlet r = f()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(42.0)));
+}
+
 // --- REPL: function preserved across interpreter calls ---
 
 #[test]
