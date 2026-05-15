@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 4**: unit-aware static types. Built on top of the Milestone 3 static type checker.
+This repository contains **Milestone 4B**: compound unit inference. Built on top of the Milestone 4 unit-aware static types.
 
 ---
 
@@ -61,12 +61,22 @@ This repository contains **Milestone 4**: unit-aware static types. Built on top 
   - `meters + meters → meters` (same unit, ok)
   - `meters + seconds → TypeError` (different units)
   - `Number * meters → meters` (scalar scaling)
-  - `meters * seconds → TypeError` (compound units not supported yet)
   - `meters / meters → Number` (same-unit division gives dimensionless result)
-  - `meters / seconds → TypeError` (derived units not supported yet)
 - Number literals promote to unit type at assignment (`let d: meters = 10` is valid)
 - Unit-typed function parameters and return types: `fn add_dist(a: meters, b: meters) -> meters`
 - Number literals promote in function call arguments (`add_dist(10, 5)` is valid)
+
+### Milestone 4B
+- **Compound unit inference**: the type checker infers compound unit types from `*` and `/`
+  - `meters / seconds → meters/seconds` (inferred, not annotated)
+  - `meters * seconds → meters*seconds`
+  - `meters * meters → meters^2`
+  - `(meters/seconds) * seconds → meters` (compound simplification)
+  - `Number / seconds → 1/seconds` (reciprocal)
+  - `meters/seconds / meters/seconds → Number` (same compound unit divides to dimensionless)
+- Compound unit types display as `meters/seconds`, `meters^2`, `1/seconds`, `kilograms*meters/seconds^2`
+- No new source annotation syntax — compound types are inferred only; annotations remain single base units
+- No runtime changes
 
 ---
 
@@ -128,6 +138,22 @@ print(square(add(2, 3)))
 5
 25
 25
+```
+
+### compound_units.kimin — compound unit inference
+
+```kimin
+let distance: meters = 10
+let time: seconds = 2
+let speed = distance / time   // type: meters/seconds
+let back = speed * time       // type: meters (simplification)
+print(speed)   // 5
+print(back)    // 10
+```
+
+```
+5
+10
 ```
 
 ### units.kimin — unit-aware types
@@ -240,7 +266,8 @@ TypeError at line 1, column 1: cannot call 'x': value has type Number, not Funct
 TypeError: if condition must be Bool, got Number
 TypeError at line 3, column 5: cannot add meters and seconds
 TypeError at line 2, column 5: variable 'bad' declared as seconds but initializer has type meters
-TypeError at line 3, column 5: compound units not supported yet: meters * seconds
+TypeError at line 1, column 5: cannot add meters/seconds and meters
+TypeError at line 4, column 5: variable 'v' declared as meters but initializer has type meters/seconds
 ParseError at line 2, column 5: expected expression
 LexError at line 3, column 7: unexpected character '@'
 ```
@@ -253,7 +280,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-146 tests pass as of Milestone 4.
+181 tests pass as of Milestone 4B.
 
 ---
 
@@ -273,7 +300,7 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (146 tests)
+  tests.rs        Unit tests (181 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -293,6 +320,8 @@ examples/
   units.kimin
   unit_functions.kimin
   unit_errors.kimin
+  compound_units.kimin
+  compound_unit_errors.kimin
 ```
 
 ---
@@ -305,8 +334,8 @@ examples/
 - No variable assignment after declaration (`let` only; no `x = 5`)
 - `RuntimeError` has no source location yet (spans planned for a future milestone)
 - Units are static-only in M4 — no runtime unit tracking or unit conversion
-- No compound unit algebra (`meters * seconds`, `meters / seconds` are TypeErrors)
-- No derived units (`N`, `J`, `W` are in the registry as annotations but `newtons = kg * m/s²` is not computed)
+- No derived unit simplification (`kg*m/s²` does not automatically reduce to `newtons`)
+- No compound unit annotations in source — compound types are inferred only; you cannot write `let v: meters/seconds = ...`
 - No SI prefixes (`km`, `ms`, `MHz` are not recognized)
 - No `5 meters` expression-literal syntax — units can only appear as type annotations
 
@@ -321,6 +350,7 @@ examples/
 | 2B | Closures and lexical scoping (`Rc<RefCell<Env>>` chain) | ✓ done |
 | 3 | Static type checking | ✓ done |
 | 4 | Unit-aware types (`let d: meters = 10`) | ✓ done |
+| 4B | Compound unit inference (`meters / seconds → meters/seconds`) | ✓ done |
 | 5 | State machines as first-class language constructs | planned |
 | 6 | Time blocks and simulation primitives | planned |
 | 7 | Bytecode / IR, potential WASM target | planned |

@@ -1,4 +1,4 @@
-# Kimin Language Specification — Milestone 4
+# Kimin Language Specification — Milestone 4B
 
 This document describes the syntax and semantics implemented through Milestone 4.
 
@@ -148,11 +148,31 @@ let d2: meters = d      // ok: meters assigned to meters
 | `u - v` (different units) | TypeError |
 | `Number * u` | `u` |
 | `u * Number` | `u` |
-| `u * v` (two units) | TypeError (compound units not supported yet) |
+| `u * v` (two distinct units) | `u*v` (compound unit inferred) |
+| `u * u` | `u^2` (compound unit inferred) |
+| `(u/v) * v` | `u` (compound simplification) |
 | `u / Number` | `u` |
 | `u / u` (same unit) | `Number` (dimensionless ratio) |
-| `u / v` (different units) | TypeError (derived units not supported yet) |
-| `Number / u` | TypeError (reciprocal units not supported yet) |
+| `u / v` (different units) | `u/v` (compound unit inferred) |
+| `Number / u` | `1/u` (reciprocal, inferred) |
+
+**Compound unit display format:**
+- Positive exponents in numerator, negative in denominator, sorted alphabetically
+- Single unit: `meters`, `seconds`
+- Squared: `meters^2`
+- Product: `kilograms*meters`
+- Quotient: `meters/seconds`
+- Reciprocal: `1/seconds`
+- Complex: `kilograms*meters/seconds^2`
+
+**Compound unit annotations** — compound types can only be inferred; there is no source syntax for annotating a variable with a compound unit. Only base unit names are valid in type positions:
+
+```kimin
+let d: meters = 10
+let t: seconds = 2
+let speed = d / t    // type: meters/seconds (inferred)
+// let v: meters/seconds = speed  // ParseError — compound annotations not allowed
+```
 
 **Unit comparison rules:**
 
@@ -433,8 +453,8 @@ The type checker runs as a separate pass between the parser and the interpreter.
 | `-x` | `x` must be `Number` or a unit type |
 | `a + b` | both `Number`, both `Text`, or both same unit |
 | `a - b` | both `Number` or both same unit |
-| `a * b` | `Number * Number`, `Number * unit`, or `unit * Number` |
-| `a / b` | `Number / Number`, `unit / Number`, or `unit / unit` (same unit → `Number`) |
+| `a * b` | `Number * Number`, `Number * unit`, `unit * Number`, or `unit * unit` (compound inferred) |
+| `a / b` | `Number / Number`, `unit / Number`, `unit / unit` (same → `Number`), `unit / unit` (different → compound), `Number / unit` (reciprocal) |
 | `a < b`, `a <= b`, `a > b`, `a >= b` | both `Number` or both same unit |
 | `a == b`, `a != b` | both same type (including same unit) |
 
@@ -487,9 +507,8 @@ TypeError: undefined variable 'x'
 TypeError: cannot return outside of a function
 TypeError at line 3, column 5: cannot add meters and seconds
 TypeError at line 2, column 5: variable 'bad' declared as seconds but initializer has type meters
-TypeError at line 3, column 5: compound units not supported yet: meters * seconds
-TypeError at line 3, column 5: compound units not supported yet: meters / seconds
-TypeError at line 3, column 5: reciprocal units not supported yet: Number / meters
+TypeError at line 4, column 5: cannot add meters/seconds and meters
+TypeError at line 4, column 5: variable 'v' declared as meters but initializer has type meters/seconds
 ```
 
 ### 7.4 Runtime Errors
