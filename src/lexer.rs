@@ -43,7 +43,15 @@ impl Lexer {
 
         let kind = match c {
             '+' => TokenKind::Plus,
-            '-' => TokenKind::Minus,
+            ':' => TokenKind::Colon,
+            '-' => {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::Arrow
+                } else {
+                    TokenKind::Minus
+                }
+            }
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
             '(' => TokenKind::LParen,

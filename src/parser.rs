@@ -1,30 +1,31 @@
-use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Param, Stmt, TypeAnnotation, UnaryOp};
 use crate::error::ParseError;
 use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
-/// Grammar (informal):
-///   program    → stmt* EOF
-///   stmt       → fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
-///   fn_decl    → "fn" IDENT "(" params ")" fn_body
-///   return_stmt → "return" expr?
-///   let_stmt   → "let" IDENT "=" expr
-///   print_stmt → "print" "(" expr ")"
-///   if_stmt    → "if" expr block ("else" block)?
-///   block      → "{" stmt* "}"
-///   fn_body    → "{" stmt* "}"        (same syntax, different AST treatment)
-///   params     → (IDENT ("," IDENT)*)?
-///   expr_stmt  → expr
-///   expr       → equality
-///   equality   → comparison (("==" | "!=") comparison)*
-///   comparison → term (("<" | "<=" | ">" | ">=") term)*
-///   term       → factor (("+" | "-") factor)*
-///   factor     → unary (("*" | "/") unary)*
-///   unary      → ("-" | "!") unary | call
-///   call       → primary ("(" args ")")*
-///   primary    → NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
-///   args       → (expr ("," expr)*)?
+/// Grammar (Milestone 3):
+///   program       → stmt* EOF
+///   stmt          → fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+///   fn_decl       → "fn" IDENT "(" typed_params ")" ("->" type_ann)? fn_body
+///   typed_params  → (IDENT ":" type_ann ("," IDENT ":" type_ann)*)?
+///   return_stmt   → "return" expr?
+///   let_stmt      → "let" IDENT (":" type_ann)? "=" expr
+///   print_stmt    → "print" "(" expr ")"
+///   if_stmt       → "if" expr block ("else" block)?
+///   block         → "{" stmt* "}"
+///   fn_body       → "{" stmt* "}"
+///   type_ann      → "Number" | "Text" | "Bool" | "Nil"
+///   expr_stmt     → expr
+///   expr          → equality
+///   equality      → comparison (("==" | "!=") comparison)*
+///   comparison    → term (("<" | "<=" | ">" | ">=") term)*
+///   term          → factor (("+" | "-") factor)*
+///   factor        → unary (("*" | "/") unary)*
+///   unary         → ("-" | "!") unary | call
+///   call          → primary ("(" args ")")*
+///   primary       → NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
+///   args          → (expr ("," expr)*)?
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -74,45 +75,86 @@ impl Parser {
         self.advance(); // consume name
 
         self.expect_kind(TokenKind::LParen, "expected '(' after function name")?;
-        let params = self.parse_params()?;
+        let params = self.parse_typed_params()?;
         self.expect_kind(TokenKind::RParen, "expected ')' after parameters")?;
+
+        // Optional return type: `-> TypeAnnotation`
+        let return_type = if matches!(self.current_kind(), TokenKind::Arrow) {
+            self.advance(); // consume `->`
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
 
         let body = self.parse_fn_body()?;
 
         Ok(Stmt::FnDecl {
             name,
             params,
+            return_type,
             body,
             span,
         })
     }
 
-    fn parse_params(&mut self) -> Result<Vec<String>, ParseError> {
+    /// Parse `(IDENT ":" type_ann ("," IDENT ":" type_ann)*)?`
+    fn parse_typed_params(&mut self) -> Result<Vec<Param>, ParseError> {
         let mut params = Vec::new();
         if matches!(self.current_kind(), TokenKind::RParen) {
             return Ok(params);
         }
-        let first = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => return Err(self.error("expected parameter name")),
-        };
-        params.push(first);
-        self.advance();
 
+        params.push(self.parse_typed_param()?);
         while matches!(self.current_kind(), TokenKind::Comma) {
             self.advance(); // consume `,`
-            let param = match self.current_kind() {
-                TokenKind::Ident(n) => n.clone(),
-                _ => return Err(self.error("expected parameter name after ','")),
-            };
-            params.push(param);
-            self.advance();
+            params.push(self.parse_typed_param()?);
         }
         Ok(params)
     }
 
-    /// Parse `{ stmt* }` for a function body, returning the inner statements directly.
-    /// The caller (call_function) manages the scope, so we do not wrap in Stmt::Block.
+    fn parse_typed_param(&mut self) -> Result<Param, ParseError> {
+        let span = self.current_span();
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected parameter name")),
+        };
+        self.advance(); // consume name
+
+        self.expect_kind(TokenKind::Colon, "expected ':' after parameter name (parameters require a type annotation, e.g. x: Number)")?;
+        let ty = self.parse_type_annotation()?;
+
+        Ok(Param { name, ty, span })
+    }
+
+    /// Parse a type annotation identifier: Number | Text | Bool | Nil
+    fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, ParseError> {
+        if matches!(self.current_kind(), TokenKind::Ident(_)) {
+            let span = self.current_span();
+            let name = match self.current_kind() {
+                TokenKind::Ident(s) => s.clone(),
+                _ => unreachable!(),
+            };
+            self.advance();
+            match name.as_str() {
+                "Number" => Ok(TypeAnnotation::Number),
+                "Text" => Ok(TypeAnnotation::Text),
+                "Bool" => Ok(TypeAnnotation::Bool),
+                "Nil" => Ok(TypeAnnotation::Nil),
+                other => Err(ParseError {
+                    msg: format!(
+                        "unknown type '{}', expected Number, Text, Bool, or Nil",
+                        other
+                    ),
+                    line: span.line,
+                    col: span.col,
+                }),
+            }
+        } else {
+            Err(self.error("expected type annotation (Number, Text, Bool, or Nil)"))
+        }
+    }
+
+    /// Parse `{ stmt* }` for a function body, returning inner statements directly.
     fn parse_fn_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         self.expect_kind(TokenKind::LBrace, "expected '{' before function body")?;
         let mut stmts = Vec::new();
@@ -146,11 +188,24 @@ impl Parser {
         let span = self.current_span();
         self.advance(); // consume identifier
 
+        // Optional `: TypeAnnotation`
+        let annotation = if matches!(self.current_kind(), TokenKind::Colon) {
+            self.advance(); // consume `:`
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+
         self.expect_kind(TokenKind::Eq, "expected '=' after variable name")?;
 
         let value = self.parse_expr()?;
 
-        Ok(Stmt::Let { name, value, span })
+        Ok(Stmt::Let {
+            name,
+            annotation,
+            value,
+            span,
+        })
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
@@ -387,8 +442,6 @@ impl Parser {
         matches!(self.current_kind(), TokenKind::Eof)
     }
 
-    /// Returns true if the current token can begin an expression.
-    /// Used to decide whether `return` has a value.
     fn can_start_expr(&self) -> bool {
         matches!(
             self.current_kind(),
@@ -403,7 +456,6 @@ impl Parser {
         )
     }
 
-    /// Consume the current token if it matches `kind`, otherwise return an error.
     fn expect_kind(&mut self, kind: TokenKind, msg: &str) -> Result<(), ParseError> {
         if std::mem::discriminant(self.current_kind()) == std::mem::discriminant(&kind) {
             self.advance();

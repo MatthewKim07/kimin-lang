@@ -1,8 +1,6 @@
 use crate::token::Span;
 
-/// Expression nodes. Each variant carries the data needed to evaluate it.
-/// Spans are included on nodes that name variables so runtime errors can
-/// report source locations in future milestones.
+/// Expression nodes.
 #[derive(Debug, Clone)]
 pub enum Expr {
     Number(f64),
@@ -49,11 +47,30 @@ pub enum BinaryOp {
     GtEq,
 }
 
+/// User-facing static type annotation (written in source code).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeAnnotation {
+    Number,
+    Text,
+    Bool,
+    Nil,
+}
+
+/// A typed function parameter.
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    pub ty: TypeAnnotation,
+    pub span: Span,
+}
+
 /// Statement nodes.
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Let {
         name: String,
+        /// Optional `: TypeAnnotation` — if absent the type is inferred.
+        annotation: Option<TypeAnnotation>,
         value: Expr,
         span: Span,
     },
@@ -69,8 +86,9 @@ pub enum Stmt {
     },
     FnDecl {
         name: String,
-        params: Vec<String>,
-        /// Body statements; scope is managed by the interpreter's call_function, not a Block wrapper.
+        params: Vec<Param>,
+        /// Optional `-> TypeAnnotation` return type.
+        return_type: Option<TypeAnnotation>,
         body: Vec<Stmt>,
         span: Span,
     },

@@ -37,6 +37,8 @@ pub enum TokenKind {
     LBrace,
     RBrace,
     Comma,
+    Colon,
+    Arrow,
 
     Eof,
 }
