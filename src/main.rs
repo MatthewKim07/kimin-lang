@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 
 use kimin::{
     error::KiminError, interpreter::Interpreter, lexer::Lexer, parser::Parser as KiminParser, repl,
+    typechecker::TypeChecker,
 };
 
 #[derive(Parser)]
@@ -21,7 +22,7 @@ enum Command {
         /// Path to the .kimin file
         file: String,
     },
-    /// Check syntax of a .kimin file without executing it
+    /// Check syntax and types of a .kimin file without executing it
     Check {
         /// Path to the .kimin file
         file: String,
@@ -67,6 +68,7 @@ fn read_file(path: &str) -> String {
 fn run_source(source: &str) -> Result<(), KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
     let stmts = KiminParser::new(tokens).parse()?;
+    TypeChecker::new().check(&stmts)?;
     let mut interp = Interpreter::new();
     interp.run(&stmts)?;
     Ok(())
@@ -74,6 +76,7 @@ fn run_source(source: &str) -> Result<(), KiminError> {
 
 fn check_source(source: &str) -> Result<(), KiminError> {
     let tokens = Lexer::new(source).tokenize()?;
-    KiminParser::new(tokens).parse()?;
+    let stmts = KiminParser::new(tokens).parse()?;
+    TypeChecker::new().check(&stmts)?;
     Ok(())
 }

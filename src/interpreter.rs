@@ -88,9 +88,10 @@ impl Interpreter {
             Stmt::FnDecl {
                 name, params, body, ..
             } => {
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 let func = FunctionValue {
                     name: name.clone(),
-                    params: params.clone(),
+                    params: param_names,
                     body: body.clone(),
                     // Capture the current env at declaration time (lexical scoping).
                     // Defining the function into this same env makes the name visible
