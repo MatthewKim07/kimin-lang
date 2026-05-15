@@ -878,3 +878,336 @@ fn type_unknown_flows_through_annotated_let() {
     // The binding then carries Number in the TypeEnv going forward.
     assert!(check("fn f(x: Number) { return x }\nlet r = f(5)\nlet n: Number = r").is_ok());
 }
+
+// --- Milestone 4: unit-aware types ---
+
+#[test]
+fn parse_unit_let_annotation_long_name() {
+    assert!(check("let d: meters = 10").is_ok());
+    assert!(check("let t: seconds = 5").is_ok());
+    assert!(check("let m: kilograms = 3").is_ok());
+}
+
+#[test]
+fn parse_unit_let_annotation_short_alias() {
+    assert!(check("let d: m = 10").is_ok());
+    assert!(check("let t: s = 5").is_ok());
+    assert!(check("let m: kg = 3").is_ok());
+}
+
+#[test]
+fn parse_unit_fn_param_annotation() {
+    assert!(check("fn f(d: meters) { }").is_ok());
+    assert!(check("fn f(d: m) { }").is_ok());
+}
+
+#[test]
+fn parse_unit_fn_return_annotation() {
+    assert!(check("fn f() -> meters { return 10 }").is_ok());
+    assert!(check("fn f() -> seconds { return 0 }").is_ok());
+}
+
+#[test]
+fn parse_unit_all_registry_names() {
+    // All supported unit names and aliases parse without error.
+    assert!(check("let a: meters = 1").is_ok());
+    assert!(check("let a: m = 1").is_ok());
+    assert!(check("let a: seconds = 1").is_ok());
+    assert!(check("let a: s = 1").is_ok());
+    assert!(check("let a: kilograms = 1").is_ok());
+    assert!(check("let a: kg = 1").is_ok());
+    assert!(check("let a: amperes = 1").is_ok());
+    assert!(check("let a: amps = 1").is_ok());
+    assert!(check("let a: A = 1").is_ok());
+    assert!(check("let a: kelvin = 1").is_ok());
+    assert!(check("let a: K = 1").is_ok());
+    assert!(check("let a: moles = 1").is_ok());
+    assert!(check("let a: mol = 1").is_ok());
+    assert!(check("let a: candela = 1").is_ok());
+    assert!(check("let a: cd = 1").is_ok());
+    assert!(check("let a: radians = 1").is_ok());
+    assert!(check("let a: rad = 1").is_ok());
+    assert!(check("let a: degrees = 1").is_ok());
+    assert!(check("let a: deg = 1").is_ok());
+    assert!(check("let a: volts = 1").is_ok());
+    assert!(check("let a: V = 1").is_ok());
+    assert!(check("let a: watts = 1").is_ok());
+    assert!(check("let a: W = 1").is_ok());
+    assert!(check("let a: joules = 1").is_ok());
+    assert!(check("let a: J = 1").is_ok());
+    assert!(check("let a: newtons = 1").is_ok());
+    assert!(check("let a: N = 1").is_ok());
+}
+
+#[test]
+fn parse_unit_alias_canonicalizes() {
+    // Short alias and long name produce the same canonical type — operations between them work.
+    assert!(check("let a: m = 10\nlet b: meters = 5\nlet c = a + b").is_ok());
+}
+
+#[test]
+fn type_unit_let_from_number_literal_ok() {
+    let interp = run("let d: meters = 10").unwrap();
+    assert_eq!(interp.get_var("d"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn type_unit_let_from_unit_var_same_unit_ok() {
+    assert!(check("let a: meters = 10\nlet b: meters = a").is_ok());
+}
+
+#[test]
+fn type_unit_let_from_text_error() {
+    assert!(matches!(
+        run(r#"let d: meters = "ten""#),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_let_from_bool_error() {
+    assert!(matches!(
+        run("let d: meters = true"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_let_wrong_unit_error() {
+    match run("let t: seconds = 2\nlet bad: meters = t") {
+        Err(KiminError::Type(e)) => {
+            assert!(
+                e.msg.contains("meters") && e.msg.contains("seconds"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected TypeError"),
+        Err(e) => panic!("expected TypeError, got: {}", e),
+    }
+}
+
+#[test]
+fn type_unit_inferred_let_preserves_unit() {
+    // Inferred let from unit variable inherits unit type; arithmetic stays unit-typed.
+    assert!(check("let a: meters = 10\nlet b = a\nlet c = a + b").is_ok());
+}
+
+#[test]
+fn type_unit_unit_to_number_annotation_error() {
+    // Cannot strip unit by assigning to Number.
+    assert!(matches!(
+        run("let d: meters = 10\nlet n: Number = d"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_same_unit_add_ok() {
+    let interp = run("let a: meters = 10\nlet b: meters = 5\nlet c = a + b").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Number(15.0)));
+}
+
+#[test]
+fn type_unit_different_unit_add_error() {
+    match run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d + t") {
+        Err(KiminError::Type(e)) => {
+            assert!(
+                e.msg.contains("meters") && e.msg.contains("seconds"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected TypeError"),
+        Err(e) => panic!("expected TypeError, got: {}", e),
+    }
+}
+
+#[test]
+fn type_unit_number_plus_unit_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = 5 + d"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_same_unit_sub_ok() {
+    let interp = run("let a: meters = 10\nlet b: meters = 3\nlet c = a - b").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Number(7.0)));
+}
+
+#[test]
+fn type_unit_different_unit_sub_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d - t"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_scalar_mul_number_times_unit_ok() {
+    let interp = run("let d: meters = 3\nlet c = 4 * d").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn type_unit_scalar_mul_unit_times_number_ok() {
+    let interp = run("let d: meters = 3\nlet c = d * 4").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn type_unit_compound_mul_error() {
+    match run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d * t") {
+        Err(KiminError::Type(e)) => {
+            assert!(
+                e.msg.contains("compound")
+                    || (e.msg.contains("meters") && e.msg.contains("seconds")),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected TypeError"),
+        Err(e) => panic!("expected TypeError, got: {}", e),
+    }
+}
+
+#[test]
+fn type_unit_unit_div_number_ok() {
+    let interp = run("let d: meters = 12\nlet c = d / 4").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn type_unit_same_unit_div_gives_number() {
+    let interp = run("let a: meters = 10\nlet b: meters = 2\nlet c = a / b").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn type_unit_different_unit_div_error() {
+    match run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d / t") {
+        Err(KiminError::Type(e)) => {
+            assert!(
+                e.msg.contains("compound")
+                    || (e.msg.contains("meters") && e.msg.contains("seconds")),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected TypeError"),
+        Err(e) => panic!("expected TypeError, got: {}", e),
+    }
+}
+
+#[test]
+fn type_unit_number_div_unit_error() {
+    match run("let d: meters = 10\nlet bad = 5 / d") {
+        Err(KiminError::Type(e)) => {
+            assert!(
+                e.msg.contains("reciprocal") || e.msg.contains("meters"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected TypeError"),
+        Err(e) => panic!("expected TypeError, got: {}", e),
+    }
+}
+
+#[test]
+fn type_unit_same_unit_comparison_ok() {
+    let interp = run("let a: meters = 10\nlet b: meters = 5\nlet r = a > b").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn type_unit_different_unit_comparison_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d < t"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_number_unit_comparison_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = 5 < d"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_same_unit_equality_ok() {
+    let interp = run("let a: meters = 10\nlet b: meters = 10\nlet r = a == b").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn type_unit_different_unit_equality_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet t: seconds = 10\nlet bad = d == t"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_fn_unit_param_ok() {
+    let interp =
+        run("fn f(d: meters) -> meters { return d }\nlet a: meters = 10\nlet r = f(a)").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn type_unit_fn_arg_promotion_from_number() {
+    // Raw numeric literal promoted to unit when param expects unit.
+    let interp =
+        run("fn add(a: meters, b: meters) -> meters { return a + b }\nlet r = add(10, 5)").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(15.0)));
+}
+
+#[test]
+fn type_unit_fn_wrong_unit_arg_error() {
+    assert!(matches!(
+        run("fn f(d: meters) -> meters { return d }\nlet t: seconds = 2\nf(t)"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_fn_return_promotion_from_number() {
+    // Function declared -> meters can return a plain Number (promotion).
+    assert!(check("fn ten_meters() -> meters { return 10 }").is_ok());
+}
+
+#[test]
+fn type_unit_fn_return_wrong_unit_error() {
+    assert!(matches!(
+        check("fn f() -> meters { let t: seconds = 2\nreturn t }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_closure_captures_unit_var() {
+    assert!(check(
+        "fn outer(d: meters) -> meters { fn inner() -> meters { return d }\nreturn inner() }"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_unit_unary_neg_preserves_unit() {
+    let interp = run("let d: meters = 5\nlet neg = -d").unwrap();
+    assert_eq!(interp.get_var("neg"), Some(Value::Number(-5.0)));
+}
+
+#[test]
+fn type_unit_scale_and_ratio() {
+    // Scalar multiply then same-unit divide → gets back Number.
+    let interp =
+        run("let d: meters = 10\nlet scaled = d * 3\nlet a: meters = 30\nlet ratio = scaled / a")
+            .unwrap();
+    assert_eq!(interp.get_var("ratio"), Some(Value::Number(1.0)));
+}

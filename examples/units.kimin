@@ -1,0 +1,13 @@
+// Unit-aware type annotations.
+// The type checker enforces unit correctness; runtime values are plain numbers.
+
+let distance: meters = 10
+let extra: meters = 5
+let total = distance + extra
+
+let time: seconds = 2
+let more_time: s = 3
+let total_time = time + more_time
+
+print(total)
+print(total_time)

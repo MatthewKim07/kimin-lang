@@ -1,0 +1,17 @@
+// Functions with unit-typed parameters and return types.
+
+fn add_distance(a: meters, b: meters) -> meters {
+  return a + b
+}
+
+fn scale_distance(distance: meters, factor: Number) -> meters {
+  return distance * factor
+}
+
+fn ratio(a: meters, b: meters) -> Number {
+  return a / b
+}
+
+print(add_distance(10, 5))
+print(scale_distance(3, 4))
+print(ratio(10, 2))

@@ -1,0 +1,27 @@
+// Demonstrates unit type errors caught before execution.
+// Default run is clean; uncomment one block at a time to see a TypeError.
+
+let distance: meters = 10
+let time: seconds = 2
+
+print(distance)
+print(time)
+
+// 1. Adding incompatible units:
+// let bad = distance + time
+
+// 2. Assigning wrong unit:
+// let bad: seconds = distance
+
+// 3. Comparing incompatible units:
+// if distance < time { print("bad") }
+
+// 4. Compound multiplication (not supported yet):
+// let area = distance * time
+
+// 5. Reciprocal unit (not supported yet):
+// let bad = 5 / distance
+
+// 6. Calling function with wrong unit:
+// fn expect_time(t: seconds) { print(t) }
+// expect_time(distance)
