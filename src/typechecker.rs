@@ -8,6 +8,9 @@ use crate::token::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Number,
+    /// A numeric value with a physical unit. The String is the canonical unit name
+    /// (e.g., "meters", "seconds"). User-facing errors display just the unit name.
+    NumberWithUnit(String),
     Text,
     Bool,
     Nil,
@@ -25,6 +28,7 @@ impl Type {
     pub fn name(&self) -> String {
         match self {
             Type::Number => "Number".into(),
+            Type::NumberWithUnit(u) => u.clone(),
             Type::Text => "Text".into(),
             Type::Bool => "Bool".into(),
             Type::Nil => "Nil".into(),
@@ -137,7 +141,11 @@ impl TypeChecker {
                 let val_ty = self.check_expr(value, *span)?;
                 if let Some(ann) = annotation {
                     let ann_ty = annotation_to_type(ann);
-                    if !val_ty.is_unknown() && val_ty != ann_ty {
+                    // A dimensionless Number can satisfy a unit annotation (annotation promotion).
+                    let compatible = val_ty.is_unknown()
+                        || val_ty == ann_ty
+                        || (matches!(&ann_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
+                    if !compatible {
                         return Err(TypeError {
                             msg: format!(
                                 "variable '{}' declared as {} but initializer has type {}",
@@ -246,7 +254,12 @@ impl TypeChecker {
                     Some(expr) => self.check_expr(expr, *span)?,
                     None => Type::Nil,
                 };
-                if !declared.is_unknown() && !ret_ty.is_unknown() && ret_ty != declared {
+                // A dimensionless Number can satisfy a unit return type (annotation promotion).
+                let return_compatible = declared.is_unknown()
+                    || ret_ty.is_unknown()
+                    || ret_ty == declared
+                    || (matches!(&declared, Type::NumberWithUnit(_)) && ret_ty == Type::Number);
+                if !return_compatible {
                     return Err(TypeError {
                         msg: format!(
                             "function declared return type {} but returned {}",
@@ -284,16 +297,15 @@ impl TypeChecker {
                     return Ok(Type::Unknown);
                 }
                 match op {
-                    UnaryOp::Neg => {
-                        if ty != Type::Number {
-                            return Err(TypeError {
-                                msg: format!("unary '-' requires Number, got {}", ty.name()),
-                                line: context_span.line,
-                                col: context_span.col,
-                            });
-                        }
-                        Ok(Type::Number)
-                    }
+                    UnaryOp::Neg => match &ty {
+                        Type::Number => Ok(Type::Number),
+                        Type::NumberWithUnit(u) => Ok(Type::NumberWithUnit(u.clone())),
+                        _ => Err(TypeError {
+                            msg: format!("unary '-' requires Number, got {}", ty.name()),
+                            line: context_span.line,
+                            col: context_span.col,
+                        }),
+                    },
                     UnaryOp::Not => {
                         if ty != Type::Bool {
                             return Err(TypeError {
@@ -349,8 +361,13 @@ impl TypeChecker {
                         for (i, (arg, expected)) in args.iter().zip(param_types.iter()).enumerate()
                         {
                             let arg_ty = self.check_expr(arg, *span)?;
-                            if !arg_ty.is_unknown() && !expected.is_unknown() && arg_ty != *expected
-                            {
+                            // A dimensionless Number can satisfy a unit parameter (annotation promotion).
+                            let compatible = arg_ty.is_unknown()
+                                || expected.is_unknown()
+                                || arg_ty == *expected
+                                || (matches!(expected, Type::NumberWithUnit(_))
+                                    && arg_ty == Type::Number);
+                            if !compatible {
                                 return Err(TypeError {
                                     msg: format!(
                                         "function '{}' argument {} expected {} but got {}",
@@ -396,9 +413,20 @@ impl TypeChecker {
             BinaryOp::Add => match (&lt, &rt) {
                 (Type::Number, Type::Number) => Ok(Type::Number),
                 (Type::Text, Type::Text) => Ok(Type::Text),
+                (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
+                    if u == v {
+                        Ok(Type::NumberWithUnit(u.clone()))
+                    } else {
+                        Err(TypeError {
+                            msg: format!("cannot add {} and {}", u, v),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                }
                 _ => Err(TypeError {
                     msg: format!(
-                        "operator '+' expected Number + Number or Text + Text, got {} + {}",
+                        "operator '+' expected Number + Number, Text + Text, or same-unit + same-unit, got {} + {}",
                         lt.name(),
                         rt.name()
                     ),
@@ -406,35 +434,80 @@ impl TypeChecker {
                     col: span.col,
                 }),
             },
-            BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                let sym = match op {
-                    BinaryOp::Sub => "-",
-                    BinaryOp::Mul => "*",
-                    BinaryOp::Div => "/",
-                    _ => unreachable!(),
-                };
-                if lt == Type::Number && rt == Type::Number {
-                    Ok(Type::Number)
-                } else {
-                    Err(TypeError {
-                        msg: format!(
-                            "operator '{}' requires Number operands, got {} and {}",
-                            sym,
-                            lt.name(),
-                            rt.name()
-                        ),
-                        line: span.line,
-                        col: span.col,
-                    })
+            BinaryOp::Sub => match (&lt, &rt) {
+                (Type::Number, Type::Number) => Ok(Type::Number),
+                (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
+                    if u == v {
+                        Ok(Type::NumberWithUnit(u.clone()))
+                    } else {
+                        Err(TypeError {
+                            msg: format!("cannot subtract {} and {}", u, v),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
                 }
-            }
+                _ => Err(TypeError {
+                    msg: format!(
+                        "operator '-' requires Number or same-unit operands, got {} and {}",
+                        lt.name(),
+                        rt.name()
+                    ),
+                    line: span.line,
+                    col: span.col,
+                }),
+            },
+            BinaryOp::Mul => match (&lt, &rt) {
+                (Type::Number, Type::Number) => Ok(Type::Number),
+                (Type::Number, Type::NumberWithUnit(u)) => Ok(Type::NumberWithUnit(u.clone())),
+                (Type::NumberWithUnit(u), Type::Number) => Ok(Type::NumberWithUnit(u.clone())),
+                (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => Err(TypeError {
+                    msg: format!("compound units not supported yet: {} * {}", u, v),
+                    line: span.line,
+                    col: span.col,
+                }),
+                _ => Err(TypeError {
+                    msg: format!(
+                        "operator '*' requires Number operands, got {} and {}",
+                        lt.name(),
+                        rt.name()
+                    ),
+                    line: span.line,
+                    col: span.col,
+                }),
+            },
+            BinaryOp::Div => match (&lt, &rt) {
+                (Type::Number, Type::Number) => Ok(Type::Number),
+                (Type::NumberWithUnit(u), Type::Number) => Ok(Type::NumberWithUnit(u.clone())),
+                (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
+                    if u == v {
+                        Ok(Type::Number)
+                    } else {
+                        Err(TypeError {
+                            msg: format!("compound units not supported yet: {} / {}", u, v),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                }
+                (Type::Number, Type::NumberWithUnit(u)) => Err(TypeError {
+                    msg: format!("reciprocal units not supported yet: Number / {}", u),
+                    line: span.line,
+                    col: span.col,
+                }),
+                _ => Err(TypeError {
+                    msg: format!(
+                        "operator '/' requires Number operands, got {} and {}",
+                        lt.name(),
+                        rt.name()
+                    ),
+                    line: span.line,
+                    col: span.col,
+                }),
+            },
             BinaryOp::Eq | BinaryOp::NotEq => {
                 if lt != rt {
-                    let sym = if matches!(op, BinaryOp::Eq) {
-                        "=="
-                    } else {
-                        "!="
-                    };
+                    let sym = if matches!(op, BinaryOp::Eq) { "==" } else { "!=" };
                     return Err(TypeError {
                         msg: format!(
                             "operator '{}' requires same-type operands, got {} and {}",
@@ -456,10 +529,23 @@ impl TypeChecker {
                     BinaryOp::GtEq => ">=",
                     _ => unreachable!(),
                 };
-                if lt == Type::Number && rt == Type::Number {
-                    Ok(Type::Bool)
-                } else {
-                    Err(TypeError {
+                match (&lt, &rt) {
+                    (Type::Number, Type::Number) => Ok(Type::Bool),
+                    (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
+                        if u == v {
+                            Ok(Type::Bool)
+                        } else {
+                            Err(TypeError {
+                                msg: format!(
+                                    "operator '{}' cannot compare {} and {}",
+                                    sym, u, v
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            })
+                        }
+                    }
+                    _ => Err(TypeError {
                         msg: format!(
                             "operator '{}' requires Number operands, got {} and {}",
                             sym,
@@ -468,7 +554,7 @@ impl TypeChecker {
                         ),
                         line: span.line,
                         col: span.col,
-                    })
+                    }),
                 }
             }
         }
@@ -486,6 +572,7 @@ impl Default for TypeChecker {
 pub fn annotation_to_type(ann: &TypeAnnotation) -> Type {
     match ann {
         TypeAnnotation::Number => Type::Number,
+        TypeAnnotation::NumberWithUnit(u) => Type::NumberWithUnit(u.clone()),
         TypeAnnotation::Text => Type::Text,
         TypeAnnotation::Bool => Type::Bool,
         TypeAnnotation::Nil => Type::Nil,
