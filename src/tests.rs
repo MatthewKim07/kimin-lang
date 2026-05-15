@@ -850,3 +850,31 @@ fn type_closure_capture_ok() {
     )
     .is_ok());
 }
+
+#[test]
+fn type_mutual_recursion_in_block_ok() {
+    // Two mutually-recursive functions declared inside a block.
+    // check_stmt_list pre-registers both signatures before checking either body,
+    // so is_even can refer to is_odd and vice versa at block scope.
+    assert!(check(
+        "{ fn is_even(n: Number) -> Bool { if n == 0 { return true }\nreturn is_odd(n - 1) }\nfn is_odd(n: Number) -> Bool { if n == 0 { return false }\nreturn is_even(n - 1) } }"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_non_exhaustive_return_not_caught() {
+    // Known gap: the type checker only validates return statements that are present.
+    // A function declared -> Number that can fall off the end returns Nil at runtime.
+    // This should ideally be a TypeError; it is not currently caught.
+    assert!(check("fn f(x: Bool) -> Number { if x { return 1 } }").is_ok());
+}
+
+#[test]
+fn type_unknown_flows_through_annotated_let() {
+    // Unannotated function has Unknown return type.
+    // Assigning its result to a `: Number`-annotated let passes the type checker
+    // because Unknown is the gradual-typing wildcard.
+    // The binding then carries Number in the TypeEnv going forward.
+    assert!(check("fn f(x: Number) { return x }\nlet r = f(5)\nlet n: Number = r").is_ok());
+}
