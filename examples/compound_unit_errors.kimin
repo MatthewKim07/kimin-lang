@@ -1,0 +1,22 @@
+// Compound unit errors — Milestone 4B
+// This file demonstrates valid compound unit operations.
+// The commented-out lines below would be TypeErrors if uncommented.
+
+let distance: meters = 100
+let time: seconds = 10
+let speed = distance / time    // type: meters/seconds
+
+// Adding a compound unit to a base unit with different dimension → TypeError:
+// let bad = speed + distance
+
+// Assigning a compound unit to a base-unit annotation → TypeError:
+// let v: meters = speed
+
+// Comparing compound units of different kinds → TypeError:
+// if speed < distance { print(1) }
+
+// These are valid:
+let t2: seconds = 5
+let back = speed * t2    // (meters/seconds) * seconds → meters
+let check: meters = back
+print(back)              // 50

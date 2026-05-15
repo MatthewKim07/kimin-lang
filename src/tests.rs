@@ -1,6 +1,11 @@
 use crate::{
-    error::KiminError, interpreter::Interpreter, lexer::Lexer, parser::Parser, token::TokenKind,
-    typechecker::TypeChecker, value::Value,
+    error::KiminError,
+    interpreter::Interpreter,
+    lexer::Lexer,
+    parser::Parser,
+    token::TokenKind,
+    typechecker::{TypeChecker, UnitDimension},
+    value::Value,
 };
 
 // --- test helpers ---
@@ -1058,19 +1063,20 @@ fn type_unit_scalar_mul_unit_times_number_ok() {
 }
 
 #[test]
-fn type_unit_compound_mul_error() {
-    match run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d * t") {
-        Err(KiminError::Type(e)) => {
-            assert!(
-                e.msg.contains("compound")
-                    || (e.msg.contains("meters") && e.msg.contains("seconds")),
-                "unexpected error: {}",
-                e.msg
-            );
-        }
-        Ok(_) => panic!("expected TypeError"),
-        Err(e) => panic!("expected TypeError, got: {}", e),
-    }
+fn type_unit_compound_mul_infers_product() {
+    // meters * seconds now infers compound type meters*seconds, not a TypeError.
+    let interp = run("let d: meters = 10\nlet t: seconds = 2\nlet compound = d * t").unwrap();
+    assert_eq!(interp.get_var("compound"), Some(Value::Number(20.0)));
+    // Indirect type check: two values of the same compound type can be added.
+    assert!(check(
+        "let d: meters = 10\nlet t: seconds = 2\nlet c1 = d * t\nlet c2 = d * t\nlet sum = c1 + c2"
+    )
+    .is_ok());
+    // A different compound type cannot be added.
+    assert!(matches!(
+        check("let d: meters = 10\nlet t: seconds = 2\nlet c = d * t\nlet bad = c + d"),
+        Err(KiminError::Type(_))
+    ));
 }
 
 #[test]
@@ -1086,34 +1092,30 @@ fn type_unit_same_unit_div_gives_number() {
 }
 
 #[test]
-fn type_unit_different_unit_div_error() {
-    match run("let d: meters = 10\nlet t: seconds = 2\nlet bad = d / t") {
-        Err(KiminError::Type(e)) => {
-            assert!(
-                e.msg.contains("compound")
-                    || (e.msg.contains("meters") && e.msg.contains("seconds")),
-                "unexpected error: {}",
-                e.msg
-            );
-        }
-        Ok(_) => panic!("expected TypeError"),
-        Err(e) => panic!("expected TypeError, got: {}", e),
-    }
+fn type_unit_different_unit_div_infers_quotient() {
+    // meters / seconds now infers compound type meters/seconds, not a TypeError.
+    let interp = run("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t").unwrap();
+    assert_eq!(interp.get_var("speed"), Some(Value::Number(5.0)));
+    // Two values of the same compound type can be added.
+    assert!(check(
+        "let d: meters = 10\nlet t: seconds = 2\nlet s1 = d / t\nlet s2 = d / t\nlet sum = s1 + s2"
+    )
+    .is_ok());
+    // A different compound type cannot be added.
+    assert!(matches!(
+        check("let d: meters = 10\nlet t: seconds = 2\nlet s = d / t\nlet bad = s + d"),
+        Err(KiminError::Type(_))
+    ));
 }
 
 #[test]
-fn type_unit_number_div_unit_error() {
-    match run("let d: meters = 10\nlet bad = 5 / d") {
-        Err(KiminError::Type(e)) => {
-            assert!(
-                e.msg.contains("reciprocal") || e.msg.contains("meters"),
-                "unexpected error: {}",
-                e.msg
-            );
-        }
-        Ok(_) => panic!("expected TypeError"),
-        Err(e) => panic!("expected TypeError, got: {}", e),
-    }
+fn type_unit_number_div_unit_infers_reciprocal() {
+    // Number / unit now infers a reciprocal unit type 1/unit, not a TypeError.
+    let interp = run("let d: meters = 10\nlet rate = 5 / d").unwrap();
+    assert_eq!(interp.get_var("rate"), Some(Value::Number(0.5)));
+    // Multiplying back recovers Number (reciprocal * base = dimensionless).
+    let interp2 = run("let t: seconds = 2\nlet freq = 10 / t\nlet back = freq * t").unwrap();
+    assert_eq!(interp2.get_var("back"), Some(Value::Number(10.0)));
 }
 
 #[test]
@@ -1289,4 +1291,220 @@ fn type_unit_unknown_plus_unit_propagates_unknown() {
 fn type_unit_unknown_satisfies_unit_annotation() {
     // Unknown from an unannotated function satisfies a unit annotation on let.
     assert!(check("fn f(x: Number) { return x }\nlet d: meters = f(10)").is_ok());
+}
+
+// --- Milestone 4B: UnitDimension struct unit tests ---
+
+#[test]
+fn unit_dim_base_display() {
+    assert_eq!(UnitDimension::base("meters").display_name(), "meters");
+    assert_eq!(UnitDimension::base("seconds").display_name(), "seconds");
+}
+
+#[test]
+fn unit_dim_squared_display() {
+    let m = UnitDimension::base("meters");
+    assert_eq!(m.mul(&m).display_name(), "meters^2");
+}
+
+#[test]
+fn unit_dim_divided_display() {
+    let m = UnitDimension::base("meters");
+    let s = UnitDimension::base("seconds");
+    assert_eq!(m.div(&s).display_name(), "meters/seconds");
+}
+
+#[test]
+fn unit_dim_reciprocal_display() {
+    let s = UnitDimension::base("seconds");
+    let recip = UnitDimension::dimensionless().div(&s);
+    assert_eq!(recip.display_name(), "1/seconds");
+}
+
+#[test]
+fn unit_dim_complex_display() {
+    // kilograms * meters / seconds^2
+    let kg = UnitDimension::base("kilograms");
+    let m = UnitDimension::base("meters");
+    let s = UnitDimension::base("seconds");
+    let result = kg.mul(&m).div(&s).div(&s);
+    assert_eq!(result.display_name(), "kilograms*meters/seconds^2");
+}
+
+#[test]
+fn unit_dim_dimensionless() {
+    let m = UnitDimension::base("meters");
+    assert!(m.div(&m).is_dimensionless());
+}
+
+#[test]
+fn unit_dim_zero_exponents_removed() {
+    // meters * (1/meters) → dimensionless; map must be empty, not {meters: 0}.
+    let m = UnitDimension::base("meters");
+    let recip = UnitDimension::dimensionless().div(&m);
+    let result = m.mul(&recip);
+    assert!(result.is_dimensionless());
+}
+
+#[test]
+fn unit_dim_ordering_deterministic() {
+    // BTreeMap → alphabetical order. meters*seconds and seconds*meters produce same string.
+    let m = UnitDimension::base("meters");
+    let s = UnitDimension::base("seconds");
+    assert_eq!(m.mul(&s).display_name(), s.mul(&m).display_name());
+    assert_eq!(m.mul(&s).display_name(), "meters*seconds");
+}
+
+// --- Milestone 4B: compound unit type checker tests ---
+
+#[test]
+fn type_compound_mul_same_unit_infers_squared() {
+    let interp = run("let d: meters = 3\nlet area = d * d").unwrap();
+    assert_eq!(interp.get_var("area"), Some(Value::Number(9.0)));
+    // meters^2 + meters^2 = ok; meters^2 + meters = error.
+    assert!(check("let d: meters = 3\nlet a1 = d * d\nlet a2 = d * d\nlet sum = a1 + a2").is_ok());
+    assert!(matches!(
+        check("let d: meters = 3\nlet a = d * d\nlet bad = a + d"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_compound_mul_different_units_infers_product() {
+    let interp = run("let d: meters = 3\nlet t: seconds = 4\nlet p = d * t").unwrap();
+    assert_eq!(interp.get_var("p"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn type_compound_div_meters_over_seconds_infers_speed() {
+    let interp = run("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t").unwrap();
+    assert_eq!(interp.get_var("speed"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn type_compound_number_div_unit_infers_reciprocal() {
+    let interp = run("let t: seconds = 4\nlet freq = 20 / t").unwrap();
+    assert_eq!(interp.get_var("freq"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn type_compound_add_same_compound_ok() {
+    // speed + speed → ok (same compound dimension)
+    let interp = run(
+        "let d: meters = 10\nlet t: seconds = 2\nlet s1 = d / t\nlet s2 = d / t\nlet total = s1 + s2"
+    )
+    .unwrap();
+    assert_eq!(interp.get_var("total"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn type_compound_add_different_compound_error() {
+    match check("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nlet bad = speed + d") {
+        Err(KiminError::Type(e)) => {
+            assert!(
+                e.msg.contains("meters") && e.msg.contains("seconds"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected TypeError"),
+        Err(e) => panic!("expected TypeError, got: {}", e),
+    }
+}
+
+#[test]
+fn type_compound_compare_same_compound_ok() {
+    let interp = run(
+        "let d: meters = 10\nlet t: seconds = 2\nlet s1 = d / t\nlet s2 = d / t\nlet r = s1 > s2",
+    )
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn type_compound_compare_different_compound_error() {
+    assert!(matches!(
+        check("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nif speed < d { }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_compound_equality_same_compound_ok() {
+    let interp = run(
+        "let d: meters = 10\nlet t: seconds = 2\nlet s1 = d / t\nlet s2 = d / t\nlet r = s1 == s2",
+    )
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn type_compound_equality_different_compound_error() {
+    assert!(matches!(
+        check("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nlet bad = speed == d"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_compound_let_inferred_preserves_type() {
+    // Inferred compound type is preserved and participates in further arithmetic.
+    assert!(check(
+        "let d: meters = 10\nlet t: seconds = 2\nlet s = d / t\nlet s2 = s\nlet sum = s + s2"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_compound_assign_to_wrong_annotation_errors() {
+    // Cannot assign a compound unit to a base-unit annotation.
+    assert!(matches!(
+        check("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nlet bad: meters = speed"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_compound_speed_times_time_simplifies_to_distance() {
+    // (meters/seconds) * seconds → meters (compound simplification).
+    // Verified by assigning the result to a `: meters` annotation.
+    let interp = run(
+        "let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nlet back = speed * t\nlet check: meters = back"
+    )
+    .unwrap();
+    assert_eq!(interp.get_var("back"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn type_compound_reciprocal_times_unit_is_number() {
+    // (Number / unit) * unit → Number (reciprocal cancels).
+    let interp = run("let t: seconds = 2\nlet freq = 10 / t\nlet back = freq * t").unwrap();
+    assert_eq!(interp.get_var("back"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn type_compound_unary_neg_preserves_compound() {
+    let interp =
+        run("let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nlet neg = -speed").unwrap();
+    assert_eq!(interp.get_var("neg"), Some(Value::Number(-5.0)));
+    // neg and speed have the same compound type — can add.
+    assert!(check(
+        "let d: meters = 10\nlet t: seconds = 2\nlet speed = d / t\nlet neg = -speed\nlet sum = speed + neg"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_compound_closure_captures_compound_type() {
+    // Closure captures a compound-unit variable; type checker follows it through the capture.
+    assert!(check(
+        "fn outer(d: meters, t: seconds) { let speed = d / t\nfn inner() { return speed }\nreturn inner() }"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_compound_meters_squared_runtime_value() {
+    let interp = run("let w: meters = 3\nlet h: meters = 4\nlet area = w * h").unwrap();
+    assert_eq!(interp.get_var("area"), Some(Value::Number(12.0)));
 }

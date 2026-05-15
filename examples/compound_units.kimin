@@ -1,0 +1,33 @@
+// Compound unit inference — Milestone 4B
+// The type checker infers compound unit types from arithmetic.
+// No compound annotations needed; kimin infers them automatically.
+
+let distance: meters = 10
+let time: seconds = 2
+
+// Division infers meters/seconds
+let speed = distance / time
+print(speed)    // 5
+
+// Multiplication infers meters*seconds
+let product = distance * time
+print(product)  // 20
+
+// Area: meters * meters → meters^2
+let width: meters = 3
+let height: meters = 4
+let area = width * height
+print(area)     // 12
+
+// Same-unit division → dimensionless Number
+let ratio = distance / width
+print(ratio)    // 3.3333333333333335
+
+// Compound simplification: (meters/seconds) * seconds → meters
+let back = speed * time
+print(back)     // 10
+
+// Reciprocal: Number / seconds → 1/seconds
+let t: seconds = 4
+let freq = 1 / t
+print(freq)     // 0.25
