@@ -1,4 +1,4 @@
-fn early(x) {
+fn early(x: Number) -> Text {
   if x > 10 {
     return "large"
   }

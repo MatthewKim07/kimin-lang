@@ -1,17 +1,20 @@
-// Demonstrates expected runtime errors. Default run is clean.
+// Demonstrates expected type and runtime errors. Default run is clean.
 
-fn add(a, b) {
+fn add(a: Number, b: Number) -> Number {
   return a + b
 }
 
 print(add(1, 2))
 
-// Uncomment to test wrong arity:
+// Uncomment to test wrong arity (TypeError):
 // print(add(1))
 
-// Uncomment to test non-function call:
+// Uncomment to test non-function call (TypeError):
 // let x = 10
 // print(x())
 
-// Uncomment to test return outside function:
+// Uncomment to test return outside function (TypeError):
 // return 5
+
+// Uncomment to test wrong argument type (TypeError):
+// print(add(1, "hello"))

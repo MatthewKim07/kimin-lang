@@ -1,0 +1,34 @@
+// Each block below demonstrates a static TypeError caught before execution.
+// Uncomment one at a time to see the error message.
+
+// 1. Variable annotation mismatch
+// let x: Number = "hello"
+
+// 2. Wrong argument type
+// fn double(n: Number) -> Number { return n * 2 }
+// print(double("oops"))
+
+// 3. Return type mismatch
+// fn get_name() -> Text { return 42 }
+
+// 4. Wrong arity
+// fn add(a: Number, b: Number) -> Number { return a + b }
+// print(add(1))
+
+// 5. Calling a non-function
+// let x = 10
+// print(x())
+
+// 6. Boolean required for if condition
+// let n = 5
+// if n { print("bad") }
+
+// 7. Boolean required for !
+// let n = 5
+// print(!n)
+
+// 8. Cross-type equality
+// print(1 == "one")
+
+// Default: this file runs clean.
+print("No type errors — uncomment a block to see one.")

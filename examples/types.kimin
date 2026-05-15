@@ -1,0 +1,19 @@
+// Demonstrates type annotations on variables.
+
+let count: Number = 42
+let name: Text = "Kimin"
+let active: Bool = true
+
+print(count)
+print(name)
+print(active)
+
+// Annotations are optional — inferred when omitted.
+let inferred = 100
+print(inferred)
+
+// Type-annotated arithmetic
+let a: Number = 10
+let b: Number = 20
+let sum: Number = a + b
+print(sum)

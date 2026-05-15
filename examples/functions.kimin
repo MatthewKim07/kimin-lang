@@ -1,8 +1,8 @@
-fn add(a, b) {
+fn add(a: Number, b: Number) -> Number {
   return a + b
 }
 
-fn square(x) {
+fn square(x: Number) -> Number {
   return x * x
 }
 
