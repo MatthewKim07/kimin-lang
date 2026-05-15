@@ -1,4 +1,4 @@
-# Kimin Language Specification — Milestone 2A
+# Kimin Language Specification — Milestone 2B
 
 This document describes the syntax and semantics implemented through Milestone 2A.
 
@@ -323,9 +323,43 @@ fn fact(n) {
 print(fact(5))  // 120
 ```
 
-### 5B.5 Scoping Notes (Milestone 2A)
+### 5B.5 Lexical Scoping and Closures (Milestone 2B)
 
-Function calls push a new scope on the existing scope stack. Parameters and locals are visible only within the call. The global scope (including function names) remains visible through the stack. Full closure capture is not yet implemented — see Milestone 2B.
+Kimin uses **lexical (static) scoping**. A function sees variables from the environment at its **declaration site**, not its call site.
+
+```kimin
+let x = 10
+fn show() { return x }
+fn caller() {
+  let x = 99
+  return show()   // returns 10, not 99
+}
+print(caller())   // 10
+```
+
+Functions capture their enclosing environment as a **closure**. The captured environment stays alive as long as the function value exists, even after the enclosing function has returned.
+
+```kimin
+fn make_getter() {
+  let x = 77
+  fn get() { return x }
+  return get
+}
+let getter = make_getter()
+print(getter())   // 77 — x is still accessible via the closure
+```
+
+Recursion works because a function's name is defined in the same environment object that the closure captures. By the time the function body executes, its own name is already visible through `closure_env`.
+
+```kimin
+fn fact(n) {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+print(fact(5))   // 120
+```
+
+Mutual recursion works when both functions are declared in the same environment (e.g., global scope). Both closure environments point to the same shared env, which contains both names by the time either function is called.
 
 ---
 

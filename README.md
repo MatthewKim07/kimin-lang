@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 2A**: named functions, parameters, return values, and recursion. Built on top of the Milestone 1 tree-walk interpreter.
+This repository contains **Milestone 2B**: closures and lexical scoping. Built on top of the Milestone 2A tree-walk interpreter.
 
 ---
 
@@ -34,6 +34,13 @@ This repository contains **Milestone 2A**: named functions, parameters, return v
 - Recursion
 - Nested and chained calls (`square(add(2, 3))`)
 - Runtime errors for wrong arity and non-function calls
+
+### Milestone 2B
+- Lexical (static) scoping — functions see variables from their definition site, not the call site
+- True closures — functions capture their enclosing environment at declaration time
+- Nested functions that capture outer locals
+- Returned functions that keep their captured environment alive after the enclosing function returns
+- Mutual recursion still works (both names in global env before either is called)
 
 ---
 
@@ -186,7 +193,7 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (72 tests)
+  tests.rs        Unit tests (82 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -198,17 +205,19 @@ examples/
   return.kimin
   recursion.kimin
   function_errors.kimin
+  lexical_scoping.kimin
+  closure.kimin
 ```
 
 ---
 
 ## Known Limitations
 
-- No closures — functions capture no environment; nested functions use dynamic scoping
-- No anonymous functions
+- No anonymous functions / lambda syntax
 - No static type checking — all types are dynamic
 - No multiline REPL — function declarations must fit on one input line in the REPL
 - `print` is a statement keyword, not a user-definable function
+- No variable assignment after declaration (`let` only; no `x = 5`)
 
 ---
 
@@ -218,7 +227,7 @@ examples/
 |-----------|-------|--------|
 | 1 | Lexer, parser, AST, tree-walk interpreter, REPL, tests | ✓ done |
 | 2A | Named functions, parameters, return, recursion | ✓ done |
-| 2B | Closures (requires Env refactor to `Rc<RefCell<Scope>>`) | planned |
+| 2B | Closures and lexical scoping (`Rc<RefCell<Env>>` chain) | ✓ done |
 | 3 | Static type checking | planned |
 | 4 | Unit-aware types (`5 meters`, `10 kg`) | planned |
 | 5 | State machines as first-class language constructs | planned |
