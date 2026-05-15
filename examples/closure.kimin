@@ -1,0 +1,14 @@
+// Demonstrates closures: a function returned from another function
+// keeps its captured environment alive after the outer function returns.
+
+fn make_getter() {
+  let x = 77
+  fn get() {
+    return x
+  }
+  return get
+}
+
+let getter = make_getter()
+let result = getter()
+print(result)   // 77 — x is still accessible via the closure

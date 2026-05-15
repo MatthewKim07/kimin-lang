@@ -1,0 +1,17 @@
+// Demonstrates lexical scoping.
+// show() is defined when x = 10 is in scope.
+// A block creates x = 99, but calling show() still returns 10
+// because show() sees its definition-site environment, not the call site.
+
+let x = 10
+
+fn show() {
+  return x
+}
+
+{
+  let x = 99
+  print(show())  // prints 10, not 99
+}
+
+print(show())    // prints 10
