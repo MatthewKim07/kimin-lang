@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 2B
+# Kimin Language Specification — Milestone 3
 
-This document describes the syntax and semantics implemented through Milestone 2A.
+This document describes the syntax and semantics implemented through Milestone 3.
 
 ---
 
@@ -63,7 +63,7 @@ let  if  else  print  fn  return  true  false
 
 | Token | Meaning |
 |-------|---------|
-| `+`   | Addition |
+| `+`   | Addition / string concatenation |
 | `-`   | Subtraction / unary negation |
 | `*`   | Multiplication |
 | `/`   | Division |
@@ -75,6 +75,8 @@ let  if  else  print  fn  return  true  false
 | `>`   | Greater than |
 | `>=`  | Greater than or equal |
 | `=`   | Assignment (in `let`) |
+| `:`   | Type annotation separator |
+| `->`  | Return type annotation |
 | `(`   | Open group |
 | `)`   | Close group |
 | `{`   | Open block |
@@ -85,12 +87,21 @@ let  if  else  print  fn  return  true  false
 
 ## 2. Types
 
-| Type    | Examples            | Notes |
-|---------|---------------------|-------|
-| Number  | `42`, `3.14`        | IEEE 754 `f64` |
-| String  | `"hello"`           | UTF-8 |
-| Bool    | `true`, `false`     | |
-| Nil     | (runtime only)      | No literal syntax in M1 |
+### 2.1 Runtime types
+
+| Type     | Examples            | Notes |
+|----------|---------------------|-------|
+| Number   | `42`, `3.14`        | IEEE 754 `f64` |
+| Text     | `"hello"`           | UTF-8 string |
+| Bool     | `true`, `false`     | |
+| Nil      | (runtime only)      | No literal syntax |
+| Function | (runtime only)      | `FunctionValue` in the interpreter |
+
+### 2.2 Static types (Milestone 3)
+
+The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, or `Nil`.
+
+Functions without a return type annotation are assigned `Unknown` — the gradual-typing escape hatch. Operations involving an `Unknown` value propagate `Unknown` without error, so unannotated code remains valid.
 
 ---
 
@@ -105,7 +116,7 @@ let  if  else  print  fn  return  true  false
 | 3 | `+`, `-` |
 | 4 | `*`, `/` |
 | 5 | Unary `-`, `!` |
-| 6 (highest) | Literals, variables, grouping |
+| 6 (highest) | Literals, variables, grouping, calls |
 
 ### 3.2 Arithmetic
 
@@ -121,6 +132,8 @@ String concatenation uses `+`:
 "hello" + " world"  // "hello world"
 ```
 
+Static rule: `+` requires `Number + Number` or `Text + Text`. Mixing types is a `TypeError`.
+
 ### 3.3 Comparisons
 
 ```kimin
@@ -131,12 +144,16 @@ name != "error"
 
 All comparison operators return `Bool`.
 
+Static rule: `<`, `<=`, `>`, `>=` require `Number` operands. `==` and `!=` require both operands to be the same type.
+
 ### 3.4 Unary Operators
 
 ```kimin
--x       // numeric negation
-!cond    // logical NOT; truthy = non-nil, non-false
+-x       // numeric negation; requires Number
+!cond    // logical NOT; requires Bool
 ```
+
+Static rule: `-` requires `Number`; `!` requires `Bool`.
 
 ### 3.5 Variables
 
@@ -145,7 +162,7 @@ score
 name
 ```
 
-Reading an undefined variable is a `RuntimeError`.
+Reading an undefined variable is a `TypeError`.
 
 ### 3.6 Grouping
 
@@ -163,15 +180,18 @@ Programs are sequences of statements. No semicolons required.
 
 ```kimin
 let <name> = <expr>
+let <name>: <type> = <expr>
 ```
 
-Declares `<name>` in the current scope. Re-declaring in the same scope shadows the previous binding.
+Declares `<name>` in the current scope. The type annotation is optional. When present, the type checker verifies that the initializer expression matches the declared type.
 
 ```kimin
-let x = 10
-let name = "Matthew"
-let flag = true
+let x = 10                  // type inferred as Number
+let name: Text = "Matthew"  // annotation checked against initializer
+let flag: Bool = true
 ```
+
+Static rule: if an annotation is present and the initializer has a different concrete type, a `TypeError` is raised.
 
 ### 4.2 Print
 
@@ -179,13 +199,7 @@ let flag = true
 print(<expr>)
 ```
 
-Evaluates `<expr>` and writes it to stdout followed by a newline. `print` is a statement keyword, not a user-definable function.
-
-```kimin
-print("Hello from Kimin")
-print(1 + 2)
-print(x)
-```
+Evaluates `<expr>` and writes it to stdout followed by a newline. `print` is a statement keyword, not a user-definable function. Printing a `Function` value is a `TypeError`.
 
 ### 4.3 Block
 
@@ -196,16 +210,6 @@ print(x)
 ```
 
 Creates a new lexical scope. Variables declared inside the block are not visible outside.
-
-```kimin
-let x = 5
-{
-  let inner = 99
-  print(inner)  // ok
-}
-// print(inner)  // RuntimeError: undefined variable 'inner'
-print(x)        // still 5
-```
 
 ### 4.4 If / Else
 
@@ -221,7 +225,7 @@ if <expr> {
 }
 ```
 
-The condition is truthy if it is not `false` and not `nil`. Braces are required.
+Static rule: the condition must have type `Bool` (or `Unknown`).
 
 ```kimin
 if score > 10 {
@@ -235,15 +239,11 @@ if score > 10 {
 
 Any expression used as a statement; its value is discarded.
 
-```kimin
-1 + 1   // evaluated, result dropped
-```
-
 ---
 
 ## 5. Scoping Rules
 
-Kimin uses **lexical (static) scoping** for variables and blocks:
+Kimin uses **lexical (static) scoping**:
 
 - Each `{...}` block creates a new scope.
 - A name lookup walks from the innermost scope outward.
@@ -252,30 +252,32 @@ Kimin uses **lexical (static) scoping** for variables and blocks:
 
 ---
 
-## 5B. Functions (Milestone 2A)
+## 5B. Functions
 
 ### 5B.1 Function Declarations
 
 ```kimin
-fn name(param1, param2) {
+fn name(param1: Type1, param2: Type2) -> ReturnType {
   statements
 }
 ```
 
+- Parameters require type annotations (e.g., `: Number`).
+- The return type annotation (`-> Type`) is optional. When omitted, the return type is `Unknown` (gradual typing).
+- Zero parameters are allowed: `fn greet() { ... }`.
 - Declared at any statement position (top level or inside a block).
-- Parameters are identifiers, comma-separated. Zero parameters allowed.
 - Binds the function name in the current scope as a `Function` value.
 
 ```kimin
-fn greet(name) {
-  print("Hello, " + name)
-}
-
-fn add(a, b) {
+fn add(a: Number, b: Number) -> Number {
   return a + b
 }
 
-fn zero() {
+fn greet(name: Text) -> Text {
+  return "Hello, " + name
+}
+
+fn zero() -> Number {
   return 0
 }
 ```
@@ -289,11 +291,10 @@ add(1, 2)
 square(add(2, 3))
 ```
 
-- Call expressions have the highest expression precedence (postfix).
-- Arguments are evaluated left to right before the body executes.
-- Nested calls work: `square(add(2, 3))` → `square(5)` → `25`.
-- Calling a non-function value: `RuntimeError: attempted to call non-function value Number`
-- Wrong argument count: `RuntimeError: function 'add' expected 2 arguments but got 1`
+Static rules:
+- Wrong arity: `TypeError: function 'add' expected 2 arguments but got 1`
+- Wrong argument type: `TypeError: function 'add' argument 2 expected Number but got Text`
+- Non-function callee: `TypeError: cannot call 'x': value has type Number, not Function`
 
 ### 5B.3 Return Statement
 
@@ -303,17 +304,20 @@ return
 ```
 
 - `return expr` exits the current function and yields `expr` as the call result.
-- Bare `return` exits the function and yields `nil`.
-- A function that falls off the end without a `return` also yields `nil`.
+- Bare `return` exits and yields `nil`.
+- A function that falls off the end without `return` yields `nil`.
 - `return` propagates through nested blocks and `if` statements until it exits the function.
-- `return` at the top level (outside any function): `RuntimeError: cannot return outside of a function`
+
+Static rules:
+- `return` at top level (outside any function): `TypeError: cannot return outside of a function`
+- Return value type must match declared return type when both are known: `TypeError: function declared return type Number but returned Text`
 
 ### 5B.4 Recursion
 
-Recursive calls are supported. The function name is bound before the body executes, so it is visible in recursive calls.
+The function name is bound before the body executes, so recursive calls are visible.
 
 ```kimin
-fn fact(n) {
+fn fact(n: Number) -> Number {
   if n <= 1 {
     return 1
   }
@@ -323,13 +327,15 @@ fn fact(n) {
 print(fact(5))  // 120
 ```
 
-### 5B.5 Lexical Scoping and Closures (Milestone 2B)
+The type checker pre-registers all function signatures in a two-pass scan, so mutual recursion type-checks correctly regardless of declaration order.
 
-Kimin uses **lexical (static) scoping**. A function sees variables from the environment at its **declaration site**, not its call site.
+### 5B.5 Lexical Scoping and Closures
+
+Functions capture their enclosing environment at declaration time.
 
 ```kimin
 let x = 10
-fn show() { return x }
+fn show() -> Number { return x }
 fn caller() {
   let x = 99
   return show()   // returns 10, not 99
@@ -337,7 +343,7 @@ fn caller() {
 print(caller())   // 10
 ```
 
-Functions capture their enclosing environment as a **closure**. The captured environment stays alive as long as the function value exists, even after the enclosing function has returned.
+Closures keep their environment alive after the enclosing function returns:
 
 ```kimin
 fn make_getter() {
@@ -346,78 +352,113 @@ fn make_getter() {
   return get
 }
 let getter = make_getter()
-print(getter())   // 77 — x is still accessible via the closure
+print(getter())   // 77
 ```
-
-Recursion works because a function's name is defined in the same environment object that the closure captures. By the time the function body executes, its own name is already visible through `closure_env`.
-
-```kimin
-fn fact(n) {
-  if n <= 1 { return 1 }
-  return n * fact(n - 1)
-}
-print(fact(5))   // 120
-```
-
-Mutual recursion works when both functions are declared in the same environment (e.g., global scope). Both closure environments point to the same shared env, which contains both names by the time either function is called.
 
 ---
 
-## 6. Errors
+## 6. Static Type Checker (Milestone 3)
+
+The type checker runs as a separate pass between the parser and the interpreter.
+
+### 6.1 Type rules summary
+
+| Construct | Rule |
+|-----------|------|
+| `let x: T = e` | `e` must have type `T` |
+| `let x = e` | type inferred from `e` |
+| `fn f(p: T) -> R` | body must return `R`; args must match param types |
+| `if cond` | `cond` must be `Bool` |
+| `!x` | `x` must be `Bool` |
+| `-x` | `x` must be `Number` |
+| `a + b` | both `Number`, or both `Text` |
+| `a - b`, `a * b`, `a / b` | both `Number` |
+| `a < b`, `a <= b`, `a > b`, `a >= b` | both `Number` |
+| `a == b`, `a != b` | both same type |
+
+### 6.2 Gradual typing
+
+Functions without a return type annotation get return type `Unknown`. Any operation on an `Unknown` value propagates `Unknown` without error. This lets unannotated functions coexist with typed ones.
+
+```kimin
+fn no_ret(x: Number) {
+  print(x)   // ok — return type is Unknown (nil at runtime)
+}
+```
+
+---
+
+## 7. Errors
 
 All errors include a phase name and, where possible, source location.
 
-### 6.1 Lex Errors
+### 7.1 Lex Errors
 
 ```
 LexError at line 3, column 7: unexpected character '@'
 LexError at line 5, column 1: unterminated string literal
 ```
 
-### 6.2 Parse Errors
+### 7.2 Parse Errors
 
 ```
 ParseError at line 2, column 5: expected expression
 ParseError at line 1, column 5: expected identifier after 'let'
 ParseError at line 4, column 3: expected '}'
+ParseError at line 1, column 8: expected ':' after parameter name (parameters require type annotations)
+ParseError at line 1, column 10: unknown type 'Numbr'; expected Number, Text, Bool, or Nil
 ```
 
-### 6.3 Runtime Errors
+### 7.3 Type Errors
 
 ```
-RuntimeError: undefined variable 'x'
-RuntimeError: cannot add Number and Bool
-RuntimeError: cannot apply '-' to String and Number
+TypeError at line 1, column 5: variable 'x' declared as Number but initializer has type Text
+TypeError at line 3, column 12: function 'add' argument 2 expected Number but got Text
+TypeError at line 2, column 3: function declared return type Number but returned Text
+TypeError at line 1, column 1: function 'add' expected 2 arguments but got 1
+TypeError at line 1, column 1: cannot call 'x': value has type Number, not Function
+TypeError: if condition must be Bool, got Number
+TypeError: unary '!' requires Bool, got Number
+TypeError: operator '+' expected Number + Number or Text + Text, got Number + Text
+TypeError: operator '==' requires same-type operands, got Number and Text
+TypeError: undefined variable 'x'
+TypeError: cannot return outside of a function
+```
+
+### 7.4 Runtime Errors
+
+```
 RuntimeError: division by zero
-RuntimeError: function 'add' expected 2 arguments but got 1
-RuntimeError: attempted to call non-function value Number
-RuntimeError: cannot return outside of a function
 ```
+
+Most errors that were previously RuntimeErrors (undefined variable, wrong arity, etc.) are now TypeErrors caught before execution.
 
 ---
 
-## 7. Grammar (EBNF)
+## 8. Grammar (EBNF)
 
 ```
-program     = stmt* EOF
-stmt        = fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
-fn_decl     = "fn" IDENT "(" params ")" fn_body
-return_stmt = "return" expr?
-let_stmt    = "let" IDENT "=" expr
-print_stmt  = "print" "(" expr ")"
-if_stmt     = "if" expr block ("else" block)?
-block       = "{" stmt* "}"
-fn_body     = "{" stmt* "}"
-params      = (IDENT ("," IDENT)*)?
-expr_stmt   = expr
+program      = stmt* EOF
+stmt         = fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+fn_decl      = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
+return_stmt  = "return" expr?
+let_stmt     = "let" IDENT (":" type_ann)? "=" expr
+print_stmt   = "print" "(" expr ")"
+if_stmt      = "if" expr block ("else" block)?
+block        = "{" stmt* "}"
+fn_body      = "{" stmt* "}"
+params       = (typed_param ("," typed_param)*)?
+typed_param  = IDENT ":" type_ann
+type_ann     = "Number" | "Text" | "Bool" | "Nil"
+expr_stmt    = expr
 
-expr        = equality
-equality    = comparison (("==" | "!=") comparison)*
-comparison  = term (("<" | "<=" | ">" | ">=") term)*
-term        = factor (("+" | "-") factor)*
-factor      = unary (("*" | "/") unary)*
-unary       = ("-" | "!") unary | call
-call        = primary ("(" args ")")*
-primary     = NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
-args        = (expr ("," expr)*)?
+expr         = equality
+equality     = comparison (("==" | "!=") comparison)*
+comparison   = term (("<" | "<=" | ">" | ">=") term)*
+term         = factor (("+" | "-") factor)*
+factor       = unary (("*" | "/") unary)*
+unary        = ("-" | "!") unary | call
+call         = primary ("(" args ")")*
+primary      = NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
+args         = (expr ("," expr)*)?
 ```
