@@ -6,6 +6,7 @@ pub mod lexer;
 pub mod parser;
 pub mod repl;
 pub mod token;
+pub mod typechecker;
 pub mod value;
 
 #[cfg(test)]

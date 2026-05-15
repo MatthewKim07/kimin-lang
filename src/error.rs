@@ -45,11 +45,33 @@ impl fmt::Display for RuntimeError {
     }
 }
 
+#[derive(Debug)]
+pub struct TypeError {
+    pub msg: String,
+    pub line: usize,
+    pub col: usize,
+}
+
+impl fmt::Display for TypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.line == 0 {
+            write!(f, "TypeError: {}", self.msg)
+        } else {
+            write!(
+                f,
+                "TypeError at line {}, column {}: {}",
+                self.line, self.col, self.msg
+            )
+        }
+    }
+}
+
 /// Top-level error type covering all phases of execution.
 #[derive(Debug)]
 pub enum KiminError {
     Lex(LexError),
     Parse(ParseError),
+    Type(TypeError),
     Runtime(RuntimeError),
 }
 
@@ -58,6 +80,7 @@ impl fmt::Display for KiminError {
         match self {
             KiminError::Lex(e) => write!(f, "{}", e),
             KiminError::Parse(e) => write!(f, "{}", e),
+            KiminError::Type(e) => write!(f, "{}", e),
             KiminError::Runtime(e) => write!(f, "{}", e),
         }
     }
@@ -72,6 +95,12 @@ impl From<LexError> for KiminError {
 impl From<ParseError> for KiminError {
     fn from(e: ParseError) -> Self {
         KiminError::Parse(e)
+    }
+}
+
+impl From<TypeError> for KiminError {
+    fn from(e: TypeError) -> Self {
+        KiminError::Type(e)
     }
 }
 
