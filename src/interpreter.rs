@@ -1,5 +1,7 @@
+use std::rc::Rc;
+
 use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
-use crate::env::Env;
+use crate::env::{Env, EnvRef};
 use crate::error::RuntimeError;
 use crate::value::{FunctionValue, Value};
 
@@ -11,12 +13,14 @@ enum ExecFlow {
 }
 
 pub struct Interpreter {
-    env: Env,
+    env: EnvRef,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        Interpreter { env: Env::new() }
+        Interpreter {
+            env: Env::new_global(),
+        }
     }
 
     /// Execute a program (top-level statement list). A Return reaching here is a runtime error.
@@ -30,7 +34,7 @@ impl Interpreter {
     }
 
     pub fn get_var(&self, name: &str) -> Option<Value> {
-        self.env.get(name)
+        self.env.borrow().get(name)
     }
 
     /// Run a list of statements, propagating any Return upward immediately.
@@ -48,7 +52,7 @@ impl Interpreter {
         match stmt {
             Stmt::Let { name, value, .. } => {
                 let v = self.eval_expr(value)?;
-                self.env.set(name.clone(), v);
+                self.env.borrow_mut().define(name.clone(), v);
                 Ok(ExecFlow::Continue)
             }
             Stmt::Print { value } => {
@@ -61,9 +65,10 @@ impl Interpreter {
                 Ok(ExecFlow::Continue)
             }
             Stmt::Block(stmts) => {
-                self.env.push_scope();
+                let outer = Rc::clone(&self.env);
+                self.env = Env::new_child(Rc::clone(&self.env));
                 let result = self.exec_stmts(stmts);
-                self.env.pop_scope(); // restore scope even on error
+                self.env = outer; // restore even if execution errored
                 result
             }
             Stmt::If {
@@ -87,8 +92,15 @@ impl Interpreter {
                     name: name.clone(),
                     params: params.clone(),
                     body: body.clone(),
+                    // Capture the current env at declaration time (lexical scoping).
+                    // Defining the function into this same env makes the name visible
+                    // to recursive calls — the closure_env and the define target share
+                    // the same Rc<RefCell<Env>>.
+                    closure_env: Rc::clone(&self.env),
                 };
-                self.env.set(name.clone(), Value::Function(func));
+                self.env
+                    .borrow_mut()
+                    .define(name.clone(), Value::Function(func));
                 Ok(ExecFlow::Continue)
             }
             Stmt::Return { value, .. } => {
@@ -107,9 +119,11 @@ impl Interpreter {
             Expr::Str(s) => Ok(Value::Str(s.clone())),
             Expr::Bool(b) => Ok(Value::Bool(*b)),
 
-            Expr::Variable { name, .. } => self.env.get(name).ok_or_else(|| RuntimeError {
-                msg: format!("undefined variable '{}'", name),
-            }),
+            Expr::Variable { name, .. } => {
+                self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })
+            }
 
             Expr::Grouping(inner) => self.eval_expr(inner),
 
@@ -133,7 +147,6 @@ impl Interpreter {
             }
 
             Expr::Call { callee, args, .. } => {
-                // Evaluate callee and all arguments before checking types.
                 let callee_val = self.eval_expr(callee)?;
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for arg in args {
@@ -166,14 +179,18 @@ impl Interpreter {
             });
         }
 
-        self.env.push_scope();
+        // New frame whose parent is the closure's captured environment (lexical scoping).
+        // The function sees its definition-site variables, not the call-site variables.
+        let call_frame = Env::new_child(Rc::clone(&func.closure_env));
         for (param, arg) in func.params.iter().zip(args.into_iter()) {
-            self.env.set(param.clone(), arg);
+            call_frame.borrow_mut().define(param.clone(), arg);
         }
-        // Save body reference before executing so the borrow is clear.
+
+        let outer = Rc::clone(&self.env);
+        self.env = call_frame;
         let body: Vec<Stmt> = func.body.clone();
         let result = self.exec_stmts(&body);
-        self.env.pop_scope(); // restore even if execution errored
+        self.env = outer; // restore even if body errored
 
         match result? {
             ExecFlow::Continue => Ok(Value::Nil),

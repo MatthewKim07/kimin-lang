@@ -1,18 +1,29 @@
 use std::fmt;
 
 use crate::ast::Stmt;
+use crate::env::EnvRef;
 
-/// Runtime representation of a named function.
-/// Body stores statement nodes directly; the interpreter manages call-scope.
-#[derive(Debug, Clone)]
+/// Runtime representation of a named function, capturing its definition-site environment.
+#[derive(Clone)]
 pub struct FunctionValue {
     pub name: String,
     pub params: Vec<String>,
     pub body: Vec<Stmt>,
+    /// Lexical environment captured at the point of function declaration.
+    /// The function sees variables from this env and its ancestors, not from the call site.
+    pub closure_env: EnvRef,
 }
 
-/// Runtime value representation. All values are cloned on assignment;
-/// reference semantics can be added in a later milestone.
+impl fmt::Debug for FunctionValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FunctionValue")
+            .field("name", &self.name)
+            .field("params", &self.params)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Runtime value representation. All values are cloned on assignment.
 #[derive(Debug, Clone)]
 pub enum Value {
     Number(f64),
@@ -41,7 +52,6 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
-            // Functions are never equal (no identity comparison in M2A)
             _ => false,
         }
     }
@@ -50,7 +60,6 @@ impl PartialEq for Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // Print whole numbers without a decimal point.
             Value::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => {
                 write!(f, "{}", *n as i64)
             }

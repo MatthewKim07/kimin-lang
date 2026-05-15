@@ -1,52 +1,56 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
+use std::rc::Rc;
 
 use crate::value::Value;
 
-/// Lexical environment implemented as a scope stack.
-/// push_scope / pop_scope bracket each block; the global scope is never popped.
+/// A shared, interior-mutable reference to an environment frame.
+pub type EnvRef = Rc<RefCell<Env>>;
+
+/// A single frame in the lexical environment chain.
+/// Each frame holds its own bindings and an optional link to its enclosing frame.
 pub struct Env {
-    scopes: Vec<HashMap<String, Value>>,
+    bindings: HashMap<String, Value>,
+    parent: Option<EnvRef>,
 }
 
 impl Env {
-    pub fn new() -> Self {
-        Env {
-            scopes: vec![HashMap::new()],
-        }
+    /// Create the global (root) environment with no parent.
+    pub fn new_global() -> EnvRef {
+        Rc::new(RefCell::new(Env {
+            bindings: HashMap::new(),
+            parent: None,
+        }))
     }
 
-    pub fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+    /// Create a child frame with `parent` as its enclosing environment.
+    pub fn new_child(parent: EnvRef) -> EnvRef {
+        Rc::new(RefCell::new(Env {
+            bindings: HashMap::new(),
+            parent: Some(parent),
+        }))
     }
 
-    pub fn pop_scope(&mut self) {
-        // Never pop the global scope.
-        if self.scopes.len() > 1 {
-            self.scopes.pop();
-        }
-    }
-
-    /// Look up a variable, searching from innermost to outermost scope.
+    /// Look up a variable, walking from this frame up through all parent frames.
     pub fn get(&self, name: &str) -> Option<Value> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(v) = scope.get(name) {
-                return Some(v.clone());
-            }
+        if let Some(v) = self.bindings.get(name) {
+            return Some(v.clone());
         }
-        None
+        match &self.parent {
+            Some(parent) => parent.borrow().get(name),
+            None => None,
+        }
     }
 
-    /// Define or shadow a variable in the current (innermost) scope.
-    pub fn set(&mut self, name: String, value: Value) {
-        self.scopes
-            .last_mut()
-            .expect("scope stack is empty — this is a bug in Kimin")
-            .insert(name, value);
+    /// Define a variable in this frame (innermost scope only).
+    pub fn define(&mut self, name: String, value: Value) {
+        self.bindings.insert(name, value);
     }
 }
 
-impl Default for Env {
-    fn default() -> Self {
-        Self::new()
+impl fmt::Debug for Env {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Env({} bindings)", self.bindings.len())
     }
 }
