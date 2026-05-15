@@ -15,7 +15,7 @@ use crate::token::{Span, Token, TokenKind};
 ///   if_stmt       → "if" expr block ("else" block)?
 ///   block         → "{" stmt* "}"
 ///   fn_body       → "{" stmt* "}"
-///   type_ann      → "Number" | "Text" | "Bool" | "Nil"
+///   type_ann      → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME
 ///   expr_stmt     → expr
 ///   expr          → equality
 ///   equality      → comparison (("==" | "!=") comparison)*

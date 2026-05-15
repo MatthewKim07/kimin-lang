@@ -1211,3 +1211,82 @@ fn type_unit_scale_and_ratio() {
             .unwrap();
     assert_eq!(interp.get_var("ratio"), Some(Value::Number(1.0)));
 }
+
+// --- Milestone 4 audit: edge cases ---
+
+#[test]
+fn type_unit_unit_plus_number_error() {
+    // NumberWithUnit + Number is not valid; promotion only applies at assignment/call sites.
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = d + 5"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_unit_minus_number_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = d - 5"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_number_minus_unit_error() {
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = 5 - d"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_unit_gt_number_error() {
+    // Comparison between unit and plain Number is not valid.
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = d > 5"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_unit_eq_number_error() {
+    // Equality between unit and plain Number is not valid (different types).
+    assert!(matches!(
+        run("let d: meters = 10\nlet bad = d == 5"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_cross_alias_arithmetic_ok() {
+    // amps and A both canonicalize to "amperes" — they can be added.
+    assert!(check("let a: amps = 3\nlet b: A = 2\nlet c = a + b").is_ok());
+}
+
+#[test]
+fn type_unit_number_expr_promotes_to_unit_param() {
+    // A Number-typed *expression* (not just a literal) also promotes to a unit param.
+    assert!(check("fn f(d: meters) -> meters { return d }\nf(2 + 3)").is_ok());
+}
+
+#[test]
+fn type_unit_arg_to_number_param_is_error() {
+    // Promotion is one-way: cannot pass a unit-typed value to a Number param.
+    assert!(matches!(
+        run("fn f(x: Number) -> Number { return x }\nlet d: meters = 10\nf(d)"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_unit_unknown_plus_unit_propagates_unknown() {
+    // Unknown on either side of binary op propagates Unknown — gradual typing escape hatch.
+    // An unannotated-return function returns Unknown; Unknown + unit → Unknown, no error.
+    assert!(check("fn f(x: Number) { return x }\nlet d: meters = 10\nlet r = f(5) + d").is_ok());
+}
+
+#[test]
+fn type_unit_unknown_satisfies_unit_annotation() {
+    // Unknown from an unannotated function satisfies a unit annotation on let.
+    assert!(check("fn f(x: Number) { return x }\nlet d: meters = f(10)").is_ok());
+}
