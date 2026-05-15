@@ -1,0 +1,17 @@
+// Demonstrates expected runtime errors. Default run is clean.
+
+fn add(a, b) {
+  return a + b
+}
+
+print(add(1, 2))
+
+// Uncomment to test wrong arity:
+// print(add(1))
+
+// Uncomment to test non-function call:
+// let x = 10
+// print(x())
+
+// Uncomment to test return outside function:
+// return 5

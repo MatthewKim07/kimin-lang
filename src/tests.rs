@@ -390,3 +390,186 @@ fn parse_error_unclosed_paren() {
 fn parse_error_missing_closing_brace() {
     assert!(matches!(check("{ let x = 1"), Err(KiminError::Parse(_))));
 }
+
+// --- lexer: new tokens (Milestone 2A) ---
+
+#[test]
+fn lex_fn_keyword() {
+    let kinds = tokenize("fn");
+    assert_eq!(kinds[0], TokenKind::Fn);
+}
+
+#[test]
+fn lex_return_keyword() {
+    let kinds = tokenize("return");
+    assert_eq!(kinds[0], TokenKind::Return);
+}
+
+#[test]
+fn lex_comma() {
+    let kinds = tokenize(",");
+    assert_eq!(kinds[0], TokenKind::Comma);
+}
+
+// --- parser: function declarations (Milestone 2A) ---
+
+#[test]
+fn parse_fn_decl_zero_params() {
+    assert!(check("fn greet() { }").is_ok());
+}
+
+#[test]
+fn parse_fn_decl_multiple_params() {
+    assert!(check("fn add(a, b, c) { return a + b + c }").is_ok());
+}
+
+#[test]
+fn parse_return_with_value() {
+    assert!(check("fn f() { return 42 }").is_ok());
+}
+
+#[test]
+fn parse_return_without_value() {
+    assert!(check("fn f() { return }").is_ok());
+}
+
+#[test]
+fn parse_call_zero_args() {
+    assert!(check("fn f() { } f()").is_ok());
+}
+
+#[test]
+fn parse_call_multiple_args() {
+    assert!(check("fn add(a, b) { return a + b } add(1, 2)").is_ok());
+}
+
+#[test]
+fn parse_nested_calls() {
+    assert!(check("fn id(x) { return x } id(id(id(5)))").is_ok());
+}
+
+// --- interpreter: function calls (Milestone 2A) ---
+
+#[test]
+fn fn_call_returns_value() {
+    let interp = run("fn add(a, b) { return a + b }\nlet r = add(2, 3)").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn fn_without_return_gives_nil() {
+    let interp = run("fn noop() { let x = 1 }\nlet r = noop()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Nil));
+}
+
+#[test]
+fn fn_bare_return_gives_nil() {
+    let interp = run("fn early() { return }\nlet r = early()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Nil));
+}
+
+#[test]
+fn fn_params_bind_correctly() {
+    let interp = run("fn sub(x, y) { return x - y }\nlet r = sub(10, 3)").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(7.0)));
+}
+
+#[test]
+fn fn_locals_do_not_leak() {
+    let interp = run("fn f() { let local = 99 }\nf()").unwrap();
+    assert_eq!(interp.get_var("local"), None);
+}
+
+#[test]
+fn fn_locals_shadow_globals() {
+    let interp = run("let x = 1\nfn f() { let x = 99\nreturn x }\nlet r = f()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(99.0)));
+    // outer x unchanged
+    assert_eq!(interp.get_var("x"), Some(Value::Number(1.0)));
+}
+
+#[test]
+fn fn_return_inside_if_exits_function() {
+    let interp =
+        run("fn check(n) { if n > 10 { return \"big\" }\nreturn \"small\" }\nlet r = check(15)")
+            .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("big".to_string())));
+}
+
+#[test]
+fn fn_return_inside_nested_block_exits_function() {
+    let interp = run("fn f() { { return 7 } }\nlet r = f()").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(7.0)));
+}
+
+#[test]
+fn fn_wrong_arity_error() {
+    match run("fn add(a, b) { return a + b }\nadd(1)") {
+        Err(KiminError::Runtime(e)) => {
+            assert!(
+                e.msg.contains("add") && e.msg.contains("2") && e.msg.contains("1"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected RuntimeError, got Ok"),
+        Err(e) => panic!("expected RuntimeError, got: {}", e),
+    }
+}
+
+#[test]
+fn fn_call_non_function_error() {
+    match run("let x = 42\nx()") {
+        Err(KiminError::Runtime(e)) => {
+            assert!(
+                e.msg.contains("non-function"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected RuntimeError, got Ok"),
+        Err(e) => panic!("expected RuntimeError, got: {}", e),
+    }
+}
+
+#[test]
+fn fn_return_outside_function_error() {
+    match run("return 5") {
+        Err(KiminError::Runtime(e)) => {
+            assert!(
+                e.msg.contains("return") && e.msg.contains("outside"),
+                "unexpected error: {}",
+                e.msg
+            );
+        }
+        Ok(_) => panic!("expected RuntimeError, got Ok"),
+        Err(e) => panic!("expected RuntimeError, got: {}", e),
+    }
+}
+
+#[test]
+fn fn_recursion_factorial() {
+    let interp =
+        run("fn fact(n) { if n <= 1 { return 1 }\nreturn n * fact(n - 1) }\nlet r = fact(5)")
+            .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(120.0)));
+}
+
+// --- REPL: function preserved across interpreter calls ---
+
+#[test]
+fn repl_function_preserved_across_calls() {
+    let mut interp = Interpreter::new();
+
+    let tokens = Lexer::new("fn add(a, b) { return a + b }")
+        .tokenize()
+        .unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    interp.run(&stmts).unwrap();
+
+    let tokens2 = Lexer::new("let r = add(10, 5)").tokenize().unwrap();
+    let stmts2 = Parser::new(tokens2).parse().unwrap();
+    interp.run(&stmts2).unwrap();
+
+    assert_eq!(interp.get_var("r"), Some(Value::Number(15.0)));
+}
