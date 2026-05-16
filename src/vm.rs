@@ -1,8 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
 use crate::error::{KiminError, RuntimeError};
 use crate::value::Value;
+
+/// State machine metadata registered at runtime by DefineState.
+/// The state name is the HashMap key; it is not duplicated here.
+#[derive(Debug, Clone)]
+struct RuntimeStateMachine {
+    variants: HashSet<String>,
+    /// Declared allowed transitions as (from, to) pairs.
+    transitions: HashSet<(String, String)>,
+}
 
 /// Minimal stack-based bytecode VM for Kimin.
 ///
@@ -12,6 +21,8 @@ use crate::value::Value;
 pub struct Vm {
     program: BytecodeProgram,
     globals: HashMap<String, Value>,
+    /// State machine metadata registered by DefineState instructions.
+    states: HashMap<String, RuntimeStateMachine>,
     output: Vec<String>,
 }
 
@@ -20,6 +31,7 @@ impl Vm {
         Vm {
             program,
             globals: HashMap::new(),
+            states: HashMap::new(),
             output: Vec::new(),
         }
     }
@@ -275,6 +287,97 @@ impl Vm {
                     return Ok(None);
                 }
 
+                Instruction::DefineState {
+                    name,
+                    variants,
+                    transitions,
+                } => {
+                    let rsm = RuntimeStateMachine {
+                        variants: variants.into_iter().collect(),
+                        transitions: transitions.into_iter().collect(),
+                    };
+                    self.states.insert(name, rsm);
+                    // No stack effect.
+                }
+
+                Instruction::LoadState {
+                    state_name,
+                    variant_name,
+                } => {
+                    if !self.states.contains_key(&state_name) {
+                        return Err(runtime_err(&format!(
+                            "unknown state machine '{}'",
+                            state_name
+                        )));
+                    }
+                    if !self.states[&state_name].variants.contains(&variant_name) {
+                        return Err(runtime_err(&format!(
+                            "unknown variant '{}' for state '{}'",
+                            variant_name, state_name
+                        )));
+                    }
+                    stack.push(Value::StateValue {
+                        state_name,
+                        variant_name,
+                    });
+                }
+
+                Instruction::Transition { variable, target } => {
+                    // Read current value — extract owned data so borrow ends before mutation.
+                    let (state_name, current_variant) = {
+                        let current =
+                            get_var(&variable, locals, &self.globals).ok_or_else(|| {
+                                runtime_err(&format!("undefined state variable '{}'", variable))
+                            })?;
+                        match current {
+                            Value::StateValue {
+                                state_name,
+                                variant_name,
+                            } => (state_name, variant_name),
+                            _ => {
+                                return Err(runtime_err(&format!(
+                                    "transition target '{}' is not a state value",
+                                    variable
+                                )))
+                            }
+                        }
+                    };
+
+                    // Validate metadata — extract bools to release the immutable borrow.
+                    let (has_variant, valid_edge) = match self.states.get(&state_name) {
+                        None => {
+                            return Err(runtime_err(&format!(
+                                "unknown state machine '{}'",
+                                state_name
+                            )))
+                        }
+                        Some(sm) => (
+                            sm.variants.contains(&target),
+                            sm.transitions
+                                .contains(&(current_variant.clone(), target.clone())),
+                        ),
+                    };
+
+                    if !has_variant {
+                        return Err(runtime_err(&format!(
+                            "unknown variant '{}' for state '{}'",
+                            target, state_name
+                        )));
+                    }
+                    if !valid_edge {
+                        return Err(runtime_err(&format!(
+                            "invalid transition for {}: {} -> {}",
+                            state_name, current_variant, target
+                        )));
+                    }
+
+                    let new_val = Value::StateValue {
+                        state_name,
+                        variant_name: target,
+                    };
+                    assign_var(&variable, new_val, locals, &mut self.globals)?;
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",
@@ -335,4 +438,38 @@ fn runtime_err(msg: &str) -> KiminError {
     KiminError::Runtime(RuntimeError {
         msg: msg.to_string(),
     })
+}
+
+/// Look up a variable: check locals (innermost first), then globals.
+fn get_var(
+    name: &str,
+    locals: &[HashMap<String, Value>],
+    globals: &HashMap<String, Value>,
+) -> Option<Value> {
+    for frame in locals.iter().rev() {
+        if let Some(v) = frame.get(name) {
+            return Some(v.clone());
+        }
+    }
+    globals.get(name).cloned()
+}
+
+/// Update a variable in-place: nearest local first, then global.
+fn assign_var(
+    name: &str,
+    value: Value,
+    locals: &mut [HashMap<String, Value>],
+    globals: &mut HashMap<String, Value>,
+) -> Result<(), KiminError> {
+    for frame in locals.iter_mut().rev() {
+        if frame.contains_key(name) {
+            frame.insert(name.to_string(), value);
+            return Ok(());
+        }
+    }
+    if globals.contains_key(name) {
+        globals.insert(name.to_string(), value);
+        return Ok(());
+    }
+    Err(runtime_err(&format!("undefined state variable '{}'", name)))
 }
