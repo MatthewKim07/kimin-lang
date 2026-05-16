@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 8A
+# Kimin Language Specification — Milestone 8B
 
-This document describes the syntax and semantics implemented through Milestone 8A.
+This document describes the syntax and semantics implemented through Milestone 8B.
 
 ---
 
@@ -768,3 +768,46 @@ primary         = NUMBER | STRING | "true" | "false"
                 | "(" expr ")"
 args            = (expr ("," expr)*)?
 ```
+
+---
+
+## Implementation Note: Bytecode IR (Milestone 8B)
+
+Language semantics are defined by the tree-walk interpreter. The bytecode IR is a separate inspection tool with no effect on execution.
+
+### What M8B lowers
+
+- **Function declarations** (`fn name(params) -> ReturnType { body }`) produce a `FunctionChunk` with its own instruction stream. Parameters are pre-seeded as local variables. Bodies without an explicit `return` receive an implicit `NIL + RETURN`.
+- **Named function calls** (`name(args)`) lower to argument expressions followed by `CALL name arg_count`.
+- Recursive and mutually-recursive calls emit `CALL` instructions by name.
+
+### What remains as `UNSUPPORTED`
+
+- State declarations (`state`)
+- State variant expressions (`State.variant`)
+- Transition statements (`transition`)
+- Simulate blocks (`simulate`)
+- Computed/dynamic callees (`get_fn()(args)`)
+
+### Bytecode IR structures
+
+```
+BytecodeProgram {
+  main: Chunk,               // top-level instructions
+  functions: Vec<FunctionChunk>,  // one per fn decl, in source order
+}
+
+FunctionChunk {
+  name: String,
+  params: Vec<String>,
+  arity: usize,
+  chunk: Chunk,
+}
+```
+
+### New instructions (M8B)
+
+| Instruction | Meaning |
+|-------------|---------|
+| `LOAD_FUNCTION name` | Push reference to named function from function table |
+| `CALL name arg_count` | Call named function; `arg_count` arguments already on stack |

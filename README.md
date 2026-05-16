@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8A**: flat bytecode IR emission. Built on top of the Milestone 7A `let mut` / assignment layer.
+This repository contains **Milestone 8B**: function and call lowering in the bytecode IR. Built on top of the Milestone 8A flat bytecode layer.
 
 ---
 
@@ -140,9 +140,22 @@ This repository contains **Milestone 8A**: flat bytecode IR emission. Built on t
   - Constant pool: numbers, strings, booleans, nil
   - Jump patching: `JumpIfFalse` and `Jump` targets are filled in after the branch body is emitted
   - Local scope: variables inside `{ ... }` blocks emit `DefineLocal`/`LoadLocal`/`StoreLocal`; top-level emit `DefineGlobal`/`LoadGlobal`/`StoreGlobal`
-  - Advanced features (functions, state machines, simulate) emit `Unsupported(...)` markers — tree-walk interpreter is unchanged and remains the execution source of truth
   - `CompileError` type added; `KiminError::Compile` variant added
 - **`kimin bytecode` CLI command**: emits the disassembly listing to stdout; lex/parse/typecheck errors still reported normally
+
+### Milestone 8B
+- **Function chunks**: `BytecodeProgram` now contains `main: Chunk` and `functions: Vec<FunctionChunk>`
+  - Each `FunctionChunk` stores `name`, `params`, `arity`, and its own `Chunk`
+  - Function declarations lower to `LOAD_FUNCTION name` + `DEFINE_GLOBAL name` in the main chunk and a separate function chunk
+  - Function parameters are pre-seeded as locals; body `let` bindings also emit `DefineLocal`/`LoadLocal`
+  - Bodies without an explicit `return` receive an implicit `NIL` + `RETURN` at the end
+- **Named call lowering**: `Expr::Call` with a simple variable callee lowers to argument expressions followed by `CALL name arg_count`
+  - Recursive calls (e.g., `fact(n - 1)`) correctly emit `CALL fact 1` inside the function chunk
+  - Nested calls (e.g., `square(add(2, 3))`) emit inner call before outer call
+  - Dynamic (computed) callees emit `UNSUPPORTED(dynamic call)` — not yet lowered
+- **Disassembler**: prints each function chunk after main with header `=== function name/arity ===` and `params:` line
+- State machines, `transition`, and `simulate` still emit `Unsupported(...)` markers
+- Tree-walk interpreter is unchanged and remains the execution source of truth; bytecode IR is not yet executed
 
 ---
 
@@ -397,7 +410,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-395 tests pass as of Milestone 8A (post-audit).
+420 tests pass as of Milestone 8B.
 
 ---
 
@@ -417,10 +430,10 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime/Compile)
   repl.rs         Interactive REPL
-  bytecode.rs     Instruction enum, Constant, Chunk, BytecodeProgram
-  compiler.rs     BytecodeCompiler — lowers AST to flat bytecode chunk
-  disassemble.rs  Human-readable bytecode listing printer
-  tests.rs        Unit tests (395 tests)
+  bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
+  compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
+  disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
+  tests.rs        Unit tests (420 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -455,6 +468,7 @@ examples/
   mutable_errors.kimin
   simulate_motion.kimin
   bytecode_demo.kimin
+  bytecode_functions.kimin
 ```
 
 ---
@@ -479,6 +493,10 @@ examples/
 - No compound assignment operators (`+=`, `-=`, `*=`, `/=`)
 - No mutable function parameters — parameters are always immutable
 - No general loops (`while`, `for`) — only `simulate` blocks
+- Bytecode IR: function declarations and named calls now lower fully; state machines, `transition`, and `simulate` still emit `Unsupported(...)` markers
+- Bytecode IR: dynamic/computed calls (`get_fn()(args)`) emit `UNSUPPORTED(dynamic call)` — not yet supported
+- Bytecode IR: free variable capture (closures) inside function bodies emits `LOAD_GLOBAL` provisionally — not semantically correct for all closure patterns
+- Bytecode IR is not executed — tree-walk interpreter remains the runtime
 
 ---
 
@@ -497,4 +515,5 @@ examples/
 | 6B | Extended time units (`milliseconds`, `minutes`, `hours`) for `simulate` | ✓ done |
 | 7A | `let mut` and type-safe assignment; mutable simulate accumulators | ✓ done |
 | 8A | Flat bytecode IR emission (`kimin bytecode`); `Unsupported` markers for advanced features | ✓ done |
-| 8 | Full bytecode VM execution; function/state/simulate lowering | planned |
+| 8B | Function chunks and named call lowering in bytecode IR | ✓ done |
+| 8 | Full bytecode VM execution; state/simulate lowering | planned |
