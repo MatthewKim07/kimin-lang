@@ -3264,25 +3264,31 @@ fn bytecode_call_emits_call_instruction() {
 }
 
 #[test]
-fn bytecode_state_decl_emits_unsupported() {
+fn bytecode_state_decl_emits_define_state() {
     let prog = compile_prog("state Door { closed open transition closed -> open }");
     let instrs = &prog.main.instructions;
-    assert!(matches!(&instrs[0], Instruction::Unsupported(s) if s == "state Door"));
+    assert!(
+        matches!(&instrs[0], Instruction::DefineState { name, .. } if name == "Door"),
+        "expected DefineState for 'Door', got {:?}",
+        instrs[0]
+    );
 }
 
 #[test]
-fn bytecode_transition_emits_unsupported() {
+fn bytecode_transition_emits_transition_instruction() {
     let prog = compile_prog(concat!(
         "state Door { closed open transition closed -> open }\n",
         "let door: Door = Door.closed\n",
         "transition door -> open"
     ));
-    let has_transition = prog
-        .main
-        .instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "transition door -> open"));
-    assert!(has_transition);
+    let has_transition = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::Transition { variable, target }
+            if variable == "door" && target == "open")
+    });
+    assert!(
+        has_transition,
+        "expected Transition instruction in main chunk"
+    );
 }
 
 #[test]
@@ -3531,17 +3537,16 @@ fn disassemble_load_global_shown() {
 // --- M8A audit: unsupported coverage ---
 
 #[test]
-fn bytecode_state_variant_expr_emits_unsupported() {
-    // Door.closed as an expression emits UNSUPPORTED marker.
+fn bytecode_state_variant_expr_emits_load_state() {
+    // Door.closed as an expression now emits LoadState, not Unsupported.
     let prog = compile_prog(
         "state Door { closed open transition closed -> open }\nlet d: Door = Door.closed",
     );
-    let has_variant = prog
-        .main
-        .instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "Door.closed"));
-    assert!(has_variant);
+    let has_load = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::LoadState { state_name, variant_name }
+            if state_name == "Door" && variant_name == "closed")
+    });
+    assert!(has_load, "expected LoadState Door.closed in main chunk");
 }
 
 #[test]
@@ -4453,22 +4458,10 @@ fn vm_wrong_arity_error() {
 }
 
 #[test]
-fn vm_unsupported_state_feature_errors() {
-    // State declarations lower to Unsupported; VM must surface a clear error.
-    let src = "state Door { closed opening open }";
-    let tokens = Lexer::new(src).tokenize().unwrap();
-    let stmts = Parser::new(tokens).parse().unwrap();
-    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
-    use crate::vm::Vm;
-    let mut vm = Vm::new(prog);
-    let result = vm.run();
-    assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("bytecode feature not yet executable"),
-        "got: {}",
-        msg
-    );
+fn vm_define_state_runs_without_output() {
+    // State declaration now executes (registers metadata) with no stack effect / no output.
+    let out = vm_run_unchecked("state Door { closed opening open }").unwrap();
+    assert!(out.is_empty());
 }
 
 #[test]
@@ -4657,21 +4650,21 @@ print(count)"#;
 // ─── Audit: unsupported features ───────────────────────────────────────────
 
 #[test]
-fn vm_unsupported_transition_errors() {
-    let src = "state Door { closed open  transition closed -> open }\nlet door: Door = Door.closed\ntransition door -> open";
+fn vm_transition_sequence_works() {
+    // State declaration + binding + transition now execute correctly in the VM.
+    let src = concat!(
+        "state Door { closed open  transition closed -> open }\n",
+        "let door: Door = Door.closed\n",
+        "transition door -> open\n",
+        "print(door)"
+    );
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
     let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
     use crate::vm::Vm;
     let mut vm = Vm::new(prog);
-    let result = vm.run();
-    assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("bytecode feature not yet executable"),
-        "got: {}",
-        msg
-    );
+    vm.run().unwrap();
+    assert_eq!(vm.take_output(), vec!["Door.open"]);
 }
 
 #[test]
@@ -4693,8 +4686,8 @@ fn vm_unsupported_simulate_errors() {
 }
 
 #[test]
-fn vm_unsupported_state_value_errors() {
-    // Expr::StateVariant lowers to Unsupported("Door.closed")
+fn vm_load_unknown_state_errors() {
+    // LoadState without a preceding DefineState → RuntimeError: unknown state machine.
     let src = "print(Door.closed)";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
@@ -4704,11 +4697,7 @@ fn vm_unsupported_state_value_errors() {
     let result = vm.run();
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("bytecode feature not yet executable"),
-        "got: {}",
-        msg
-    );
+    assert!(msg.contains("unknown state machine"), "got: {}", msg);
 }
 
 #[test]
@@ -4844,4 +4833,376 @@ if false { print(99) }
 if true { print(2) }"#;
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["1", "2"]);
+}
+
+// ─── M8D: state machine bytecode tests ─────────────────────────────────────
+
+const DOOR_SRC: &str = "state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}";
+
+#[test]
+fn bytecode_define_state_preserves_variants_and_transitions() {
+    let prog = compile_prog(DOOR_SRC);
+    let instrs = &prog.main.instructions;
+    match &instrs[0] {
+        Instruction::DefineState {
+            name,
+            variants,
+            transitions,
+        } => {
+            assert_eq!(name, "Door");
+            assert!(variants.contains(&"closed".to_string()));
+            assert!(variants.contains(&"opening".to_string()));
+            assert!(variants.contains(&"open".to_string()));
+            assert!(transitions.contains(&("closed".into(), "opening".into())));
+            assert!(transitions.contains(&("opening".into(), "open".into())));
+        }
+        other => panic!("expected DefineState, got {:?}", other),
+    }
+}
+
+#[test]
+fn bytecode_state_variant_let_emits_load_state_then_define_global() {
+    // let door: Door = Door.closed → LoadState + DefineGlobal
+    let prog = compile_prog(&format!("{}\nlet door: Door = Door.closed", DOOR_SRC));
+    let instrs = &prog.main.instructions;
+    // Find LoadState followed by DefineGlobal("door")
+    let load_idx = instrs
+        .iter()
+        .position(|i| {
+            matches!(i, Instruction::LoadState { state_name, variant_name }
+            if state_name == "Door" && variant_name == "closed")
+        })
+        .expect("LoadState Door.closed not found");
+    assert!(
+        matches!(&instrs[load_idx + 1], Instruction::DefineGlobal(n) if n == "door"),
+        "expected DefineGlobal(door) after LoadState"
+    );
+}
+
+#[test]
+fn bytecode_simulate_still_emits_unsupported() {
+    let prog = compile_prog("let dur = 3\nlet dt = 1\nsimulate dur step dt { }");
+    let has_unsupported = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "simulate"));
+    assert!(has_unsupported, "simulate must still emit Unsupported");
+}
+
+#[test]
+fn disassemble_define_state_format() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(DOOR_SRC);
+    let out = disassemble(&prog);
+    assert!(
+        out.contains("DEFINE_STATE Door"),
+        "expected DEFINE_STATE Door in disassembly"
+    );
+    assert!(
+        out.contains("variants=["),
+        "expected variants list in disassembly"
+    );
+    assert!(
+        out.contains("transitions=["),
+        "expected transitions list in disassembly"
+    );
+}
+
+#[test]
+fn disassemble_load_state_format() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(&format!("{}\nlet door: Door = Door.closed", DOOR_SRC));
+    let out = disassemble(&prog);
+    assert!(
+        out.contains("LOAD_STATE Door.closed"),
+        "expected LOAD_STATE Door.closed"
+    );
+}
+
+#[test]
+fn disassemble_transition_format() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(&format!(
+        "{}\nlet door: Door = Door.closed\ntransition door -> opening",
+        DOOR_SRC
+    ));
+    let out = disassemble(&prog);
+    assert!(
+        out.contains("TRANSITION door -> opening"),
+        "expected TRANSITION door -> opening"
+    );
+}
+
+#[test]
+fn disassemble_states_example_no_unsupported_for_state() {
+    // states.kimin must no longer contain UNSUPPORTED for state or state values.
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(&format!(
+        "{}\nlet door: Door = Door.closed\ntransition door -> opening\ntransition door -> open",
+        DOOR_SRC
+    ));
+    let out = disassemble(&prog);
+    assert!(
+        !out.contains("UNSUPPORTED(state"),
+        "state decl must not emit UNSUPPORTED"
+    );
+    assert!(
+        !out.contains("UNSUPPORTED(transition"),
+        "transition must not emit UNSUPPORTED"
+    );
+    assert!(
+        !out.contains("UNSUPPORTED(Door"),
+        "state variant must not emit UNSUPPORTED"
+    );
+}
+
+// ─── M8D: VM state machine execution tests ─────────────────────────────────
+
+fn vm_run_state(src: &str) -> Result<Vec<String>, KiminError> {
+    // vm_run_unchecked bypasses the type checker — convenient for state programs
+    // that use type annotations (Door) the type checker validates but we don't need here.
+    vm_run_unchecked(src)
+}
+
+#[test]
+fn vm_let_state_variable_prints_state() {
+    let src = format!("{}\nlet door: Door = Door.closed\nprint(door)", DOOR_SRC);
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn vm_transition_updates_global_state_value() {
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\ntransition door -> opening\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+#[test]
+fn vm_transition_sequence_full() {
+    // Mirrors states.kimin expected output.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nprint(door)\ntransition door -> opening\nprint(door)\ntransition door -> open\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed", "Door.opening", "Door.open"]);
+}
+
+#[test]
+fn vm_state_value_printed_via_display() {
+    // Value::StateValue Display format is state_name.variant_name
+    let src = format!("{}\nlet d: Door = Door.opening\nprint(d)", DOOR_SRC);
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+#[test]
+fn vm_transition_inside_block_updates_outer_state() {
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\n{{ transition door -> opening }}\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+#[test]
+fn vm_state_returned_from_function() {
+    let src = format!(
+        "{}\nfn make_door() -> Door {{ return Door.closed }}\nprint(make_door())",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn vm_state_passed_to_function_and_printed() {
+    let src = format!(
+        "{}\nfn show(d: Door) {{ print(d) }}\nlet door: Door = Door.opening\nshow(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+#[test]
+fn vm_transition_inside_function_updates_param_not_caller() {
+    // Current language semantics: transition inside fn body updates the function-local
+    // copy of the parameter, not the caller's binding.
+    let src = format!(
+        "{}\nfn open_local(d: Door) -> Door {{ transition d -> opening\nreturn d }}\nlet door: Door = Door.closed\nlet changed = open_local(door)\nprint(door)\nprint(changed)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed", "Door.opening"]);
+}
+
+#[test]
+fn vm_state_value_equality() {
+    // Two StateValues with same state_name and variant_name are equal.
+    let src = format!(
+        "{}\nlet a: Door = Door.closed\nlet b: Door = Door.closed\nprint(a == b)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_state_value_inequality() {
+    let src = format!(
+        "{}\nlet a: Door = Door.closed\nlet b: Door = Door.opening\nprint(a == b)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn vm_define_state_no_stack_effect() {
+    // DefineState must have no stack effect — subsequent print still works.
+    let src = format!("{}\nprint(1)", DOOR_SRC);
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// ─── M8D: VM state machine error tests ─────────────────────────────────────
+
+#[test]
+fn vm_load_unknown_variant_errors() {
+    // DefineState registered Door, but variant "locked" not declared.
+    let src = format!("{}\nlet d = Door.locked", DOOR_SRC);
+    let tokens = Lexer::new(&src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("unknown variant"), "got: {}", msg);
+}
+
+#[test]
+fn vm_transition_unknown_variable_errors() {
+    // Transition on a variable that does not exist.
+    let src = format!("{}\ntransition ghost -> opening", DOOR_SRC);
+    let tokens = Lexer::new(&src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("undefined state variable"), "got: {}", msg);
+}
+
+#[test]
+fn vm_transition_non_state_value_errors() {
+    // Transition on a variable that holds a Number, not a StateValue.
+    let src = format!("{}\nlet n = 5\ntransition n -> opening", DOOR_SRC);
+    let tokens = Lexer::new(&src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("not a state value"), "got: {}", msg);
+}
+
+#[test]
+fn vm_transition_unknown_target_variant_errors() {
+    // Transition to a variant that exists in neither declaration.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\ntransition door -> locked",
+        DOOR_SRC
+    );
+    let tokens = Lexer::new(&src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("unknown variant"), "got: {}", msg);
+}
+
+#[test]
+fn vm_transition_invalid_edge_errors() {
+    // Transition from closed directly to open — not declared (must go closed -> opening -> open).
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\ntransition door -> open",
+        DOOR_SRC
+    );
+    let tokens = Lexer::new(&src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("invalid transition"), "got: {}", msg);
+}
+
+#[test]
+fn vm_simulate_still_unsupported() {
+    // simulate must remain Unsupported after M8D.
+    let src = "let d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bytecode feature not yet executable"),
+        "got: {}",
+        msg
+    );
+}
+
+// ─── M8D: cross-validation vs tree-walk ────────────────────────────────────
+
+#[test]
+fn vm_matches_tree_states_example() {
+    // Output verified by `kimin run examples/states.kimin`: Door.closed / Door.opening / Door.open
+    let src = std::fs::read_to_string("examples/states.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed", "Door.opening", "Door.open"]);
+}
+
+#[test]
+fn vm_matches_tree_state_functions_example() {
+    // Output verified by `kimin run examples/state_functions.kimin`: Door.closed / Door.opening
+    let src = std::fs::read_to_string("examples/state_functions.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed", "Door.opening"]);
+}
+
+#[test]
+fn vm_matches_tree_state_errors_example() {
+    // state_errors.kimin runs cleanly by default and prints Door.closed
+    let src = std::fs::read_to_string("examples/state_errors.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
 }
