@@ -5674,3 +5674,259 @@ fn vm_simulate_invalid_body_index_errors() {
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("invalid simulate body index"), "got: {}", msg);
 }
+
+// ─── M8E audit hardening ────────────────────────────────────────────────────
+
+#[test]
+fn vm_simulate_floor_iteration_count() {
+    // floor(2.9 / 1) = 2 iterations: time = 0, 1
+    let src = "let dur: seconds = 2.9\nlet dt: seconds = 1\nsimulate dur step dt { print(time) }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn vm_simulate_step_larger_than_duration_zero_iterations() {
+    // floor(0.5 / 1) = 0: body never runs
+    let src = "let dur: seconds = 0.5\nlet dt: seconds = 1\nsimulate dur step dt { print(99) }";
+    let out = vm_run(src).unwrap();
+    assert!(out.is_empty(), "step > duration produces zero iterations");
+}
+
+#[test]
+fn vm_simulate_negative_step_errors() {
+    // Negative step is not a static type error (sign not a type concern) but
+    // the VM rejects step <= 0 at runtime.
+    let src = "let dur: seconds = 1\nlet dt: seconds = -1\nsimulate dur step dt { }";
+    let result = vm_run_unchecked(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("greater than zero"), "got: {}", msg);
+}
+
+#[test]
+fn vm_simulate_non_number_duration_errors() {
+    // Manually push a string as duration — bypasses source-level type constraints.
+    use crate::{
+        bytecode::{BytecodeProgram, Chunk, Constant, SimulateChunk},
+        vm::Vm,
+    };
+    let mut main = Chunk::new();
+    let str_idx = main.add_constant(Constant::Text("oops".into()));
+    let step_idx = main.add_constant(Constant::Number(1.0));
+    main.emit(Instruction::Constant(str_idx));
+    main.emit(Instruction::Constant(step_idx));
+    main.emit(Instruction::Simulate { body_idx: 0 });
+    main.emit(Instruction::Halt);
+    let prog = BytecodeProgram::new(
+        main,
+        vec![],
+        vec![SimulateChunk {
+            name: "simulate#0".into(),
+            chunk: Chunk::new(),
+        }],
+    );
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("simulate duration must be a number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_simulate_non_number_step_errors() {
+    // Manually push a string as step — bypasses source-level type constraints.
+    use crate::{
+        bytecode::{BytecodeProgram, Chunk, Constant, SimulateChunk},
+        vm::Vm,
+    };
+    let mut main = Chunk::new();
+    let dur_idx = main.add_constant(Constant::Number(1.0));
+    let str_idx = main.add_constant(Constant::Text("oops".into()));
+    main.emit(Instruction::Constant(dur_idx));
+    main.emit(Instruction::Constant(str_idx));
+    main.emit(Instruction::Simulate { body_idx: 0 });
+    main.emit(Instruction::Halt);
+    let prog = BytecodeProgram::new(
+        main,
+        vec![],
+        vec![SimulateChunk {
+            name: "simulate#0".into(),
+            chunk: Chunk::new(),
+        }],
+    );
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("simulate step must be a number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_simulate_body_local_shadow_does_not_affect_outer() {
+    // A let binding inside the body with the same name as an outer global does
+    // not modify the outer variable — it creates a body-local binding only.
+    let src = r#"let mut x = 100
+let dur: seconds = 2
+let dt: seconds = 1
+simulate dur step dt {
+  let x = time
+}
+print(x)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["100"], "outer x must be unchanged after simulate");
+}
+
+#[test]
+fn vm_simulate_inside_block_local_capture_confirmed_limitation() {
+    // The type checker accepts this program (it sees `captured` in scope), but the
+    // bytecode body compiler only inherits top-level globals — not block-locals.
+    // The body chunk emits LoadGlobal("captured"), which fails at VM runtime.
+    // This test documents the known M8E limitation: simulate bodies cannot capture
+    // block-local outer variables.
+    let src = r#"let dur: seconds = 1
+let dt: seconds = 1
+{
+  let captured = 42
+  simulate dur step dt {
+    print(captured)
+  }
+}"#;
+    let result = vm_run(src);
+    assert!(
+        result.is_err(),
+        "block-local capture must produce a VM RuntimeError (known M8E limitation)"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("captured"),
+        "error must name the variable, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_simulate_state_invalid_transition_unchecked_errors() {
+    // An invalid state transition inside a simulate body produces a clean RuntimeError.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nlet dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {{\n  transition door -> flying\n}}",
+        DOOR_SRC
+    );
+    let result = vm_run_unchecked(&src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("flying") || msg.contains("variant") || msg.contains("transition"),
+        "expected invalid-transition error, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn bytecode_simulate_body_no_halt() {
+    let prog = compile_prog("let dur = 1\nlet dt = 1\nsimulate dur step dt { print(time) }");
+    let body = &prog.simulate_bodies[0];
+    let has_halt = body
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Halt));
+    assert!(!has_halt, "simulate body chunk must not contain Halt");
+}
+
+#[test]
+fn bytecode_simulate_duration_before_step() {
+    // Compiler emits: ..., LoadGlobal("dur"), LoadGlobal("dt"), Simulate { .. }
+    // The VM pops step first (top of stack) then duration, so duration must compile first.
+    let prog = compile_prog("let dur = 3\nlet dt = 1\nsimulate dur step dt { }");
+    let instrs = &prog.main.instructions;
+    let dur_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::LoadGlobal(n) if n == "dur"))
+        .expect("LoadGlobal(dur) must exist");
+    let dt_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::LoadGlobal(n) if n == "dt"))
+        .expect("LoadGlobal(dt) must exist");
+    let sim_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Simulate { .. }))
+        .expect("Simulate must exist");
+    assert!(dur_pos < dt_pos, "duration must compile before step");
+    assert!(
+        dt_pos < sim_pos,
+        "step must compile before Simulate instruction"
+    );
+}
+
+#[test]
+fn bytecode_simulate_body_store_local_for_body_local() {
+    // A let mut variable declared inside a simulate body is body-local: must emit
+    // DefineLocal/StoreLocal, never DefineGlobal/StoreGlobal.
+    let prog = compile_prog(
+        "let dur = 1\nlet dt = 1\nsimulate dur step dt { let mut acc = 0\nacc = acc + 1 }",
+    );
+    let body = &prog.simulate_bodies[0].chunk;
+    assert!(
+        body.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::DefineLocal(n) if n == "acc")),
+        "body-local let must emit DefineLocal(acc)"
+    );
+    assert!(
+        body.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::StoreLocal(n) if n == "acc")),
+        "body-local assignment must emit StoreLocal(acc)"
+    );
+    assert!(
+        !body
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::DefineGlobal(n) if n == "acc")),
+        "body-local must not emit DefineGlobal(acc)"
+    );
+    assert!(
+        !body
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::StoreGlobal(n) if n == "acc")),
+        "body-local must not emit StoreGlobal(acc)"
+    );
+}
+
+#[test]
+fn disassemble_multiple_simulate_bodies() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(concat!(
+        "let dur = 1\nlet dt = 1\n",
+        "simulate dur step dt { print(1) }\n",
+        "simulate dur step dt { print(2) }",
+    ));
+    assert_eq!(
+        prog.simulate_bodies.len(),
+        2,
+        "two simulate bodies expected"
+    );
+    let out = disassemble(&prog);
+    let pos0 = out
+        .find("simulate simulate#0")
+        .expect("simulate#0 section must appear in disassembly");
+    let pos1 = out
+        .find("simulate simulate#1")
+        .expect("simulate#1 section must appear in disassembly");
+    assert!(pos0 < pos1, "simulate#0 must appear before simulate#1");
+    assert_eq!(
+        out.matches("params: time").count(),
+        2,
+        "each simulate body section must have 'params: time'"
+    );
+}
