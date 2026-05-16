@@ -1798,3 +1798,157 @@ fn interp_state_function_returns_state_value() {
 fn interp_state_print_state_value_ok() {
     assert!(run("state Door { closed open }\nlet door: Door = Door.closed\nprint(door)").is_ok());
 }
+
+// --- Milestone 5 audit: lexer/parser edge cases ---
+
+#[test]
+fn lex_number_dot_ident_is_number_then_dot() {
+    // `42.Door` must lex as Number(42), Dot, Ident("Door") — Dot must not break float lexing.
+    let kinds = tokenize("42.Door");
+    assert!(matches!(kinds[0], TokenKind::Number(n) if n == 42.0));
+    assert_eq!(kinds[1], TokenKind::Dot);
+    assert!(matches!(&kinds[2], TokenKind::Ident(s) if s == "Door"));
+}
+
+#[test]
+fn parse_trailing_dot_is_parse_error() {
+    // `Door.` with no variant after the dot is a ParseError.
+    assert!(matches!(check("let x = Door."), Err(KiminError::Parse(_))));
+}
+
+#[test]
+fn parse_leading_dot_in_expr_is_parse_error() {
+    // `.closed` in expression position is a ParseError.
+    assert!(matches!(
+        check("let x = .closed"),
+        Err(KiminError::Parse(_))
+    ));
+}
+
+// --- Milestone 5 audit: state machine edge cases ---
+
+#[test]
+fn type_state_empty_body_ok() {
+    // A state with no variants is valid: no variants means no variant expressions are possible.
+    assert!(check("state Empty { }").is_ok());
+}
+
+#[test]
+fn type_state_duplicate_transition_rule_ok() {
+    // Duplicate transition rules are silently deduplicated — not an error.
+    assert!(check(
+        "state Door { closed open  transition closed -> open  transition closed -> open }"
+    )
+    .is_ok());
+}
+
+// --- Milestone 5 audit: scope and shadowing ---
+
+#[test]
+fn interp_state_transition_in_block_updates_outer_var() {
+    // Transition inside a block updates the outer binding when there is no inner shadow.
+    let interp = run(concat!(
+        "state Door { closed open  transition closed -> open }\n",
+        "let door: Door = Door.closed\n",
+        "{ transition door -> open }",
+    ))
+    .unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "open".into(),
+        })
+    );
+}
+
+#[test]
+fn interp_state_shadow_in_block_outer_unaffected() {
+    // Transition on an inner shadow does not change the outer binding.
+    let interp = run(concat!(
+        "state Door { closed open  transition closed -> open  transition open -> closed }\n",
+        "let door: Door = Door.closed\n",
+        "{ let door: Door = Door.open  transition door -> closed }",
+    ))
+    .unwrap();
+    // Outer door was closed and remains closed — inner shadow was transitioned, not outer.
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "closed".into(),
+        })
+    );
+}
+
+// --- Milestone 5 audit: state equality ---
+
+#[test]
+fn type_state_equality_same_state_type_ok() {
+    // Same-state-type equality passes the type checker and produces Bool.
+    assert!(check(
+        "state Door { closed open }\nlet a: Door = Door.closed\nlet b: Door = Door.open\nlet r = a == b"
+    )
+    .is_ok());
+}
+
+#[test]
+fn interp_state_equality_same_variant_is_true() {
+    let interp = run(
+        "state Door { closed open }\nlet a: Door = Door.closed\nlet b: Door = Door.closed\nlet r = a == b",
+    )
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_state_equality_different_variant_is_false() {
+    let interp = run(
+        "state Door { closed open }\nlet a: Door = Door.closed\nlet b: Door = Door.open\nlet r = a == b",
+    )
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn type_state_cross_type_equality_is_error() {
+    // Equality between two different state types is a TypeError (different types).
+    assert!(matches!(
+        check(concat!(
+            "state Door { closed }\nstate Motor { stopped }\n",
+            "let d: Door = Door.closed\nlet m: Motor = Motor.stopped\n",
+            "let r = d == m"
+        )),
+        Err(KiminError::Type(_))
+    ));
+}
+
+// --- Milestone 5 audit: closures capturing state values ---
+
+#[test]
+fn type_state_closure_captures_state_var() {
+    // A closure that captures a state-typed parameter type-checks correctly.
+    assert!(check(concat!(
+        "state Door { closed open }\n",
+        "fn make_getter(d: Door) { fn get() { return d }  return get }",
+    ))
+    .is_ok());
+}
+
+#[test]
+fn interp_state_closure_returns_captured_state_value() {
+    let interp = run(concat!(
+        "state Door { closed open }\n",
+        "fn make_getter(d: Door) { fn get() { return d }  return get }\n",
+        "let getter = make_getter(Door.closed)\n",
+        "let r = getter()",
+    ))
+    .unwrap();
+    assert_eq!(
+        interp.get_var("r"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "closed".into(),
+        })
+    );
+}

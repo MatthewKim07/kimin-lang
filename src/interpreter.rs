@@ -332,11 +332,5 @@ fn numeric_cmp(
 }
 
 fn values_equal(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x == y,
-        (Value::Str(x), Value::Str(y)) => x == y,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Nil, Value::Nil) => true,
-        _ => false,
-    }
+    a == b
 }
