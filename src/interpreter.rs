@@ -55,6 +55,16 @@ impl Interpreter {
                 self.env.borrow_mut().define(name.clone(), v);
                 Ok(ExecFlow::Continue)
             }
+            Stmt::Assign { name, value, .. } => {
+                let v = self.eval_expr(value)?;
+                let found = self.env.borrow_mut().assign_existing(name, v);
+                if !found {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", name),
+                    });
+                }
+                Ok(ExecFlow::Continue)
+            }
             Stmt::Print { value } => {
                 let v = self.eval_expr(value)?;
                 println!("{}", v);

@@ -50,7 +50,7 @@ impl Env {
 
     /// Update an existing variable binding, searching from this frame up through parents.
     /// Returns true if the variable was found and updated, false if not found.
-    /// Used exclusively by `transition` statements — not for general assignment.
+    /// Used by both `transition` statements and `let mut` assignment statements.
     pub fn assign_existing(&mut self, name: &str, value: Value) -> bool {
         if self.bindings.contains_key(name) {
             self.bindings.insert(name.to_string(), value);
