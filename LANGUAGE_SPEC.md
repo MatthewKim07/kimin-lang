@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 8B
+# Kimin Language Specification — Milestone 8D
 
-This document describes the syntax and semantics implemented through Milestone 8B.
+This document describes the syntax and semantics implemented through Milestone 8D.
 
 ---
 
@@ -771,29 +771,30 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR (Milestone 8B)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–8D)
 
-Language semantics are defined by the tree-walk interpreter. The bytecode IR is a separate inspection tool with no effect on execution.
+Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What M8B lowers
+### What the bytecode VM executes (M8C + M8D)
 
-- **Function declarations** (`fn name(params) -> ReturnType { body }`) produce a `FunctionChunk` with its own instruction stream. Parameters are pre-seeded as local variables. Bodies without an explicit `return` receive an implicit `NIL + RETURN`.
-- **Named function calls** (`name(args)`) lower to argument expressions followed by `CALL name arg_count`.
-- Recursive and mutually-recursive calls emit `CALL` instructions by name.
+- All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
+- Variable access and mutation (globals and block-scoped locals)
+- Control flow: `if`/`else`, blocks with lexical scope
+- Named function declarations and calls (including recursion)
+- **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
+- **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
+- **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place (locals first, then globals)
 
-### What remains as `UNSUPPORTED`
+### What remains as `UNSUPPORTED` in the VM
 
-- State declarations (`state`)
-- State variant expressions (`State.variant`)
-- Transition statements (`transition`)
-- Simulate blocks (`simulate`)
-- Computed/dynamic callees (`get_fn()(args)`)
+- Simulate blocks (`simulate`) — emit `Unsupported("simulate")` in the compiler; produce `RuntimeError: bytecode feature not yet executable: simulate` at runtime
+- Computed/dynamic callees (`get_fn()(args)`) — emit `UNSUPPORTED(dynamic call)`
 
 ### Bytecode IR structures
 
 ```
 BytecodeProgram {
-  main: Chunk,               // top-level instructions
+  main: Chunk,                    // top-level instructions
   functions: Vec<FunctionChunk>,  // one per fn decl, in source order
 }
 
@@ -805,9 +806,12 @@ FunctionChunk {
 }
 ```
 
-### New instructions (M8B)
+### Instructions
 
 | Instruction | Meaning |
 |-------------|---------|
 | `LOAD_FUNCTION name` | Push reference to named function from function table |
 | `CALL name arg_count` | Call named function; `arg_count` arguments already on stack |
+| `DEFINE_STATE name variants=[...] transitions=[...]` | Register state machine metadata in VM registry; no stack effect |
+| `LOAD_STATE state.variant` | Validate and push `Value::StateValue { state_name, variant_name }` |
+| `TRANSITION var -> target` | Read var, validate transition edge, update var in-place |

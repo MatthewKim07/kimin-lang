@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8C** (complete and audited): a minimal stack-based bytecode VM (`kimin vm`). Built on top of the Milestones 8A/8B bytecode IR.
+This repository contains **Milestone 8D** (complete): bytecode VM execution of state machines and transitions. Built on top of the Milestones 8A/8B/8C bytecode IR and VM.
 
 ---
 
@@ -167,6 +167,17 @@ This repository contains **Milestone 8C** (complete and audited): a minimal stac
   - Division by zero, undefined variables, and wrong-arity calls produce clean `RuntimeError`
   - `kimin run` is unchanged — tree-walk interpreter remains the source of truth
   - `kimin vm` is an experimental parallel execution path
+
+### Milestone 8D
+- **State machine execution in bytecode VM**: `kimin vm` now fully executes state declarations, state variant values, and transition statements
+  - Three new bytecode instructions: `DefineState`, `LoadState`, `Transition`
+  - `DefineState`: registers state name, variants, and allowed transitions in VM state registry (`Vm.states`)
+  - `LoadState`: pushes `Value::StateValue { state_name, variant_name }` onto the stack; validates state + variant exist
+  - `Transition`: reads current variable value, validates the edge exists in the state registry, updates the variable in-place
+  - `RuntimeStateMachine { variants, transitions }` tracks state metadata at runtime
+  - `get_var` / `assign_var` free functions walk locals innermost-first then globals (matches tree-walk semantics)
+  - `kimin vm examples/states.kimin` and `kimin vm examples/state_functions.kimin` now produce output matching `kimin run`
+  - `simulate` still emits `Unsupported(...)` and produces a clean `RuntimeError` in the VM
 
 ---
 
@@ -428,7 +439,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-443 tests pass as of Milestone 8B (post-audit).
+510 tests pass as of Milestone 8D.
 
 ---
 
@@ -451,7 +462,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (443 tests)
+  tests.rs        Unit tests (510 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -511,10 +522,10 @@ examples/
 - No compound assignment operators (`+=`, `-=`, `*=`, `/=`)
 - No mutable function parameters — parameters are always immutable
 - No general loops (`while`, `for`) — only `simulate` blocks
-- Bytecode IR: function declarations and named calls now lower fully; state machines, `transition`, and `simulate` still emit `Unsupported(...)` markers
+- Bytecode VM: state machines, transitions, and state variant values now execute fully; `simulate` still emits `Unsupported(...)`
 - Bytecode IR: dynamic/computed calls (`get_fn()(args)`) emit `UNSUPPORTED(dynamic call)` — not yet supported
 - Bytecode IR: free variable capture (closures) inside function bodies emits `LOAD_GLOBAL` provisionally — not semantically correct for all closure patterns
-- Bytecode IR is not executed — tree-walk interpreter remains the runtime
+- State transitions inside function bodies (in the VM) modify the function's local parameter copy, not the caller's variable — matches tree-walk semantics
 
 ---
 
@@ -534,4 +545,6 @@ examples/
 | 7A | `let mut` and type-safe assignment; mutable simulate accumulators | ✓ done |
 | 8A | Flat bytecode IR emission (`kimin bytecode`); `Unsupported` markers for advanced features | ✓ done |
 | 8B | Function chunks and named call lowering in bytecode IR | ✓ done |
-| 8 | Full bytecode VM execution; state/simulate lowering | planned |
+| 8C | Minimal stack-based bytecode VM (`kimin vm`); VM audit and hardening | ✓ done |
+| 8D | State machine execution in bytecode VM | ✓ done |
+| 8E | `simulate` execution in bytecode VM | planned |
