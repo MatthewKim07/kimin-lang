@@ -89,6 +89,29 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Call { name, arg_count } => format!("CALL {} {}", name, arg_count),
         Instruction::Return => "RETURN".to_string(),
         Instruction::Halt => "HALT".to_string(),
+        Instruction::DefineState {
+            name,
+            variants,
+            transitions,
+        } => {
+            let vlist = variants.join(", ");
+            let tlist = transitions
+                .iter()
+                .map(|(f, t)| format!("{}->{}", f, t))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "DEFINE_STATE {} variants=[{}] transitions=[{}]",
+                name, vlist, tlist
+            )
+        }
+        Instruction::LoadState {
+            state_name,
+            variant_name,
+        } => format!("LOAD_STATE {}.{}", state_name, variant_name),
+        Instruction::Transition { variable, target } => {
+            format!("TRANSITION {} -> {}", variable, target)
+        }
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

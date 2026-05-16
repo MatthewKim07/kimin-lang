@@ -65,7 +65,25 @@ pub enum Instruction {
     Return,
     Halt,
 
-    /// Placeholder for language features not yet lowered (states, simulate).
+    // State machines
+    /// Register a state machine definition in the VM state registry. No stack effect.
+    DefineState {
+        name: String,
+        variants: Vec<String>,
+        transitions: Vec<(String, String)>,
+    },
+    /// Push Value::StateValue { state_name, variant_name } onto the stack.
+    LoadState {
+        state_name: String,
+        variant_name: String,
+    },
+    /// Controlled state transition: update an existing variable in-place.
+    Transition {
+        variable: String,
+        target: String,
+    },
+
+    /// Placeholder for language features not yet lowered (simulate).
     Unsupported(String),
 }
 
