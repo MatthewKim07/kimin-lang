@@ -181,6 +181,7 @@ impl Lexer {
             "transition" => TokenKind::Transition,
             "simulate" => TokenKind::Simulate,
             "step" => TokenKind::Step,
+            "mut" => TokenKind::Mut,
             _ => TokenKind::Ident(s),
         }
     }

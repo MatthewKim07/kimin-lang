@@ -6,33 +6,35 @@ use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
-/// Grammar (Milestone 6A):
-///   program       → stmt* EOF
-///   stmt          → state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
-///   simulate_stmt → "simulate" expr "step" expr "{" stmt* "}"
-///   state_decl    → "state" IDENT "{" (variant_decl | transition_decl)* "}"
-///   variant_decl  → IDENT
+/// Grammar (Milestone 7A):
+///   program         → stmt* EOF
+///   stmt            → state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt
+///                   | let_stmt | assign_stmt | print_stmt | if_stmt | block | expr_stmt
+///   simulate_stmt   → "simulate" expr "step" expr "{" stmt* "}"
+///   state_decl      → "state" IDENT "{" (variant_decl | transition_decl)* "}"
+///   variant_decl    → IDENT
 ///   transition_decl → "transition" IDENT "->" IDENT
 ///   transition_stmt → "transition" IDENT "->" IDENT
-///   fn_decl       → "fn" IDENT "(" typed_params ")" ("->" type_ann)? fn_body
-///   typed_params  → (IDENT ":" type_ann ("," IDENT ":" type_ann)*)?
-///   return_stmt   → "return" expr?
-///   let_stmt      → "let" IDENT (":" type_ann)? "=" expr
-///   print_stmt    → "print" "(" expr ")"
-///   if_stmt       → "if" expr block ("else" block)?
-///   block         → "{" stmt* "}"
-///   fn_body       → "{" stmt* "}"
-///   type_ann      → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | IDENT
-///   expr_stmt     → expr
-///   expr          → equality
-///   equality      → comparison (("==" | "!=") comparison)*
-///   comparison    → term (("<" | "<=" | ">" | ">=") term)*
-///   term          → factor (("+" | "-") factor)*
-///   factor        → unary (("*" | "/") unary)*
-///   unary         → ("-" | "!") unary | call
-///   call          → primary ("(" args ")")*
-///   primary       → NUMBER | STRING | "true" | "false" | IDENT ("." IDENT)? | "(" expr ")"
-///   args          → (expr ("," expr)*)?
+///   fn_decl         → "fn" IDENT "(" typed_params ")" ("->" type_ann)? fn_body
+///   typed_params    → (IDENT ":" type_ann ("," IDENT ":" type_ann)*)?
+///   return_stmt     → "return" expr?
+///   let_stmt        → "let" "mut"? IDENT (":" type_ann)? "=" expr
+///   assign_stmt     → IDENT "=" expr      (lookahead: Ident followed by single "=")
+///   print_stmt      → "print" "(" expr ")"
+///   if_stmt         → "if" expr block ("else" block)?
+///   block           → "{" stmt* "}"
+///   fn_body         → "{" stmt* "}"
+///   type_ann        → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | IDENT
+///   expr_stmt       → expr
+///   expr            → equality
+///   equality        → comparison (("==" | "!=") comparison)*
+///   comparison      → term (("<" | "<=" | ">" | ">=") term)*
+///   term            → factor (("+" | "-") factor)*
+///   factor          → unary (("*" | "/") unary)*
+///   unary           → ("-" | "!") unary | call
+///   call            → primary ("(" args ")")*
+///   primary         → NUMBER | STRING | "true" | "false" | IDENT ("." IDENT)? | "(" expr ")"
+///   args            → (expr ("," expr)*)?
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -72,6 +74,10 @@ impl Parser {
             self.parse_if()
         } else if matches!(self.current_kind(), TokenKind::LBrace) {
             self.parse_block()
+        } else if matches!(self.current_kind(), TokenKind::Ident(_))
+            && matches!(self.peek_kind(), TokenKind::Eq)
+        {
+            self.parse_assign()
         } else {
             Ok(Stmt::Expr(self.parse_expr()?))
         }
@@ -305,6 +311,14 @@ impl Parser {
     fn parse_let(&mut self) -> Result<Stmt, ParseError> {
         self.advance(); // consume `let`
 
+        // Optional `mut`
+        let mutable = if matches!(self.current_kind(), TokenKind::Mut) {
+            self.advance(); // consume `mut`
+            true
+        } else {
+            false
+        };
+
         let name = match self.current_kind() {
             TokenKind::Ident(n) => n.clone(),
             _ => return Err(self.error("expected identifier after 'let'")),
@@ -326,10 +340,23 @@ impl Parser {
 
         Ok(Stmt::Let {
             name,
+            mutable,
             annotation,
             value,
             span,
         })
+    }
+
+    fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        self.advance(); // consume identifier
+        self.advance(); // consume `=`
+        let value = self.parse_expr()?;
+        Ok(Stmt::Assign { name, value, span })
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
@@ -569,6 +596,15 @@ impl Parser {
 
     fn current_span(&self) -> Span {
         self.tokens[self.pos].span
+    }
+
+    fn peek_kind(&self) -> &TokenKind {
+        let next = self.pos + 1;
+        if next < self.tokens.len() {
+            &self.tokens[next].kind
+        } else {
+            &self.tokens[self.pos].kind
+        }
     }
 
     fn advance(&mut self) {

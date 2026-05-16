@@ -96,8 +96,16 @@ pub struct StateTransition {
 pub enum Stmt {
     Let {
         name: String,
+        /// True when declared with `let mut`.
+        mutable: bool,
         /// Optional `: TypeAnnotation` — if absent the type is inferred.
         annotation: Option<TypeAnnotation>,
+        value: Expr,
+        span: Span,
+    },
+    /// Variable reassignment: `x = expr`. Only valid for `let mut` bindings.
+    Assign {
+        name: String,
         value: Expr,
         span: Span,
     },
