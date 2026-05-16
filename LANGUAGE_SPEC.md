@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 5
+# Kimin Language Specification — Milestone 6A
 
-This document describes the syntax and semantics implemented through Milestone 4.
+This document describes the syntax and semantics implemented through Milestone 6A.
 
 ---
 
@@ -56,7 +56,7 @@ foo  bar_baz  _x  score1
 ### 1.5 Keywords
 
 ```
-let  if  else  print  fn  return  true  false
+let  if  else  print  fn  return  true  false  state  transition  simulate  step
 ```
 
 ### 1.6 Operators and Delimiters
@@ -408,6 +408,37 @@ Static rules:
 - `target_variant` must be a declared variant of that state machine.
 - If the checker has statically tracked the current variant and the transition `(current, target)` is not declared, a `TypeError` is raised.
 
+### 4.8 Simulate Statement
+
+```kimin
+simulate <duration> step <step> {
+  <stmts>
+}
+```
+
+Runs a deterministic simulation loop. The body executes `floor(duration / step)` times. On each iteration, the injected variable `time` holds the elapsed time: `time = i * step` for iteration index `i` (starting at 0).
+
+```kimin
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  print(time)   // prints 0, 1, 2
+}
+```
+
+Static rules:
+- `duration` must have type `seconds` (or `Unknown` for gradual typing).
+- `step` must have the same unit type as `duration` (or `Unknown`).
+- Plain `Number` for duration or step is a `TypeError`.
+- `time` is defined only inside the simulate body; referencing it outside is a `TypeError`.
+- The body is type-checked once with `time` in scope.
+
+Runtime rules:
+- `step <= 0` → `RuntimeError`
+- `duration < 0` → `RuntimeError`
+- State mutations (`transition`) inside the body affect the outer variable and persist across iterations.
+
 ---
 
 ## 5. Scoping Rules
@@ -619,12 +650,13 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 
 ```
 program         = stmt* EOF
-stmt            = state_decl | transition_stmt | fn_decl | return_stmt | let_stmt
+stmt            = state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt
                 | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
 inner_transition = "transition" IDENT "->" IDENT
 transition_stmt = "transition" IDENT "->" IDENT
+simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
 return_stmt     = "return" expr?
 let_stmt        = "let" IDENT (":" type_ann)? "=" expr
