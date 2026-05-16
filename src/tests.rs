@@ -2535,3 +2535,275 @@ fn interp_simulate_min_alias_runs() {
     ))
     .is_ok());
 }
+
+// ============================================================
+// Milestone 7A — let mut and assignment
+// ============================================================
+
+// --- lexer ---
+
+#[test]
+fn lex_mut_keyword() {
+    let kinds = tokenize("mut");
+    assert!(matches!(kinds[0], TokenKind::Mut));
+}
+
+// --- parser ---
+
+#[test]
+fn parse_let_mut_without_annotation() {
+    assert!(check("let mut x = 1").is_ok());
+}
+
+#[test]
+fn parse_let_mut_with_annotation() {
+    assert!(check("let mut x: Number = 1").is_ok());
+}
+
+#[test]
+fn parse_let_mut_unit_annotation() {
+    assert!(check("let mut d: meters = 10").is_ok());
+}
+
+#[test]
+fn parse_assign_stmt() {
+    assert!(check("let mut x: Number = 1\nx = 2").is_ok());
+}
+
+#[test]
+fn parse_assign_ambiguity_eqeq_not_assign() {
+    // x == 1 must remain an expression statement, not an assignment
+    assert!(check("let x: Number = 1\nlet y: Bool = x == 1").is_ok());
+}
+
+#[test]
+fn parse_let_mut_error_no_ident() {
+    // let mut followed by non-identifier should parse error
+    let result = check("let mut = 1");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Parse(e)) = result {
+        assert!(e.msg.contains("identifier"));
+    }
+}
+
+// --- type checker ---
+
+#[test]
+fn type_let_mut_creates_mutable_number() {
+    assert!(check("let mut x: Number = 1\nx = 2").is_ok());
+}
+
+#[test]
+fn type_let_immutable_no_assign() {
+    assert!(check("let x: Number = 1\nx = 2").is_err());
+}
+
+#[test]
+fn type_assign_immutable_variable_error_message() {
+    let result = check("let x: Number = 1\nx = 2");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("immutable") && e.msg.contains("'x'"));
+    }
+}
+
+#[test]
+fn type_assign_undefined_variable_error() {
+    assert!(check("x = 2").is_err());
+}
+
+#[test]
+fn type_assign_type_mismatch_number_text() {
+    let result = check("let mut x: Number = 1\nx = \"hello\"");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("Number") && e.msg.contains("Text"));
+    }
+}
+
+#[test]
+fn type_assign_same_unit_ok() {
+    assert!(check("let mut d: meters = 10\nlet extra: meters = 5\nd = extra").is_ok());
+}
+
+#[test]
+fn type_assign_number_promotes_to_unit() {
+    // Number literal can be assigned to unit variable (same promotion as let)
+    assert!(check("let mut d: meters = 10\nd = 20").is_ok());
+}
+
+#[test]
+fn type_assign_wrong_unit_error() {
+    let result = check("let mut d: meters = 1\nlet t: seconds = 2\nd = t");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("meters") && e.msg.contains("seconds"));
+    }
+}
+
+#[test]
+fn type_assign_unit_to_number_variable_error() {
+    assert!(check("let mut n: Number = 1\nlet d: meters = 2\nn = d").is_err());
+}
+
+#[test]
+fn type_assign_inside_block_updates_outer_mutable_ok() {
+    assert!(check("let mut x: Number = 1\n{ x = 2 }").is_ok());
+}
+
+#[test]
+fn type_assign_immutable_outer_from_block_error() {
+    assert!(check("let x: Number = 1\n{ x = 2 }").is_err());
+}
+
+#[test]
+fn type_assign_local_shadow_mutable_ok() {
+    // Inner shadow is mutable, outer is immutable — inner assignment is fine
+    assert!(check("let x: Number = 1\n{ let mut x: Number = 10\nx = 20 }").is_ok());
+}
+
+#[test]
+fn type_assign_inner_shadow_does_not_affect_outer() {
+    // Inner immutable shadow should reject assignment, outer mutability irrelevant
+    assert!(check("let mut x: Number = 1\n{ let x: Number = 10\nx = 20 }").is_err());
+}
+
+#[test]
+fn type_assign_inside_function_local_mutable_ok() {
+    assert!(check(concat!(
+        "fn f() -> Number {\n",
+        "  let mut n: Number = 1\n",
+        "  n = 42\n",
+        "  return n\n",
+        "}"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_state_variable_rejected_even_if_mutable() {
+    let result = check(concat!(
+        "state Door { closed open transition closed -> open }\n",
+        "let mut door: Door = Door.closed\n",
+        "door = Door.open"
+    ));
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("transition"));
+    }
+}
+
+#[test]
+fn type_transition_still_works_for_state_ok() {
+    assert!(check(concat!(
+        "state Door { closed open transition closed -> open }\n",
+        "let mut door: Door = Door.closed\n",
+        "transition door -> open"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_inside_simulate_outer_mutable_ok() {
+    assert!(check(concat!(
+        "let mut n: Number = 0\n",
+        "let d: seconds = 3\n",
+        "let s: seconds = 1\n",
+        "simulate d step s { n = n + 1 }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_inside_simulate_immutable_outer_error() {
+    assert!(check(concat!(
+        "let n: Number = 0\n",
+        "let d: seconds = 3\n",
+        "let s: seconds = 1\n",
+        "simulate d step s { n = n + 1 }"
+    ))
+    .is_err());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_assign_updates_runtime_value() {
+    let interp = run("let mut x: Number = 1\nx = 42").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn interp_assign_inside_block_updates_outer() {
+    let interp = run("let mut x: Number = 1\n{ x = 99 }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(99.0)));
+}
+
+#[test]
+fn interp_assign_inside_block_updates_local_shadow() {
+    // Shadow inside block; outer x untouched
+    let interp = run("let mut x: Number = 1\n{ let mut x: Number = 10\nx = 20 }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(1.0)));
+}
+
+#[test]
+fn interp_assign_inside_function_local_var() {
+    let interp = run(concat!(
+        "fn f() -> Number {\n",
+        "  let mut n: Number = 0\n",
+        "  n = 7\n",
+        "  return n\n",
+        "}\n",
+        "let r = f()"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(7.0)));
+}
+
+#[test]
+fn interp_assign_inside_simulate_persists_across_iterations() {
+    let interp = run(concat!(
+        "let mut counter: Number = 0\n",
+        "let d: seconds = 3\n",
+        "let s: seconds = 1\n",
+        "simulate d step s { counter = counter + 1 }"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("counter"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_simulate_motion_position_equals_six() {
+    // position = 0, velocity = 2m/s, dt = 1s, 3 iterations -> position = 6
+    let interp = run(concat!(
+        "let mut position: meters = 0\n",
+        "let dist_per_step: meters = 2\n",
+        "let unit_time: seconds = 1\n",
+        "let velocity = dist_per_step / unit_time\n",
+        "let duration: seconds = 3\n",
+        "let dt: seconds = 1\n",
+        "simulate duration step dt {\n",
+        "  position = position + velocity * dt\n",
+        "}"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("position"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn interp_assign_number_promotes_to_unit_at_runtime() {
+    let interp = run("let mut d: meters = 10\nd = 20").unwrap();
+    assert_eq!(interp.get_var("d"), Some(Value::Number(20.0)));
+}
+
+#[test]
+fn interp_let_immutable_still_readable() {
+    let interp = run("let x: Number = 5").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_let_mut_without_annotation_infers_type() {
+    let interp = run("let mut x = 1\nx = 99").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(99.0)));
+}

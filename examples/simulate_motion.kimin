@@ -1,0 +1,14 @@
+let mut position: meters = 0
+
+// Build velocity via compound unit inference: meters / seconds -> meters/seconds
+let dist_per_step: meters = 2
+let unit_time: seconds = 1
+let velocity = dist_per_step / unit_time
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  position = position + velocity * dt
+  print(position)
+}

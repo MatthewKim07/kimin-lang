@@ -1,0 +1,11 @@
+let mut distance: meters = 10
+let extra: meters = 5
+
+distance = distance + extra
+print(distance)
+
+let width: meters = 3
+let height: meters = 4
+let mut area = width * height
+
+print(area)

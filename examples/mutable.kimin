@@ -1,0 +1,9 @@
+let mut x: Number = 1
+print(x)
+
+x = x + 1
+print(x)
+
+let mut distance: meters = 10
+distance = 20
+print(distance)

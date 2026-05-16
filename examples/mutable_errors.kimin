@@ -1,0 +1,27 @@
+// Keep this file runnable by default.
+// Uncomment examples to test TypeErrors.
+
+let mut x: Number = 1
+x = 2
+print(x)
+
+// Uncomment to test immutable assignment:
+// let y: Number = 1
+// y = 2
+
+// Uncomment to test type mismatch:
+// x = "hello"
+
+// Uncomment to test unit mismatch:
+// let mut d: meters = 1
+// let t: seconds = 2
+// d = t
+
+// Uncomment to test state assignment:
+// state Door {
+//   closed
+//   open
+//   transition closed -> open
+// }
+// let mut door: Door = Door.closed
+// door = Door.open
