@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 7A
+# Kimin Language Specification — Milestone 8A
 
-This document describes the syntax and semantics implemented through Milestone 7A.
+This document describes the syntax and semantics implemented through Milestone 8A.
 
 ---
 

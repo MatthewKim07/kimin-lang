@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 5**: state machines as first-class language constructs. Built on top of the Milestone 4B compound unit inference.
+This repository contains **Milestone 8A**: flat bytecode IR emission. Built on top of the Milestone 7A `let mut` / assignment layer.
 
 ---
 
@@ -133,6 +133,17 @@ This repository contains **Milestone 5**: state machines as first-class language
   // 2 / 4 / 6
   ```
 
+### Milestone 8A
+- **Bytecode IR emission**: `kimin bytecode <file>` compiles a source file and prints a human-readable flat bytecode listing
+  - New modules: `bytecode.rs` (types), `compiler.rs` (lowering), `disassemble.rs` (printer)
+  - `Instruction` enum covers literals, globals/locals, arithmetic, comparisons, print, control flow, scoping, and return
+  - Constant pool: numbers, strings, booleans, nil
+  - Jump patching: `JumpIfFalse` and `Jump` targets are filled in after the branch body is emitted
+  - Local scope: variables inside `{ ... }` blocks emit `DefineLocal`/`LoadLocal`/`StoreLocal`; top-level emit `DefineGlobal`/`LoadGlobal`/`StoreGlobal`
+  - Advanced features (functions, state machines, simulate) emit `Unsupported(...)` markers — tree-walk interpreter is unchanged and remains the execution source of truth
+  - `CompileError` type added; `KiminError::Compile` variant added
+- **`kimin bytecode` CLI command**: emits the disassembly listing to stdout; lex/parse/typecheck errors still reported normally
+
 ---
 
 ## Install
@@ -167,6 +178,12 @@ cargo run -- check examples/functions.kimin
 
 ```sh
 cargo run -- repl
+```
+
+### Print bytecode IR
+
+```sh
+cargo run -- bytecode examples/bytecode_demo.kimin
 ```
 
 ---
@@ -380,7 +397,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-339 tests pass as of Milestone 7A (post-audit).
+376 tests pass as of Milestone 8A.
 
 ---
 
@@ -388,7 +405,7 @@ cargo test
 
 ```
 src/
-  main.rs         CLI entry point (clap)
+  main.rs         CLI entry point (clap) — run / check / repl / bytecode subcommands
   lib.rs          Module declarations + tests
   token.rs        Token types and Span
   lexer.rs        Source → tokens
@@ -398,9 +415,12 @@ src/
   value.rs        Runtime value enum (includes FunctionValue)
   env.rs          Lexical scope chain (Rc<RefCell<Env>>)
   interpreter.rs  Tree-walk interpreter
-  error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime)
+  error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime/Compile)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (318 tests)
+  bytecode.rs     Instruction enum, Constant, Chunk, BytecodeProgram
+  compiler.rs     BytecodeCompiler — lowers AST to flat bytecode chunk
+  disassemble.rs  Human-readable bytecode listing printer
+  tests.rs        Unit tests (376 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -434,6 +454,7 @@ examples/
   mutable_units.kimin
   mutable_errors.kimin
   simulate_motion.kimin
+  bytecode_demo.kimin
 ```
 
 ---
@@ -475,4 +496,5 @@ examples/
 | 6A | `simulate` blocks with `seconds` time unit and `time` variable | ✓ done |
 | 6B | Extended time units (`milliseconds`, `minutes`, `hours`) for `simulate` | ✓ done |
 | 7A | `let mut` and type-safe assignment; mutable simulate accumulators | ✓ done |
-| 7 | Bytecode / IR, potential WASM target | planned |
+| 8A | Flat bytecode IR emission (`kimin bytecode`); `Unsupported` markers for advanced features | ✓ done |
+| 8 | Full bytecode VM execution; function/state/simulate lowering | planned |
