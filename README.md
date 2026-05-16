@@ -353,7 +353,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-250 tests pass as of Milestone 6A.
+261 tests pass as of Milestone 6A (post-audit).
 
 ---
 
@@ -373,7 +373,7 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (250 tests)
+  tests.rs        Unit tests (261 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -422,7 +422,6 @@ examples/
 - No `5 meters` expression-literal syntax — units can only appear as type annotations
 - `simulate` supports `seconds` only — no other time units for duration/step in M6A
 - `simulate` body type-checked once; known-variant tracking after transitions inside the body does not carry across iterations statically
-- No nested `return` from inside a simulate body
 
 ---
 

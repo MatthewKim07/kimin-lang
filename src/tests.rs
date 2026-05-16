@@ -2183,3 +2183,134 @@ fn interp_simulate_nested_simulate_ok() {
     ))
     .is_ok());
 }
+
+// ============================================================
+// Milestone 6A audit — additional coverage
+// ============================================================
+
+// --- parser (audit additions) ---
+
+#[test]
+fn parse_simulate_missing_duration_expr_is_error() {
+    // `step` keyword cannot start an expression; parse_primary returns ParseError
+    let src = "let s: seconds = 1\nsimulate step s { }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(matches!(result, Err(_)));
+}
+
+#[test]
+fn parse_simulate_missing_step_expr_is_error() {
+    // `{` cannot start an expression for step; parse_primary returns ParseError
+    let src = "let d: seconds = 3\nsimulate d step { }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(matches!(result, Err(_)));
+}
+
+#[test]
+fn parse_simulate_nested_block_in_body_parses() {
+    assert!(check(concat!(
+        "let d: seconds = 1\nlet s: seconds = 1\n",
+        "simulate d step s { { let x = 1 } }"
+    ))
+    .is_ok());
+}
+
+// --- type checker (audit additions) ---
+
+#[test]
+fn type_simulate_time_shadows_outer_time_variable() {
+    // Outer `time: Number`; inner `time: seconds` from simulate. No conflict — shadowing is ok.
+    assert!(check(concat!(
+        "let time = 99\n",
+        "let d: seconds = 1\nlet s: seconds = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_inside_function_ok() {
+    assert!(check(concat!(
+        "fn f() {\n",
+        "  let d: seconds = 1\n  let s: seconds = 1\n",
+        "  simulate d step s { }\n",
+        "}"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_return_inside_body_inside_function_ok() {
+    // return inside simulate inside a function is valid — propagates to function return
+    assert!(check(concat!(
+        "fn f() -> Number {\n",
+        "  let d: seconds = 1\n  let s: seconds = 1\n",
+        "  simulate d step s { return 42 }\n",
+        "  return 0\n",
+        "}"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_return_outside_function_inside_simulate_is_error() {
+    // return at top level inside simulate body — still TypeError "cannot return outside of a function"
+    assert!(matches!(
+        check("let d: seconds = 1\nlet s: seconds = 1\nsimulate d step s { return 42 }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_simulate_body_invalid_variant_transition_is_error() {
+    assert!(matches!(
+        check(concat!(
+            "state Door { closed open }\n",
+            "let door: Door = Door.closed\n",
+            "let d: seconds = 1\nlet s: seconds = 1\n",
+            "simulate d step s { transition door -> locked }"
+        )),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_simulate_nested_simulate_type_checks_ok() {
+    assert!(check(concat!(
+        "let d: seconds = 2\nlet s: seconds = 1\n",
+        "simulate d step s {\n",
+        "  let id: seconds = 1\n  let is: seconds = 1\n",
+        "  simulate id step is { }\n",
+        "}"
+    ))
+    .is_ok());
+}
+
+// --- interpreter (audit additions) ---
+
+#[test]
+fn interp_simulate_local_let_does_not_persist_across_iterations() {
+    // Re-defining same local name each iteration (fresh child env) must not error.
+    assert!(run(concat!(
+        "let d: seconds = 3\nlet s: seconds = 1\n",
+        "simulate d step s { let x = time }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn interp_simulate_return_inside_function_exits_with_value() {
+    // return inside simulate inside function; caller gets the returned value
+    let interp = run(concat!(
+        "fn f() -> Number {\n",
+        "  let d: seconds = 1\n  let s: seconds = 1\n",
+        "  simulate d step s { return 42 }\n",
+        "  return 0\n",
+        "}\n",
+        "let r = f()"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(42.0)));
+}
