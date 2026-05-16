@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 8D
+# Kimin Language Specification — Milestone 8E
 
-This document describes the syntax and semantics implemented through Milestone 8D.
+This document describes the syntax and semantics implemented through Milestone 8E.
 
 ---
 
@@ -787,8 +787,29 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 
 ### What remains as `UNSUPPORTED` in the VM
 
-- Simulate blocks (`simulate`) — emit `Unsupported("simulate")` in the compiler; produce `RuntimeError: bytecode feature not yet executable: simulate` at runtime
 - Computed/dynamic callees (`get_fn()(args)`) — emit `UNSUPPORTED(dynamic call)`
+- Closures / free-variable capture — function bodies emit `LOAD_GLOBAL` provisionally; not correct for all closure patterns
+
+### Simulate block VM execution (M8E)
+
+`simulate duration step dt { body }` lowers to:
+
+1. Compile `duration` expression inline.
+2. Compile `step` expression inline.
+3. Compile `body` statements into a `SimulateChunk` stored in `BytecodeProgram.simulate_bodies`.
+4. Emit `Instruction::Simulate { body_idx }` referencing the chunk by index.
+
+At runtime, the VM:
+- Pops `step` then `duration` from the stack.
+- Validates: `step > 0`, `duration >= 0`.
+- Loops `floor(duration / step)` times:
+  - Pushes a fresh local scope with `time = i * step`.
+  - Executes the body chunk (with `is_fn` passed through for `return` propagation).
+  - Pops the scope.
+- Outer globals (mutable variables, state machines) persist across iterations.
+- Body-local `let` bindings are fresh per iteration (scoped to the iteration frame).
+
+**Known limitation:** Simulate bodies can only access top-level (global) outer variables. Variables from enclosing block-scope locals are not accessible inside simulate bodies in the VM.
 
 ### Bytecode IR structures
 

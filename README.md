@@ -177,7 +177,20 @@ This repository contains **Milestone 8D** (complete): bytecode VM execution of s
   - `RuntimeStateMachine { variants, transitions }` tracks state metadata at runtime
   - `get_var` / `assign_var` free functions walk locals innermost-first then globals (matches tree-walk semantics)
   - `kimin vm examples/states.kimin` and `kimin vm examples/state_functions.kimin` now produce output matching `kimin run`
-  - `simulate` still emits `Unsupported(...)` and produces a clean `RuntimeError` in the VM
+
+### Milestone 8E
+- **Simulate block execution in bytecode VM**: `kimin vm` now fully executes `simulate` blocks
+  - New bytecode structure: `SimulateChunk { name, chunk }` stored in `BytecodeProgram.simulate_bodies`
+  - New instruction: `Instruction::Simulate { body_idx }` — duration and step are compiled inline before it
+  - Body is compiled into a separate chunk by `BytecodeCompiler::new_for_simulate` with `"time"` pre-seeded as a local
+  - VM loop: `floor(duration / step)` iterations; each iteration pushes a fresh local scope, defines `time = i * step`, executes body, pops scope
+  - Outer globals (mutable variables, state machines) persist across iterations — same semantics as tree-walk interpreter
+  - State transitions inside simulate body work correctly (`transition` instruction writes through to outer scope)
+  - `return` inside simulate inside a function propagates out of the function — matching tree-walk behavior
+  - Runtime checks: step ≤ 0 → `RuntimeError`; duration < 0 → `RuntimeError`
+  - Disassembler prints each simulate body as `=== simulate simulate#0 ===` section after function sections
+  - `kimin vm examples/simulate.kimin`, `simulate_state.kimin`, `simulate_motion.kimin` all match `kimin run` output
+  - Dynamic calls and closures remain `Unsupported(...)` in the VM
 
 ---
 
@@ -439,7 +452,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-548 tests pass as of Milestone 8D (post-audit).
+572 tests pass as of Milestone 8E.
 
 ---
 
@@ -462,7 +475,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (548 tests)
+  tests.rs        Unit tests (572 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -522,9 +535,9 @@ examples/
 - No compound assignment operators (`+=`, `-=`, `*=`, `/=`)
 - No mutable function parameters — parameters are always immutable
 - No general loops (`while`, `for`) — only `simulate` blocks
-- Bytecode VM: state machines, transitions, and state variant values now execute fully; `simulate` still emits `Unsupported(...)`
-- Bytecode IR: dynamic/computed calls (`get_fn()(args)`) emit `UNSUPPORTED(dynamic call)` — not yet supported
-- Bytecode IR: free variable capture (closures) inside function bodies emits `LOAD_GLOBAL` provisionally — not semantically correct for all closure patterns
+- Bytecode VM: simulate bodies can only access top-level (global) outer variables — simulate inside a block with outer locals is not supported
+- Bytecode VM: dynamic/computed calls (`get_fn()(args)`) emit `UNSUPPORTED(dynamic call)` — not yet supported
+- Bytecode VM: free variable capture (closures) inside function bodies emits `LOAD_GLOBAL` provisionally — not semantically correct for all closure patterns
 - State transitions inside function bodies (in the VM) modify the function's local parameter copy, not the caller's variable — matches tree-walk semantics
 
 ---
@@ -547,4 +560,5 @@ examples/
 | 8B | Function chunks and named call lowering in bytecode IR | ✓ done |
 | 8C | Minimal stack-based bytecode VM (`kimin vm`); VM audit and hardening | ✓ done |
 | 8D | State machine execution in bytecode VM | ✓ done |
-| 8E | `simulate` execution in bytecode VM | planned |
+| 8E | `simulate` block execution in bytecode VM | ✓ done |
+| 8F | Closures and dynamic calls in bytecode VM | planned |
