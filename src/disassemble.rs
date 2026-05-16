@@ -1,8 +1,24 @@
 use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
 
-/// Returns a human-readable listing of a compiled program.
+/// Returns a human-readable listing of a compiled program: main chunk followed by
+/// each function chunk in source order.
 pub fn disassemble(program: &BytecodeProgram) -> String {
-    disassemble_chunk(&program.chunk, "main")
+    let mut out = disassemble_chunk(&program.main, "main");
+    for fc in &program.functions {
+        out.push('\n');
+        let header = format!("function {}/{}", fc.name, fc.arity);
+        let mut section = disassemble_chunk(&fc.chunk, &header);
+        // Inject params line after the section header.
+        if !fc.params.is_empty() {
+            let params_line = format!("params: {}\n", fc.params.join(", "));
+            // Insert after the first line (the "=== ... ===" header).
+            if let Some(nl) = section.find('\n') {
+                section.insert_str(nl + 1, &params_line);
+            }
+        }
+        out.push_str(&section);
+    }
+    out
 }
 
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
@@ -69,6 +85,8 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Jump(target) => format!("JUMP @{}", target),
         Instruction::BeginScope => "BEGIN_SCOPE".to_string(),
         Instruction::EndScope => "END_SCOPE".to_string(),
+        Instruction::LoadFunction(n) => format!("LOAD_FUNCTION {}", n),
+        Instruction::Call { name, arg_count } => format!("CALL {} {}", name, arg_count),
         Instruction::Return => "RETURN".to_string(),
         Instruction::Halt => "HALT".to_string(),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),

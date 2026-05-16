@@ -52,11 +52,20 @@ pub enum Instruction {
     BeginScope,
     EndScope,
 
+    // Functions
+    /// Push a reference to a named function from the function table.
+    LoadFunction(String),
+    /// Call a named function with the given number of arguments already on the stack.
+    Call {
+        name: String,
+        arg_count: usize,
+    },
+
     // Function control
     Return,
     Halt,
 
-    /// Placeholder for language features not yet lowered (functions, states, simulate).
+    /// Placeholder for language features not yet lowered (states, simulate).
     Unsupported(String),
 }
 
@@ -85,14 +94,26 @@ impl Chunk {
     }
 }
 
-/// The compiled output for a whole Kimin program (single flat chunk for M8A).
+/// Bytecode for a single named function.
 #[derive(Debug)]
-pub struct BytecodeProgram {
+pub struct FunctionChunk {
+    pub name: String,
+    pub params: Vec<String>,
+    pub arity: usize,
     pub chunk: Chunk,
 }
 
+/// The compiled output for a whole Kimin program.
+/// `main` is the top-level chunk; `functions` holds each named function's bytecode
+/// in source order.
+#[derive(Debug)]
+pub struct BytecodeProgram {
+    pub main: Chunk,
+    pub functions: Vec<FunctionChunk>,
+}
+
 impl BytecodeProgram {
-    pub fn new(chunk: Chunk) -> Self {
-        BytecodeProgram { chunk }
+    pub fn new(main: Chunk, functions: Vec<FunctionChunk>) -> Self {
+        BytecodeProgram { main, functions }
     }
 }
