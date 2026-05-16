@@ -31,6 +31,10 @@ pub enum Value {
     Bool(bool),
     Nil,
     Function(FunctionValue),
+    StateValue {
+        state_name: String,
+        variant_name: String,
+    },
 }
 
 impl Value {
@@ -41,6 +45,7 @@ impl Value {
             Value::Bool(_) => "Bool",
             Value::Nil => "Nil",
             Value::Function(_) => "Function",
+            Value::StateValue { .. } => "StateValue",
         }
     }
 }
@@ -52,6 +57,16 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
+            (
+                Value::StateValue {
+                    state_name: s1,
+                    variant_name: v1,
+                },
+                Value::StateValue {
+                    state_name: s2,
+                    variant_name: v2,
+                },
+            ) => s1 == s2 && v1 == v2,
             _ => false,
         }
     }
@@ -68,6 +83,12 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Nil => write!(f, "nil"),
             Value::Function(func) => write!(f, "<fn {}>", func.name),
+            Value::StateValue {
+                state_name,
+                variant_name,
+            } => {
+                write!(f, "{}.{}", state_name, variant_name)
+            }
         }
     }
 }

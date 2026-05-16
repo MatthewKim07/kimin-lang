@@ -47,6 +47,20 @@ impl Env {
     pub fn define(&mut self, name: String, value: Value) {
         self.bindings.insert(name, value);
     }
+
+    /// Update an existing variable binding, searching from this frame up through parents.
+    /// Returns true if the variable was found and updated, false if not found.
+    /// Used exclusively by `transition` statements — not for general assignment.
+    pub fn assign_existing(&mut self, name: &str, value: Value) -> bool {
+        if self.bindings.contains_key(name) {
+            self.bindings.insert(name.to_string(), value);
+            true
+        } else if let Some(parent) = &self.parent {
+            parent.borrow_mut().assign_existing(name, value)
+        } else {
+            false
+        }
+    }
 }
 
 impl fmt::Debug for Env {

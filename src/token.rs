@@ -14,6 +14,8 @@ pub enum TokenKind {
     Print,
     Fn,
     Return,
+    State,
+    Transition,
 
     // Arithmetic operators
     Plus,
@@ -39,6 +41,7 @@ pub enum TokenKind {
     Comma,
     Colon,
     Arrow,
+    Dot,
 
     Eof,
 }

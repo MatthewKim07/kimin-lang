@@ -59,6 +59,7 @@ impl Lexer {
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
             ',' => TokenKind::Comma,
+            '.' => TokenKind::Dot,
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance();
@@ -176,6 +177,8 @@ impl Lexer {
             "return" => TokenKind::Return,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
+            "state" => TokenKind::State,
+            "transition" => TokenKind::Transition,
             _ => TokenKind::Ident(s),
         }
     }

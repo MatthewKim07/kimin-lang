@@ -25,6 +25,12 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// A state variant value expression: `StateName.variant`
+    StateVariant {
+        state_name: String,
+        variant_name: String,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +63,9 @@ pub enum TypeAnnotation {
     Text,
     Bool,
     Nil,
+    /// An identifier that is not a built-in type or known unit.
+    /// Resolved to a state machine type by the type checker.
+    Named(String),
 }
 
 /// A typed function parameter.
@@ -64,6 +73,21 @@ pub enum TypeAnnotation {
 pub struct Param {
     pub name: String,
     pub ty: TypeAnnotation,
+    pub span: Span,
+}
+
+/// A named variant in a state machine declaration.
+#[derive(Debug, Clone)]
+pub struct StateVariant {
+    pub name: String,
+    pub span: Span,
+}
+
+/// An allowed transition between two state variants.
+#[derive(Debug, Clone)]
+pub struct StateTransition {
+    pub from: String,
+    pub to: String,
     pub span: Span,
 }
 
@@ -97,6 +121,19 @@ pub enum Stmt {
     },
     Return {
         value: Option<Expr>,
+        span: Span,
+    },
+    /// A state machine declaration: `state Name { variants... transitions... }`
+    StateDecl {
+        name: String,
+        variants: Vec<StateVariant>,
+        transitions: Vec<StateTransition>,
+        span: Span,
+    },
+    /// A controlled state transition statement: `transition var -> target_variant`
+    Transition {
+        variable: String,
+        target: String,
         span: Span,
     },
 }

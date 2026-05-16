@@ -1,12 +1,18 @@
-use crate::ast::{BinaryOp, Expr, Param, Stmt, TypeAnnotation, UnaryOp};
+use crate::ast::{
+    BinaryOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation, UnaryOp,
+};
 use crate::error::ParseError;
 use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
-/// Grammar (Milestone 3):
+/// Grammar (Milestone 5):
 ///   program       → stmt* EOF
-///   stmt          → fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+///   stmt          → state_decl | transition_stmt | fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+///   state_decl    → "state" IDENT "{" (variant_decl | transition_decl)* "}"
+///   variant_decl  → IDENT
+///   transition_decl → "transition" IDENT "->" IDENT
+///   transition_stmt → "transition" IDENT "->" IDENT
 ///   fn_decl       → "fn" IDENT "(" typed_params ")" ("->" type_ann)? fn_body
 ///   typed_params  → (IDENT ":" type_ann ("," IDENT ":" type_ann)*)?
 ///   return_stmt   → "return" expr?
@@ -15,7 +21,7 @@ use crate::token::{Span, Token, TokenKind};
 ///   if_stmt       → "if" expr block ("else" block)?
 ///   block         → "{" stmt* "}"
 ///   fn_body       → "{" stmt* "}"
-///   type_ann      → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME
+///   type_ann      → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | IDENT
 ///   expr_stmt     → expr
 ///   expr          → equality
 ///   equality      → comparison (("==" | "!=") comparison)*
@@ -24,7 +30,7 @@ use crate::token::{Span, Token, TokenKind};
 ///   factor        → unary (("*" | "/") unary)*
 ///   unary         → ("-" | "!") unary | call
 ///   call          → primary ("(" args ")")*
-///   primary       → NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
+///   primary       → NUMBER | STRING | "true" | "false" | IDENT ("." IDENT)? | "(" expr ")"
 ///   args          → (expr ("," expr)*)?
 pub struct Parser {
     tokens: Vec<Token>,
@@ -47,7 +53,11 @@ impl Parser {
     // --- statements ---
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
-        if matches!(self.current_kind(), TokenKind::Fn) {
+        if matches!(self.current_kind(), TokenKind::State) {
+            self.parse_state_decl()
+        } else if matches!(self.current_kind(), TokenKind::Transition) {
+            self.parse_transition_stmt()
+        } else if matches!(self.current_kind(), TokenKind::Fn) {
             self.parse_fn_decl()
         } else if matches!(self.current_kind(), TokenKind::Return) {
             self.parse_return()
@@ -62,6 +72,95 @@ impl Parser {
         } else {
             Ok(Stmt::Expr(self.parse_expr()?))
         }
+    }
+
+    fn parse_state_decl(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `state`
+
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected state machine name after 'state'")),
+        };
+        self.advance(); // consume name
+
+        self.expect_kind(TokenKind::LBrace, "expected '{' after state machine name")?;
+
+        let mut variants = Vec::new();
+        let mut transitions = Vec::new();
+
+        while !matches!(self.current_kind(), TokenKind::RBrace) && !self.is_at_end() {
+            if matches!(self.current_kind(), TokenKind::Transition) {
+                let t_span = self.current_span();
+                self.advance(); // consume `transition`
+                let from = match self.current_kind() {
+                    TokenKind::Ident(n) => n.clone(),
+                    _ => return Err(self.error("expected variant name after 'transition'")),
+                };
+                self.advance();
+                self.expect_kind(TokenKind::Arrow, "expected '->' in transition declaration")?;
+                let to = match self.current_kind() {
+                    TokenKind::Ident(n) => n.clone(),
+                    _ => return Err(self.error("expected variant name after '->'")),
+                };
+                self.advance();
+                transitions.push(StateTransition {
+                    from,
+                    to,
+                    span: t_span,
+                });
+            } else if matches!(self.current_kind(), TokenKind::Ident(_)) {
+                let v_span = self.current_span();
+                let v_name = match self.current_kind() {
+                    TokenKind::Ident(n) => n.clone(),
+                    _ => unreachable!(),
+                };
+                self.advance();
+                variants.push(StateVariant {
+                    name: v_name,
+                    span: v_span,
+                });
+            } else {
+                return Err(self.error("expected variant name or 'transition' in state body"));
+            }
+        }
+
+        self.expect_kind(TokenKind::RBrace, "expected '}' after state body")?;
+
+        Ok(Stmt::StateDecl {
+            name,
+            variants,
+            transitions,
+            span,
+        })
+    }
+
+    fn parse_transition_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `transition`
+
+        let variable = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected variable name after 'transition'")),
+        };
+        self.advance();
+
+        self.expect_kind(
+            TokenKind::Arrow,
+            "expected '->' after variable name in transition",
+        )?;
+
+        let target = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected target variant name after '->'")),
+        };
+        self.advance();
+
+        Ok(Stmt::Transition {
+            variable,
+            target,
+            span,
+        })
     }
 
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -126,10 +225,9 @@ impl Parser {
         Ok(Param { name, ty, span })
     }
 
-    /// Parse a type annotation: Number | Text | Bool | Nil | <unit name>
+    /// Parse a type annotation: Number | Text | Bool | Nil | <unit name> | <state machine name>
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, ParseError> {
         if matches!(self.current_kind(), TokenKind::Ident(_)) {
-            let span = self.current_span();
             let name = match self.current_kind() {
                 TokenKind::Ident(s) => s.clone(),
                 _ => unreachable!(),
@@ -144,19 +242,13 @@ impl Parser {
                     if let Some(canonical) = resolve_unit(other) {
                         Ok(TypeAnnotation::NumberWithUnit(canonical.to_string()))
                     } else {
-                        Err(ParseError {
-                            msg: format!(
-                                "unknown type '{}'; expected Number, Text, Bool, Nil, or a known unit (meters, seconds, kilograms, ...)",
-                                other
-                            ),
-                            line: span.line,
-                            col: span.col,
-                        })
+                        // Defer to the type checker — may be a state machine name.
+                        Ok(TypeAnnotation::Named(other.to_string()))
                     }
                 }
             }
         } else {
-            Err(self.error("expected type annotation (Number, Text, Bool, Nil, or a known unit)"))
+            Err(self.error("expected type annotation (Number, Text, Bool, Nil, a known unit, or a state machine name)"))
         }
     }
 
@@ -412,7 +504,22 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
-                Ok(Expr::Variable { name, span })
+                // Check for state variant access: StateName.variant
+                if matches!(self.current_kind(), TokenKind::Dot) {
+                    self.advance(); // consume `.`
+                    let variant_name = match self.current_kind() {
+                        TokenKind::Ident(v) => v.clone(),
+                        _ => return Err(self.error("expected variant name after '.'")),
+                    };
+                    self.advance();
+                    Ok(Expr::StateVariant {
+                        state_name: name,
+                        variant_name,
+                        span,
+                    })
+                } else {
+                    Ok(Expr::Variable { name, span })
+                }
             }
             TokenKind::LParen => {
                 self.advance();

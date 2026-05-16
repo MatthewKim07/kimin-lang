@@ -111,6 +111,46 @@ impl Interpreter {
                 };
                 Ok(ExecFlow::Return(v))
             }
+
+            Stmt::StateDecl { .. } => {
+                // State machine declarations are purely static — no runtime work.
+                Ok(ExecFlow::Continue)
+            }
+
+            Stmt::Transition {
+                variable, target, ..
+            } => {
+                let current = self
+                    .env
+                    .borrow()
+                    .get(variable)
+                    .ok_or_else(|| RuntimeError {
+                        msg: format!("undefined variable '{}'", variable),
+                    })?;
+                let state_name = match &current {
+                    Value::StateValue { state_name, .. } => state_name.clone(),
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "'{}' is not a state value, got {}",
+                                variable,
+                                other.type_name()
+                            ),
+                        });
+                    }
+                };
+                let new_val = Value::StateValue {
+                    state_name,
+                    variant_name: target.clone(),
+                };
+                let found = self.env.borrow_mut().assign_existing(variable, new_val);
+                if !found {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", variable),
+                    });
+                }
+                Ok(ExecFlow::Continue)
+            }
         }
     }
 
@@ -119,6 +159,15 @@ impl Interpreter {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::Str(s) => Ok(Value::Str(s.clone())),
             Expr::Bool(b) => Ok(Value::Bool(*b)),
+
+            Expr::StateVariant {
+                state_name,
+                variant_name,
+                ..
+            } => Ok(Value::StateValue {
+                state_name: state_name.clone(),
+                variant_name: variant_name.clone(),
+            }),
 
             Expr::Variable { name, .. } => {
                 self.env.borrow().get(name).ok_or_else(|| RuntimeError {
