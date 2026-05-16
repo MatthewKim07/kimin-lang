@@ -136,4 +136,11 @@ pub enum Stmt {
         target: String,
         span: Span,
     },
+    /// A deterministic simulation block: `simulate <duration> step <step> { ... }`
+    Simulate {
+        duration: Expr,
+        step: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
 }

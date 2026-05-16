@@ -179,6 +179,8 @@ impl Lexer {
             "false" => TokenKind::False,
             "state" => TokenKind::State,
             "transition" => TokenKind::Transition,
+            "simulate" => TokenKind::Simulate,
+            "step" => TokenKind::Step,
             _ => TokenKind::Ident(s),
         }
     }

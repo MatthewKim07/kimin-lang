@@ -6,9 +6,10 @@ use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
-/// Grammar (Milestone 5):
+/// Grammar (Milestone 6A):
 ///   program       → stmt* EOF
-///   stmt          → state_decl | transition_stmt | fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+///   stmt          → state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
+///   simulate_stmt → "simulate" expr "step" expr "{" stmt* "}"
 ///   state_decl    → "state" IDENT "{" (variant_decl | transition_decl)* "}"
 ///   variant_decl  → IDENT
 ///   transition_decl → "transition" IDENT "->" IDENT
@@ -57,6 +58,8 @@ impl Parser {
             self.parse_state_decl()
         } else if matches!(self.current_kind(), TokenKind::Transition) {
             self.parse_transition_stmt()
+        } else if matches!(self.current_kind(), TokenKind::Simulate) {
+            self.parse_simulate_stmt()
         } else if matches!(self.current_kind(), TokenKind::Fn) {
             self.parse_fn_decl()
         } else if matches!(self.current_kind(), TokenKind::Return) {
@@ -159,6 +162,29 @@ impl Parser {
         Ok(Stmt::Transition {
             variable,
             target,
+            span,
+        })
+    }
+
+    fn parse_simulate_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `simulate`
+
+        let duration = self.parse_expr()?;
+
+        if !matches!(self.current_kind(), TokenKind::Step) {
+            return Err(self.error("expected 'step' after duration expression in simulate"));
+        }
+        self.advance(); // consume `step`
+
+        let step = self.parse_expr()?;
+
+        let body = self.parse_fn_body()?;
+
+        Ok(Stmt::Simulate {
+            duration,
+            step,
+            body,
             span,
         })
     }

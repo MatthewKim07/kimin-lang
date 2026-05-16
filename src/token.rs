@@ -16,6 +16,8 @@ pub enum TokenKind {
     Return,
     State,
     Transition,
+    Simulate,
+    Step,
 
     // Arithmetic operators
     Plus,
