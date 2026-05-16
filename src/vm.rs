@@ -209,12 +209,9 @@ impl Vm {
                     ip = target;
                 }
                 Instruction::JumpIfFalse(target) => {
-                    let truthy = is_truthy(
-                        stack
-                            .last()
-                            .ok_or_else(|| runtime_err("stack underflow on JumpIfFalse"))?,
-                    );
-                    if !truthy {
+                    // Pop the condition — peek-without-pop leaks the condition onto the stack.
+                    let val = pop(stack)?;
+                    if !is_truthy(&val) {
                         ip = target;
                     }
                 }

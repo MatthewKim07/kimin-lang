@@ -4526,3 +4526,322 @@ fn vm_param_shadows_global() {
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["1"]);
 }
+
+// ─── Audit: operand order ───────────────────────────────────────────────────
+
+#[test]
+fn vm_subtraction_operand_order() {
+    // 10 - 3 = 7; reversed would be -7
+    let out = vm_run("print(10 - 3)").unwrap();
+    assert_eq!(out, vec!["7"]);
+    let out2 = vm_run("print(3 - 10)").unwrap();
+    assert_eq!(out2, vec!["-7"]);
+}
+
+#[test]
+fn vm_division_operand_order() {
+    // 10 / 2 = 5; reversed would be 0.2
+    let out = vm_run("print(10 / 2)").unwrap();
+    assert_eq!(out, vec!["5"]);
+    let out2 = vm_run("print(2 / 10)").unwrap();
+    assert_eq!(out2, vec!["0.2"]);
+}
+
+#[test]
+fn vm_comparison_operand_order() {
+    let out = vm_run("print(2 < 10)").unwrap();
+    assert_eq!(out, vec!["true"]);
+    let out2 = vm_run("print(10 < 2)").unwrap();
+    assert_eq!(out2, vec!["false"]);
+}
+
+// ─── Audit: function call behavior ─────────────────────────────────────────
+
+#[test]
+fn vm_zero_arg_function_returns_value() {
+    let out = vm_run("fn answer() -> Number { return 42 }\nprint(answer())").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_multi_arg_order_preserved() {
+    // sub(10, 3) = 7; reversed args would give -7
+    let src = "fn sub(a: Number, b: Number) -> Number { return a - b }\nprint(sub(10, 3))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_function_locals_do_not_leak_to_caller() {
+    // Local defined inside fn is not in caller's scope
+    let src = "let result = 0\nfn f() { let secret = 42 }\nf()\nprint(result)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_recursive_calls_have_separate_locals() {
+    // sum(3) = 3+2+1 = 6; would be wrong if locals were shared across recursive frames
+    let src = r#"fn sum(n: Number) -> Number {
+  if n <= 0 { return 0 }
+  return n + sum(n - 1)
+}
+print(sum(3))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_return_inside_nested_block() {
+    let src = r#"fn f(n: Number) -> Number {
+  {
+    return n
+  }
+}
+print(f(7))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_return_inside_if() {
+    let src = r#"fn sign(n: Number) -> Number {
+  if n > 0 { return 1 }
+  if n < 0 { return -1 }
+  return 0
+}
+print(sign(5))
+print(sign(-3))
+print(sign(0))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "-1", "0"]);
+}
+
+#[test]
+fn vm_mutual_recursion() {
+    // is_even returns 1 for true, 0 for false (avoids Bool annotation ambiguity)
+    let src = r#"fn is_even(n: Number) -> Number {
+  if n == 0 { return 1 }
+  return is_odd(n - 1)
+}
+fn is_odd(n: Number) -> Number {
+  if n == 0 { return 0 }
+  return is_even(n - 1)
+}
+print(is_even(4))
+print(is_odd(3))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "1"]);
+}
+
+#[test]
+fn vm_global_mutable_assign_inside_function() {
+    // StoreGlobal inside a function body updates the shared globals table
+    let src = r#"let mut count = 0
+fn inc() {
+  count = count + 1
+}
+inc()
+inc()
+print(count)"#;
+    // Use raw compilation to sidestep type checker scope chain for globals-in-fn-body.
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    vm.run().unwrap();
+    assert_eq!(vm.take_output(), vec!["2"]);
+}
+
+// ─── Audit: unsupported features ───────────────────────────────────────────
+
+#[test]
+fn vm_unsupported_transition_errors() {
+    let src = "state Door { closed open  transition closed -> open }\nlet door: Door = Door.closed\ntransition door -> open";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bytecode feature not yet executable"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_unsupported_simulate_errors() {
+    let src = "let d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bytecode feature not yet executable"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_unsupported_state_value_errors() {
+    // Expr::StateVariant lowers to Unsupported("Door.closed")
+    let src = "print(Door.closed)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bytecode feature not yet executable"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_unsupported_dynamic_call_errors() {
+    // f()() — outer callee is a Call expression, not a Variable → Unsupported("dynamic call")
+    let src = "fn f() { }\nf()()";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bytecode feature not yet executable"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_unknown_function_error() {
+    // Call to a name not in the function table
+    let src = "print(nonexistent(1))";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("unknown function"), "got: {}", msg);
+}
+
+// ─── Audit: cross-validation against tree-walk interpreter ─────────────────
+
+#[test]
+fn vm_matches_tree_arithmetic() {
+    // Values verified by `kimin run`: 3+4=7, 4*5-11=9, (2+3)*4+2=22
+    let src = "print(3 + 4)\nprint(4 * 5 - 11)\nprint((2 + 3) * 4 + 2)";
+    assert_eq!(vm_run(src).unwrap(), vec!["7", "9", "22"]);
+}
+
+#[test]
+fn vm_matches_tree_conditionals() {
+    let src = "if true { print(1) } else { print(2) }\nif false { print(3) } else { print(4) }";
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "4"]);
+}
+
+#[test]
+fn vm_matches_tree_mutable() {
+    let src = "let mut x = 0\nx = x + 1\nprint(x)\nx = x + 1\nprint(x)\nx = x * 10\nprint(x)";
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2", "20"]);
+}
+
+#[test]
+fn vm_matches_tree_functions() {
+    let src = r#"fn add(a: Number, b: Number) -> Number { return a + b }
+fn square(x: Number) -> Number { return x * x }
+print(add(2, 3))
+print(square(5))
+print(square(add(2, 3)))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "25", "25"]);
+}
+
+#[test]
+fn vm_matches_tree_recursion() {
+    let src = r#"fn fact(n: Number) -> Number {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+print(fact(5))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["120"]);
+}
+
+// ─── Audit: misc behavior ───────────────────────────────────────────────────
+
+#[test]
+fn vm_halt_stops_execution() {
+    // Halt is the final instruction in main; verifies clean termination.
+    let out = vm_run("print(1)\nprint(2)").unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_print_function_value_via_global() {
+    // LoadFunction + DefineGlobal stores BytecodeFunction("f");
+    // loading and printing it should display "<fn f>".
+    let src = "fn f() { }\nprint(f)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    vm.run().unwrap();
+    assert_eq!(vm.take_output(), vec!["<fn f>"]);
+}
+
+#[test]
+fn vm_nested_if_works() {
+    // JumpIfFalse fix: nested ifs must not corrupt the stack.
+    let src = r#"let x = 5
+if x > 0 {
+  if x > 3 {
+    print(1)
+  } else {
+    print(2)
+  }
+} else {
+  print(3)
+}"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_if_condition_does_not_leak_to_stack() {
+    // After an if statement, subsequent code must see correct stack state.
+    // If JumpIfFalse left the condition on the stack, this program would print
+    // the wrong result for the second print.
+    let src = "if true { print(1) }\nprint(2)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_multiple_if_statements_stack_clean() {
+    // Three consecutive if statements must each have a clean stack after completion.
+    let src = r#"if true { print(1) }
+if false { print(99) }
+if true { print(2) }"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}

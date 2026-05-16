@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8C**: a minimal stack-based bytecode VM (`kimin vm`). Built on top of the Milestones 8A/8B bytecode IR.
+This repository contains **Milestone 8C** (complete and audited): a minimal stack-based bytecode VM (`kimin vm`). Built on top of the Milestones 8A/8B bytecode IR.
 
 ---
 
