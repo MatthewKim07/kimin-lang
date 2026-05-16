@@ -1,0 +1,17 @@
+// vm_recursion.kimin — demonstrates recursive functions in the bytecode VM.
+// Run with: kimin vm examples/vm_recursion.kimin
+
+fn fact(n: Number) -> Number {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+
+fn fib(n: Number) -> Number {
+  if n <= 1 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+print(fact(5))
+print(fact(10))
+print(fib(7))
+print(fib(10))

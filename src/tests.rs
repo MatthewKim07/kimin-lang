@@ -4189,3 +4189,340 @@ fn disassemble_fn_implicit_return_shows_nil_return() {
     assert!(out.contains("NIL"), "implicit return must emit NIL");
     assert!(out.contains("RETURN"), "implicit return must emit RETURN");
 }
+
+// ─── VM helpers ────────────────────────────────────────────────────────────
+
+/// Compile and run through the bytecode VM. Returns captured print output.
+fn vm_run(source: &str) -> Result<Vec<String>, KiminError> {
+    use crate::vm::Vm;
+    let tokens = Lexer::new(source).tokenize()?;
+    let stmts = Parser::new(tokens).parse()?;
+    TypeChecker::new().check(&stmts)?;
+    let prog = BytecodeCompiler::new().compile(&stmts)?;
+    let mut vm = Vm::new(prog);
+    vm.run()?;
+    Ok(vm.take_output())
+}
+
+/// Compile and run through the VM, skipping type-checking.
+/// Use for programs that would fail type check (e.g. states) to verify the
+/// VM produces the right runtime error.
+fn vm_run_unchecked(source: &str) -> Result<Vec<String>, KiminError> {
+    use crate::vm::Vm;
+    let tokens = Lexer::new(source).tokenize()?;
+    let stmts = Parser::new(tokens).parse()?;
+    let prog = BytecodeCompiler::new().compile(&stmts)?;
+    let mut vm = Vm::new(prog);
+    vm.run()?;
+    Ok(vm.take_output())
+}
+
+// ─── VM tests ──────────────────────────────────────────────────────────────
+
+#[test]
+fn vm_print_number() {
+    let out = vm_run("print(42)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_print_float() {
+    let out = vm_run("print(3.14)").unwrap();
+    assert_eq!(out, vec!["3.14"]);
+}
+
+#[test]
+fn vm_print_string() {
+    let out = vm_run(r#"print("hello")"#).unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn vm_print_bool_true() {
+    let out = vm_run("print(true)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_print_bool_false() {
+    let out = vm_run("print(false)").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn vm_arithmetic_add() {
+    let out = vm_run("print(1 + 2)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_arithmetic_subtract() {
+    let out = vm_run("print(10 - 3)").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_arithmetic_multiply() {
+    let out = vm_run("print(4 * 5)").unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_arithmetic_divide() {
+    let out = vm_run("print(10 / 2)").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_arithmetic_negate() {
+    let out = vm_run("print(-7)").unwrap();
+    assert_eq!(out, vec!["-7"]);
+}
+
+#[test]
+fn vm_string_concatenation() {
+    let out = vm_run(r#"print("hello" + " world")"#).unwrap();
+    assert_eq!(out, vec!["hello world"]);
+}
+
+#[test]
+fn vm_comparison_equal() {
+    let out = vm_run("print(1 == 1)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_comparison_not_equal() {
+    let out = vm_run("print(1 != 2)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_comparison_less() {
+    let out = vm_run("print(3 < 5)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_comparison_greater_equal() {
+    let out = vm_run("print(5 >= 5)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_not_operator() {
+    let out = vm_run("print(!false)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_let_and_load() {
+    let out = vm_run("let x = 10\nprint(x)").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_mutable_assign() {
+    let out = vm_run("let mut x = 1\nx = x + 1\nprint(x)").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_if_true_branch() {
+    let out = vm_run("if true { print(1) } else { print(2) }").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_if_false_branch() {
+    let out = vm_run("if false { print(1) } else { print(2) }").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_block_scope_local() {
+    let out = vm_run("{ let x = 99\nprint(x) }").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_multiple_prints() {
+    let out = vm_run("print(1)\nprint(2)\nprint(3)").unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn vm_function_call_returns_value() {
+    let src = "fn double(x: Number) -> Number { return x * 2 }\nprint(double(5))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_function_two_params() {
+    let src = "fn add(a: Number, b: Number) -> Number { return a + b }\nprint(add(3, 4))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_function_implicit_nil_return() {
+    let src = "fn f() { }\nprint(f())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["nil"]);
+}
+
+#[test]
+fn vm_nested_function_calls() {
+    let src = "fn add(a: Number, b: Number) -> Number { return a + b }\nfn square(x: Number) -> Number { return x * x }\nprint(square(add(2, 3)))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["25"]);
+}
+
+#[test]
+fn vm_function_accesses_global() {
+    let src = "let g = 100\nfn f() -> Number { return g }\nprint(f())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["100"]);
+}
+
+#[test]
+fn vm_recursive_factorial() {
+    let src = r#"fn fact(n: Number) -> Number {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+print(fact(5))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["120"]);
+}
+
+#[test]
+fn vm_recursive_fibonacci() {
+    let src = r#"fn fib(n: Number) -> Number {
+  if n <= 1 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+print(fib(7))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn vm_function_called_multiple_times() {
+    let src = "fn inc(x: Number) -> Number { return x + 1 }\nprint(inc(0))\nprint(inc(inc(0)))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_division_by_zero_error() {
+    let result = vm_run("print(1 / 0)");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("division by zero"), "got: {}", msg);
+}
+
+#[test]
+fn vm_undefined_variable_error() {
+    let tokens = Lexer::new("print(x)").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // Skip type checker (it would catch this first); verify VM also catches it.
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("undefined variable"), "got: {}", msg);
+}
+
+#[test]
+fn vm_wrong_arity_error() {
+    let src = "fn f(x: Number) -> Number { return x }\nprint(f(1, 2))";
+    // Type checker allows extra call args check at runtime only via VM path.
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("expects"), "got: {}", msg);
+}
+
+#[test]
+fn vm_unsupported_state_feature_errors() {
+    // State declarations lower to Unsupported; VM must surface a clear error.
+    let src = "state Door { closed opening open }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bytecode feature not yet executable"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_bytecode_function_value_display() {
+    assert_eq!(
+        format!("{}", Value::BytecodeFunction("foo".into())),
+        "<fn foo>"
+    );
+}
+
+#[test]
+fn vm_bytecode_function_value_type_name() {
+    assert_eq!(
+        Value::BytecodeFunction("foo".into()).type_name(),
+        "Function"
+    );
+}
+
+#[test]
+fn vm_bytecode_function_value_equality() {
+    assert_eq!(
+        Value::BytecodeFunction("f".into()),
+        Value::BytecodeFunction("f".into())
+    );
+    assert_ne!(
+        Value::BytecodeFunction("f".into()),
+        Value::BytecodeFunction("g".into())
+    );
+}
+
+#[test]
+fn vm_output_capture_order() {
+    let out = vm_run("print(1)\nprint(2)\nprint(3)").unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn vm_if_no_else_false_condition() {
+    // If condition is false and no else branch, nothing printed.
+    let out = vm_run("if false { print(99) }").unwrap();
+    assert!(out.is_empty());
+}
+
+#[test]
+fn vm_local_scope_does_not_leak() {
+    // Variable defined inside block must not be visible outside.
+    let src = "let x = 1\n{ let x = 2 }\nprint(x)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_param_shadows_global() {
+    let src = "let x = 99\nfn f(x: Number) -> Number { return x }\nprint(f(1))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}

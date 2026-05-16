@@ -1,0 +1,24 @@
+// vm_demo.kimin — demonstrates the bytecode VM executing core Kimin features.
+// Run with: kimin vm examples/vm_demo.kimin
+
+let x = 10
+let y = 20
+print(x + y)
+
+if x < y {
+  print("x is less")
+} else {
+  print("x is not less")
+}
+
+fn add(a: Number, b: Number) -> Number {
+  return a + b
+}
+
+fn square(n: Number) -> Number {
+  return n * n
+}
+
+print("hello, kimin")
+print(add(3, 4))
+print(square(add(2, 3)))
