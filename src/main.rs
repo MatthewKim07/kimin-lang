@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use kimin::{
     compiler::BytecodeCompiler, disassemble::disassemble, error::KiminError,
     interpreter::Interpreter, lexer::Lexer, parser::Parser as KiminParser, repl,
-    typechecker::TypeChecker,
+    typechecker::TypeChecker, vm::Vm,
 };
 
 #[derive(Parser)]
@@ -32,6 +32,11 @@ enum Command {
     Repl,
     /// Compile and print the bytecode IR for a .kimin file
     Bytecode {
+        /// Path to the .kimin file
+        file: String,
+    },
+    /// Execute a .kimin file using the bytecode VM (experimental)
+    Vm {
         /// Path to the .kimin file
         file: String,
     },
@@ -71,6 +76,13 @@ fn main() {
                 }
             }
         }
+        Command::Vm { file } => {
+            let source = read_file(&file);
+            if let Err(e) = vm_source(&source) {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
     }
 }
 
@@ -103,4 +115,13 @@ fn bytecode_source(source: &str) -> Result<String, KiminError> {
     TypeChecker::new().check(&stmts)?;
     let program = BytecodeCompiler::new().compile(&stmts)?;
     Ok(disassemble(&program))
+}
+
+fn vm_source(source: &str) -> Result<(), KiminError> {
+    let tokens = Lexer::new(source).tokenize()?;
+    let stmts = KiminParser::new(tokens).parse()?;
+    TypeChecker::new().check(&stmts)?;
+    let program = BytecodeCompiler::new().compile(&stmts)?;
+    let mut vm = Vm::new(program);
+    vm.run()
 }
