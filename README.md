@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8B**: function and call lowering in the bytecode IR. Built on top of the Milestone 8A flat bytecode layer.
+This repository contains **Milestone 8C**: a minimal stack-based bytecode VM (`kimin vm`). Built on top of the Milestones 8A/8B bytecode IR.
 
 ---
 
@@ -155,7 +155,18 @@ This repository contains **Milestone 8B**: function and call lowering in the byt
   - Dynamic (computed) callees emit `UNSUPPORTED(dynamic call)` — not yet lowered
 - **Disassembler**: prints each function chunk after main with header `=== function name/arity ===` and `params:` line
 - State machines, `transition`, and `simulate` still emit `Unsupported(...)` markers
-- Tree-walk interpreter is unchanged and remains the execution source of truth; bytecode IR is not yet executed
+- Tree-walk interpreter is unchanged and remains the execution source of truth for `kimin run`
+
+### Milestone 8C
+- **Bytecode VM**: `kimin vm <file>` executes `.kimin` files through the bytecode compiler and a stack-based VM
+  - New module `src/vm.rs`: `Vm { program, globals, output }` with `run()`, `take_output()`
+  - `execute_chunk` dispatches all lowered instructions (literals, arithmetic, comparisons, variables, control flow, print, scoping, functions)
+  - Function calls: clone chunk+params from `program.functions`, build param frame, recursive `execute_chunk`
+  - `Value::BytecodeFunction(String)` — name-only function reference used by `LoadFunction`
+  - `Unsupported(...)` instructions produce `RuntimeError: bytecode feature not yet executable: ...`
+  - Division by zero, undefined variables, and wrong-arity calls produce clean `RuntimeError`
+  - `kimin run` is unchanged — tree-walk interpreter remains the source of truth
+  - `kimin vm` is an experimental parallel execution path
 
 ---
 
@@ -197,6 +208,13 @@ cargo run -- repl
 
 ```sh
 cargo run -- bytecode examples/bytecode_demo.kimin
+```
+
+### Execute via bytecode VM (experimental)
+
+```sh
+cargo run -- vm examples/vm_demo.kimin
+cargo run -- vm examples/vm_recursion.kimin
 ```
 
 ---
