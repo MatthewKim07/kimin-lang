@@ -3048,19 +3048,19 @@ fn interp_assign_text_updates_value() {
 #[test]
 fn bytecode_number_literal_emits_constant() {
     let prog = compile_prog("print(10)");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::Constant(0)));
     assert!(matches!(instrs[1], Instruction::Print));
     assert!(matches!(instrs[2], Instruction::Halt));
-    assert!(matches!(prog.chunk.constants[0], Constant::Number(n) if n == 10.0));
+    assert!(matches!(prog.main.constants[0], Constant::Number(n) if n == 10.0));
 }
 
 #[test]
 fn bytecode_string_literal_emits_constant() {
     let prog = compile_prog("print(\"hi\")");
-    assert!(matches!(&prog.chunk.constants[0], Constant::Text(s) if s == "hi"));
+    assert!(matches!(&prog.main.constants[0], Constant::Text(s) if s == "hi"));
     assert!(matches!(
-        prog.chunk.instructions[0],
+        prog.main.instructions[0],
         Instruction::Constant(0)
     ));
 }
@@ -3068,19 +3068,19 @@ fn bytecode_string_literal_emits_constant() {
 #[test]
 fn bytecode_bool_true_emits_true() {
     let prog = compile_prog("let b = true");
-    assert!(matches!(prog.chunk.instructions[0], Instruction::True));
+    assert!(matches!(prog.main.instructions[0], Instruction::True));
 }
 
 #[test]
 fn bytecode_bool_false_emits_false() {
     let prog = compile_prog("let b = false");
-    assert!(matches!(prog.chunk.instructions[0], Instruction::False));
+    assert!(matches!(prog.main.instructions[0], Instruction::False));
 }
 
 #[test]
 fn bytecode_let_defines_global() {
     let prog = compile_prog("let x = 5");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::Constant(0)));
     assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "x"));
     assert!(matches!(instrs[2], Instruction::Halt));
@@ -3090,14 +3090,14 @@ fn bytecode_let_defines_global() {
 fn bytecode_let_mut_defines_global() {
     // `let mut` and `let` both emit DEFINE_GLOBAL — mutability is a type-checker concern
     let prog = compile_prog("let mut count = 0");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "count"));
 }
 
 #[test]
 fn bytecode_assign_stores_global() {
     let prog = compile_prog("let mut x = 0\nx = 1");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT(0), DEFINE_GLOBAL x, CONSTANT(1), STORE_GLOBAL x, HALT
     assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "x"));
     assert!(matches!(&instrs[3], Instruction::StoreGlobal(n) if n == "x"));
@@ -3106,13 +3106,13 @@ fn bytecode_assign_stores_global() {
 #[test]
 fn bytecode_print_emits_print_instr() {
     let prog = compile_prog("print(42)");
-    assert!(matches!(prog.chunk.instructions[1], Instruction::Print));
+    assert!(matches!(prog.main.instructions[1], Instruction::Print));
 }
 
 #[test]
 fn bytecode_binary_add_emits_add() {
     let prog = compile_prog("let z = 1 + 2");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT(0), CONSTANT(1), ADD, DEFINE_GLOBAL z, HALT
     assert!(matches!(instrs[0], Instruction::Constant(0)));
     assert!(matches!(instrs[1], Instruction::Constant(1)));
@@ -3123,25 +3123,25 @@ fn bytecode_binary_add_emits_add() {
 #[test]
 fn bytecode_binary_subtract_emits_subtract() {
     let prog = compile_prog("let z = 5 - 3");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::Subtract));
+    assert!(matches!(prog.main.instructions[2], Instruction::Subtract));
 }
 
 #[test]
 fn bytecode_binary_multiply_emits_multiply() {
     let prog = compile_prog("let z = 4 * 3");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::Multiply));
+    assert!(matches!(prog.main.instructions[2], Instruction::Multiply));
 }
 
 #[test]
 fn bytecode_binary_divide_emits_divide() {
     let prog = compile_prog("let z = 10 / 2");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::Divide));
+    assert!(matches!(prog.main.instructions[2], Instruction::Divide));
 }
 
 #[test]
 fn bytecode_unary_neg_emits_negate() {
     let prog = compile_prog("let z = -5");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::Constant(0)));
     assert!(matches!(instrs[1], Instruction::Negate));
 }
@@ -3149,7 +3149,7 @@ fn bytecode_unary_neg_emits_negate() {
 #[test]
 fn bytecode_unary_not_emits_not() {
     let prog = compile_prog("let b = !true");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::True));
     assert!(matches!(instrs[1], Instruction::Not));
 }
@@ -3157,7 +3157,7 @@ fn bytecode_unary_not_emits_not() {
 #[test]
 fn bytecode_variable_load_global() {
     let prog = compile_prog("let x = 1\nprint(x)");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT, DEFINE_GLOBAL x, LOAD_GLOBAL x, PRINT, HALT
     assert!(matches!(&instrs[2], Instruction::LoadGlobal(n) if n == "x"));
 }
@@ -3165,13 +3165,13 @@ fn bytecode_variable_load_global() {
 #[test]
 fn bytecode_comparison_eq_emits_equal() {
     let prog = compile_prog("let b = 1 == 1");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::Equal));
+    assert!(matches!(prog.main.instructions[2], Instruction::Equal));
 }
 
 #[test]
 fn bytecode_comparison_lt_emits_less() {
     let prog = compile_prog("let b = 1 < 2");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::Less));
+    assert!(matches!(prog.main.instructions[2], Instruction::Less));
 }
 
 #[test]
@@ -3179,7 +3179,7 @@ fn bytecode_if_no_else_patches_jump() {
     // if true { print(1) }
     // TRUE, JIF_FALSE(?), BEGIN_SCOPE, CONSTANT, PRINT, END_SCOPE, HALT
     let prog = compile_prog("if true { print(1) }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert_eq!(instrs.len(), 7);
     assert!(matches!(instrs[0], Instruction::True));
     assert!(matches!(instrs[1], Instruction::JumpIfFalse(6)));
@@ -3194,7 +3194,7 @@ fn bytecode_if_else_patches_both_jumps() {
     // TRUE, JIF_FALSE(7), BEGIN_SCOPE, CONSTANT, PRINT, END_SCOPE, JUMP(11),
     // BEGIN_SCOPE, CONSTANT, PRINT, END_SCOPE, HALT
     let prog = compile_prog("if true { print(1) } else { print(2) }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert_eq!(instrs.len(), 12);
     assert!(matches!(instrs[0], Instruction::True));
     assert!(matches!(instrs[1], Instruction::JumpIfFalse(7)));
@@ -3206,7 +3206,7 @@ fn bytecode_if_else_patches_both_jumps() {
 fn bytecode_block_emits_scope_instructions() {
     // { let x = 1 }
     let prog = compile_prog("{ let x = 1 }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::BeginScope));
     assert!(matches!(&instrs[2], Instruction::DefineLocal(n) if n == "x"));
     assert!(matches!(instrs[3], Instruction::EndScope));
@@ -3216,14 +3216,14 @@ fn bytecode_block_emits_scope_instructions() {
 #[test]
 fn bytecode_block_uses_define_local() {
     let prog = compile_prog("{ let y = 99 }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(&instrs[2], Instruction::DefineLocal(n) if n == "y"));
 }
 
 #[test]
 fn bytecode_return_with_value() {
     let prog = compile_prog("return 5");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT(0), RETURN, HALT
     assert!(matches!(instrs[0], Instruction::Constant(0)));
     assert!(matches!(instrs[1], Instruction::Return));
@@ -3233,34 +3233,40 @@ fn bytecode_return_with_value() {
 #[test]
 fn bytecode_return_bare_emits_nil() {
     let prog = compile_prog("return");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::Nil));
     assert!(matches!(instrs[1], Instruction::Return));
 }
 
 #[test]
-fn bytecode_fn_decl_emits_unsupported() {
+fn bytecode_fn_decl_emits_load_function() {
+    // M8B: FnDecl now lowers to LOAD_FUNCTION + DEFINE_GLOBAL in main and a FunctionChunk.
     let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
-    let instrs = &prog.chunk.instructions;
-    assert!(matches!(&instrs[0], Instruction::Unsupported(s) if s == "fn add"));
+    let instrs = &prog.main.instructions;
+    assert!(matches!(&instrs[0], Instruction::LoadFunction(n) if n == "add"));
+    assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "add"));
+    assert_eq!(prog.functions.len(), 1);
+    assert_eq!(prog.functions[0].name, "add");
+    assert_eq!(prog.functions[0].arity, 2);
+    assert_eq!(prog.functions[0].params, vec!["a", "b"]);
 }
 
 #[test]
-fn bytecode_call_emits_unsupported() {
+fn bytecode_call_emits_call_instruction() {
+    // M8B: named calls now lower to CALL name arg_count, not UNSUPPORTED.
     let prog = compile_prog("fn f() { } f()");
-    // fn emits UNSUPPORTED, f() emits UNSUPPORTED, then POP (expr stmt), then HALT
-    let has_call_unsupported = prog
-        .chunk
+    let has_call = prog
+        .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "call f"));
-    assert!(has_call_unsupported);
+        .any(|i| matches!(i, Instruction::Call { name, arg_count: 0 } if name == "f"));
+    assert!(has_call);
 }
 
 #[test]
 fn bytecode_state_decl_emits_unsupported() {
     let prog = compile_prog("state Door { closed open transition closed -> open }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(&instrs[0], Instruction::Unsupported(s) if s == "state Door"));
 }
 
@@ -3272,7 +3278,7 @@ fn bytecode_transition_emits_unsupported() {
         "transition door -> open"
     ));
     let has_transition = prog
-        .chunk
+        .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::Unsupported(s) if s == "transition door -> open"));
@@ -3287,7 +3293,7 @@ fn bytecode_simulate_emits_unsupported() {
         "simulate dur step dt { }"
     ));
     let has_simulate = prog
-        .chunk
+        .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::Unsupported(s) if s == "simulate"));
@@ -3297,24 +3303,24 @@ fn bytecode_simulate_emits_unsupported() {
 #[test]
 fn bytecode_halt_is_last_instruction() {
     let prog = compile_prog("let x = 1\nlet y = 2\nprint(x)");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs.last().unwrap(), Instruction::Halt));
 }
 
 #[test]
 fn bytecode_constant_pool_indexes_are_sequential() {
     let prog = compile_prog("let a = 1\nlet b = 2\nlet c = 3");
-    assert_eq!(prog.chunk.constants.len(), 3);
-    assert!(matches!(prog.chunk.constants[0], Constant::Number(n) if n == 1.0));
-    assert!(matches!(prog.chunk.constants[1], Constant::Number(n) if n == 2.0));
-    assert!(matches!(prog.chunk.constants[2], Constant::Number(n) if n == 3.0));
+    assert_eq!(prog.main.constants.len(), 3);
+    assert!(matches!(prog.main.constants[0], Constant::Number(n) if n == 1.0));
+    assert!(matches!(prog.main.constants[1], Constant::Number(n) if n == 2.0));
+    assert!(matches!(prog.main.constants[2], Constant::Number(n) if n == 3.0));
 }
 
 #[test]
 fn bytecode_expr_stmt_emits_pop() {
     // An expression used as a statement pushes a value — POP discards it.
     let prog = compile_prog("1 + 2");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT, CONSTANT, ADD, POP, HALT
     assert!(matches!(instrs[3], Instruction::Pop));
 }
@@ -3322,7 +3328,7 @@ fn bytecode_expr_stmt_emits_pop() {
 #[test]
 fn bytecode_grouping_transparent() {
     let prog = compile_prog("let x = (5)");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     assert!(matches!(instrs[0], Instruction::Constant(0)));
     assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "x"));
 }
@@ -3365,11 +3371,14 @@ fn disassemble_shows_jump_targets() {
 }
 
 #[test]
-fn disassemble_shows_unsupported_marker() {
+fn disassemble_shows_function_chunk() {
+    // M8B: function declarations now produce a named function chunk, not UNSUPPORTED.
     use crate::disassemble::disassemble;
     let prog = compile_prog("fn foo() { }");
     let out = disassemble(&prog);
-    assert!(out.contains("UNSUPPORTED(fn foo)"));
+    assert!(out.contains("=== function foo/0 ==="));
+    assert!(out.contains("LOAD_FUNCTION foo"));
+    assert!(!out.contains("UNSUPPORTED(fn foo)"));
 }
 
 // --- M8A audit: scope classification ---
@@ -3378,7 +3387,7 @@ fn disassemble_shows_unsupported_marker() {
 fn bytecode_outer_global_loaded_from_block() {
     // Bug regression: outer global accessed inside block must emit LOAD_GLOBAL, not LOAD_LOCAL.
     let prog = compile_prog("let x = 1\n{ print(x) }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT, DEFINE_GLOBAL x, BEGIN_SCOPE, LOAD_GLOBAL x, PRINT, END_SCOPE, HALT
     assert!(matches!(&instrs[3], Instruction::LoadGlobal(n) if n == "x"));
 }
@@ -3387,7 +3396,7 @@ fn bytecode_outer_global_loaded_from_block() {
 fn bytecode_outer_global_stored_from_block() {
     // Bug regression: assignment to outer global inside block must emit STORE_GLOBAL.
     let prog = compile_prog("let mut x = 0\n{ x = 1 }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // CONSTANT, DEFINE_GLOBAL x, BEGIN_SCOPE, CONSTANT, STORE_GLOBAL x, END_SCOPE, HALT
     assert!(matches!(&instrs[4], Instruction::StoreGlobal(n) if n == "x"));
 }
@@ -3396,7 +3405,7 @@ fn bytecode_outer_global_stored_from_block() {
 fn bytecode_local_variable_stays_local() {
     // A variable defined inside a block must use LOCAL instructions.
     let prog = compile_prog("{ let y = 2\nprint(y) }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // BEGIN_SCOPE, CONSTANT, DEFINE_LOCAL y, LOAD_LOCAL y, PRINT, END_SCOPE, HALT
     assert!(matches!(&instrs[2], Instruction::DefineLocal(n) if n == "y"));
     assert!(matches!(&instrs[3], Instruction::LoadLocal(n) if n == "y"));
@@ -3406,7 +3415,7 @@ fn bytecode_local_variable_stays_local() {
 fn bytecode_nested_blocks_scope_balanced() {
     // Two nested blocks must emit two BeginScope/EndScope pairs.
     let prog = compile_prog("{ { let z = 1 } }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     let begin_count = instrs
         .iter()
         .filter(|i| matches!(i, Instruction::BeginScope))
@@ -3424,7 +3433,7 @@ fn bytecode_nested_if_jump_targets() {
     // Nested if: outer JIF_FALSE jumps past both ifs; inner JIF_FALSE jumps past inner then.
     // let x = 1 / if x==1 { if x==2 { print("inner") } }
     let prog = compile_prog("let x = 1\nif x == 1 { if x == 2 { print(\"inner\") } }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // 0:CONST, 1:DEF_GLOBAL x, 2:LOAD_GLOBAL x, 3:CONST, 4:EQUAL, 5:JIF_FALSE(@16),
     // 6:BEGIN_SCOPE, 7:LOAD_GLOBAL x, 8:CONST, 9:EQUAL, 10:JIF_FALSE(@15),
     // 11:BEGIN_SCOPE, 12:CONST, 13:PRINT, 14:END_SCOPE, 15:END_SCOPE, 16:HALT
@@ -3437,7 +3446,7 @@ fn bytecode_nested_if_jump_targets() {
 fn bytecode_if_else_inside_block_jump_targets() {
     // if/else inside a block: JIF_FALSE and JUMP still patch correctly.
     let prog = compile_prog("let x = 5\n{ if x > 3 { print(\"big\") } else { print(\"small\") } }");
-    let instrs = &prog.chunk.instructions;
+    let instrs = &prog.main.instructions;
     // 0:CONST, 1:DEF_GLOBAL x, 2:BEGIN_SCOPE, 3:LOAD_GLOBAL x, 4:CONST, 5:GREATER,
     // 6:JIF_FALSE(@12), 7:BEGIN_SCOPE, 8:CONST, 9:PRINT, 10:END_SCOPE, 11:JUMP(@16),
     // 12:BEGIN_SCOPE, 13:CONST, 14:PRINT, 15:END_SCOPE, 16:END_SCOPE, 17:HALT
@@ -3451,26 +3460,26 @@ fn bytecode_if_else_inside_block_jump_targets() {
 #[test]
 fn bytecode_not_equal_emits_not_equal() {
     let prog = compile_prog("let b = 1 != 2");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::NotEqual));
+    assert!(matches!(prog.main.instructions[2], Instruction::NotEqual));
 }
 
 #[test]
 fn bytecode_less_equal_emits_less_equal() {
     let prog = compile_prog("let b = 1 <= 2");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::LessEqual));
+    assert!(matches!(prog.main.instructions[2], Instruction::LessEqual));
 }
 
 #[test]
 fn bytecode_greater_emits_greater() {
     let prog = compile_prog("let b = 2 > 1");
-    assert!(matches!(prog.chunk.instructions[2], Instruction::Greater));
+    assert!(matches!(prog.main.instructions[2], Instruction::Greater));
 }
 
 #[test]
 fn bytecode_greater_equal_emits_greater_equal() {
     let prog = compile_prog("let b = 2 >= 1");
     assert!(matches!(
-        prog.chunk.instructions[2],
+        prog.main.instructions[2],
         Instruction::GreaterEqual
     ));
 }
@@ -3528,7 +3537,7 @@ fn bytecode_state_variant_expr_emits_unsupported() {
         "state Door { closed open transition closed -> open }\nlet d: Door = Door.closed",
     );
     let has_variant = prog
-        .chunk
+        .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::Unsupported(s) if s == "Door.closed"));
@@ -3554,7 +3563,269 @@ fn bytecode_unsupported_does_not_crash_on_call() {
 fn bytecode_constants_not_deduplicated() {
     // Constants are appended per-use — no deduplication in M8A (expected behavior).
     let prog = compile_prog("let a = 1\nlet b = 1");
-    assert_eq!(prog.chunk.constants.len(), 2);
-    assert!(matches!(prog.chunk.constants[0], Constant::Number(n) if n == 1.0));
-    assert!(matches!(prog.chunk.constants[1], Constant::Number(n) if n == 1.0));
+    assert_eq!(prog.main.constants.len(), 2);
+    assert!(matches!(prog.main.constants[0], Constant::Number(n) if n == 1.0));
+    assert!(matches!(prog.main.constants[1], Constant::Number(n) if n == 1.0));
+}
+
+// --- M8B: function chunk structure ---
+
+#[test]
+fn bytecode_fn_chunk_has_correct_name() {
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    assert_eq!(prog.functions.len(), 1);
+    assert_eq!(prog.functions[0].name, "add");
+}
+
+#[test]
+fn bytecode_fn_chunk_has_correct_arity() {
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    assert_eq!(prog.functions[0].arity, 2);
+}
+
+#[test]
+fn bytecode_fn_chunk_has_correct_params() {
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    assert_eq!(prog.functions[0].params, vec!["a", "b"]);
+}
+
+#[test]
+fn bytecode_fn_chunk_zero_param() {
+    let prog = compile_prog("fn f() { }");
+    assert_eq!(prog.functions[0].arity, 0);
+    assert!(prog.functions[0].params.is_empty());
+}
+
+#[test]
+fn bytecode_fn_body_params_load_as_local() {
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "a")));
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "b")));
+}
+
+#[test]
+fn bytecode_fn_body_explicit_return_emits_return() {
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body.iter().any(|i| matches!(i, Instruction::Return)));
+}
+
+#[test]
+fn bytecode_fn_body_no_return_emits_nil_return() {
+    // Empty body gets implicit NIL + RETURN.
+    let prog = compile_prog("fn f() { }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(matches!(body[0], Instruction::Nil));
+    assert!(matches!(body[1], Instruction::Return));
+}
+
+#[test]
+fn bytecode_fn_local_let_emits_define_local() {
+    let prog = compile_prog("fn f() -> Number { let x = 5\nreturn x }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::DefineLocal(n) if n == "x")));
+}
+
+#[test]
+fn bytecode_fn_local_variable_load_local() {
+    let prog = compile_prog("fn f() -> Number { let x = 5\nreturn x }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "x")));
+}
+
+#[test]
+fn bytecode_multiple_fn_decls_create_multiple_chunks() {
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "fn square(x: Number) -> Number { return x * x }"
+    ));
+    assert_eq!(prog.functions.len(), 2);
+    assert_eq!(prog.functions[0].name, "add");
+    assert_eq!(prog.functions[1].name, "square");
+}
+
+#[test]
+fn bytecode_multiple_fn_decls_emit_load_functions_in_main() {
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "fn square(x: Number) -> Number { return x * x }"
+    ));
+    let instrs = &prog.main.instructions;
+    assert!(matches!(&instrs[0], Instruction::LoadFunction(n) if n == "add"));
+    assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "add"));
+    assert!(matches!(&instrs[2], Instruction::LoadFunction(n) if n == "square"));
+    assert!(matches!(&instrs[3], Instruction::DefineGlobal(n) if n == "square"));
+}
+
+// --- M8B: call lowering ---
+
+#[test]
+fn bytecode_simple_call_emits_call_instr() {
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "let z = add(2, 3)"
+    ));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { name, arg_count: 2 } if name == "add")));
+}
+
+#[test]
+fn bytecode_call_arg_count_correct() {
+    let prog = compile_prog(concat!(
+        "fn f(a: Number, b: Number, c: Number) -> Number { return a }\n",
+        "let z = f(1, 2, 3)"
+    ));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { name, arg_count: 3 } if name == "f")));
+}
+
+#[test]
+fn bytecode_call_args_constants_precede_call() {
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "let z = add(2, 3)"
+    ));
+    let instrs = &prog.main.instructions;
+    let call_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { .. }))
+        .unwrap();
+    let const_count = instrs[..call_idx]
+        .iter()
+        .filter(|i| matches!(i, Instruction::Constant(_)))
+        .count();
+    // Two constant args (2.0 and 3.0) must be compiled before the call.
+    assert!(const_count >= 2);
+}
+
+#[test]
+fn bytecode_nested_call_inner_before_outer() {
+    // square(add(2, 3)): inner CALL add must precede outer CALL square.
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "fn square(x: Number) -> Number { return x * x }\n",
+        "let z = square(add(2, 3))"
+    ));
+    let instrs = &prog.main.instructions;
+    let add_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "add"))
+        .unwrap();
+    let sq_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "square"))
+        .unwrap();
+    assert!(add_idx < sq_idx);
+}
+
+#[test]
+fn bytecode_recursive_call_emits_call_to_self() {
+    let prog = compile_prog(concat!(
+        "fn fact(n: Number) -> Number {\n",
+        "  if n <= 1 { return 1 }\n",
+        "  return n * fact(n - 1)\n",
+        "}"
+    ));
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { name, arg_count: 1 } if name == "fact")));
+}
+
+#[test]
+fn bytecode_zero_arg_call_emits_call_zero() {
+    let prog = compile_prog("fn f() { } f()");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { name, arg_count: 0 } if name == "f")));
+}
+
+// --- M8B: disassembler ---
+
+#[test]
+fn disassemble_shows_function_chunk_header() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn foo() { }");
+    let out = disassemble(&prog);
+    assert!(out.contains("=== function foo/0 ==="));
+}
+
+#[test]
+fn disassemble_shows_function_params() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    let out = disassemble(&prog);
+    assert!(out.contains("params: a, b"));
+}
+
+#[test]
+fn disassemble_shows_load_function_in_main() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    let out = disassemble(&prog);
+    assert!(out.contains("LOAD_FUNCTION add"));
+}
+
+#[test]
+fn disassemble_shows_call_instruction() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "print(add(2, 3))"
+    ));
+    let out = disassemble(&prog);
+    assert!(out.contains("CALL add 2"));
+}
+
+#[test]
+fn disassemble_no_unsupported_for_named_fn_decl() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn foo(x: Number) -> Number { return x }");
+    let out = disassemble(&prog);
+    assert!(!out.contains("UNSUPPORTED(fn foo)"));
+}
+
+#[test]
+fn disassemble_no_unsupported_for_named_call() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(concat!("fn f() -> Number { return 1 }\n", "let x = f()"));
+    let out = disassemble(&prog);
+    assert!(!out.contains("UNSUPPORTED(call f)"));
+}
+
+#[test]
+fn disassemble_function_chunk_after_main() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn foo() { }");
+    let out = disassemble(&prog);
+    let main_pos = out.find("=== main ===").unwrap();
+    let fn_pos = out.find("=== function foo/0 ===").unwrap();
+    assert!(main_pos < fn_pos);
+}
+
+#[test]
+fn disassemble_multiple_function_chunks_in_order() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(concat!("fn first() { }\n", "fn second() { }"));
+    let out = disassemble(&prog);
+    let first_pos = out.find("function first/0").unwrap();
+    let second_pos = out.find("function second/0").unwrap();
+    assert!(first_pos < second_pos);
 }

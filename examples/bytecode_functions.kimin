@@ -1,0 +1,10 @@
+fn add(a: Number, b: Number) -> Number {
+  return a + b
+}
+
+fn square(x: Number) -> Number {
+  return x * x
+}
+
+print(add(2, 3))
+print(square(add(2, 3)))
