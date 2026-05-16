@@ -1,0 +1,20 @@
+// This file demonstrates valid simulate usage.
+// The commented lines below each produce a TypeError if uncommented.
+
+let duration: seconds = 2
+let dt: seconds = 1
+
+simulate duration step dt {
+  print(time)
+}
+
+// TypeError: simulate duration must be a time unit (seconds), got Number
+// let bad_dur = 5
+// simulate bad_dur step dt { print(time) }
+
+// TypeError: simulate step must have the same unit as duration (seconds), got meters
+// let bad_step: meters = 1
+// simulate duration step bad_step { print(time) }
+
+// TypeError: undefined variable 'time'
+// print(time)

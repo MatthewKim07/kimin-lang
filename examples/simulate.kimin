@@ -1,0 +1,6 @@
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  print(time)
+}

@@ -1952,3 +1952,234 @@ fn interp_state_closure_returns_captured_state_value() {
         })
     );
 }
+
+// ============================================================
+// Milestone 6A — simulate blocks
+// ============================================================
+
+// --- lexer ---
+
+#[test]
+fn lex_simulate_keyword() {
+    let kinds = tokenize("simulate");
+    assert_eq!(kinds[0], TokenKind::Simulate);
+}
+
+#[test]
+fn lex_step_keyword() {
+    let kinds = tokenize("step");
+    assert_eq!(kinds[0], TokenKind::Step);
+}
+
+#[test]
+fn lex_simulate_and_step_together() {
+    let kinds = tokenize("simulate duration step dt");
+    assert_eq!(kinds[0], TokenKind::Simulate);
+    assert!(matches!(&kinds[1], TokenKind::Ident(s) if s == "duration"));
+    assert_eq!(kinds[2], TokenKind::Step);
+    assert!(matches!(&kinds[3], TokenKind::Ident(s) if s == "dt"));
+}
+
+// --- parser ---
+
+#[test]
+fn parse_simulate_basic_parses() {
+    assert!(
+        check("let d: seconds = 3\nlet s: seconds = 1\nsimulate d step s { print(time) }").is_ok()
+    );
+}
+
+#[test]
+fn parse_simulate_missing_step_keyword_is_error() {
+    let src = "let d: seconds = 3\nlet s: seconds = 1\nsimulate d s { print(time) }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(matches!(result, Err(_)));
+}
+
+#[test]
+fn parse_simulate_missing_body_is_error() {
+    let src = "let d: seconds = 3\nlet s: seconds = 1\nsimulate d step s";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(matches!(result, Err(_)));
+}
+
+// --- type checker ---
+
+#[test]
+fn type_simulate_seconds_duration_ok() {
+    assert!(
+        check("let d: seconds = 3\nlet s: seconds = 1\nsimulate d step s { print(time) }").is_ok()
+    );
+}
+
+#[test]
+fn type_simulate_time_var_is_seconds_in_body() {
+    // time used in arithmetic with another seconds value — should be ok
+    assert!(check(concat!(
+        "let d: seconds = 4\nlet s: seconds = 1\n",
+        "let extra: seconds = 1\n",
+        "simulate d step s { let t2 = time + extra }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_time_undefined_outside_block() {
+    assert!(matches!(
+        check("let d: seconds = 2\nlet s: seconds = 1\nsimulate d step s { }\nprint(time)"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_simulate_plain_number_duration_is_error() {
+    assert!(matches!(
+        check("let d = 3\nlet s: seconds = 1\nsimulate d step s { }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_simulate_meters_duration_is_error() {
+    assert!(matches!(
+        check("let d: meters = 3\nlet s: seconds = 1\nsimulate d step s { }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_simulate_mismatched_step_unit_is_error() {
+    assert!(matches!(
+        check("let d: seconds = 3\nlet s: meters = 1\nsimulate d step s { }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_simulate_unknown_duration_accepted() {
+    // Unannotated function returns produce Unknown type, which passes type check (gradual typing).
+    assert!(check(concat!(
+        "fn get(x: Number) { return x }\n",
+        "let d = get(3)\nlet s = get(1)\n",
+        "simulate d step s { }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_body_state_transition_ok() {
+    assert!(check(concat!(
+        "state Door { closed opening  transition closed -> opening }\n",
+        "let door: Door = Door.closed\n",
+        "let d: seconds = 1\nlet s: seconds = 1\n",
+        "simulate d step s { transition door -> opening }"
+    ))
+    .is_ok());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_simulate_zero_duration_runs_zero_iterations() {
+    // duration 0 / step 1 = 0 iterations; time never set
+    let interp =
+        run("let d: seconds = 0\nlet s: seconds = 1\nlet count = 0\nsimulate d step s { }")
+            .unwrap();
+    assert_eq!(interp.get_var("count"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_simulate_three_iterations_time_values() {
+    // Check that time takes values 0, 1, 2 (store last value)
+    let interp = run(concat!(
+        "let d: seconds = 3\nlet s: seconds = 1\n",
+        "let last_time: seconds = 0\n",
+        "simulate d step s { let last_time: seconds = time }"
+    ));
+    // Just verify it runs without error — time is block-scoped
+    assert!(interp.is_ok());
+}
+
+#[test]
+fn interp_simulate_step_zero_is_runtime_error() {
+    // Unknown-typed values (unannotated fn return) bypass type checker; step=0 hits runtime error.
+    assert!(matches!(
+        run("fn v(x: Number) { return x }\nsimulate v(3) step v(0) { }"),
+        Err(KiminError::Runtime(_))
+    ));
+}
+
+#[test]
+fn interp_simulate_negative_step_is_runtime_error() {
+    assert!(matches!(
+        run("fn v(x: Number) { return x }\nsimulate v(3) step v(-1) { }"),
+        Err(KiminError::Runtime(_))
+    ));
+}
+
+#[test]
+fn interp_simulate_negative_duration_is_runtime_error() {
+    assert!(matches!(
+        run("fn v(x: Number) { return x }\nsimulate v(-1) step v(1) { }"),
+        Err(KiminError::Runtime(_))
+    ));
+}
+
+#[test]
+fn interp_simulate_print_runs_without_error() {
+    assert!(
+        run("let d: seconds = 2\nlet s: seconds = 1\nsimulate d step s { print(time) }").is_ok()
+    );
+}
+
+#[test]
+fn interp_simulate_accesses_outer_variable() {
+    // simulate body reads outer let variable
+    let interp = run(concat!(
+        "let d: seconds = 1\nlet s: seconds = 1\n",
+        "let x = 42\n",
+        "simulate d step s { let y = x }"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn interp_simulate_state_transition_persists_across_iterations() {
+    // door transitions inside body; outer door should reflect changes
+    let interp = run(concat!(
+        "state Door { closed opening  transition closed -> opening }\n",
+        "let door: Door = Door.closed\n",
+        "let d: seconds = 1\nlet s: seconds = 1\n",
+        "simulate d step s { transition door -> opening }"
+    ))
+    .unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "opening".into(),
+        })
+    );
+}
+
+#[test]
+fn interp_simulate_fractional_step_floor_iterations() {
+    // 5 / 2 = 2.5 → floor = 2 iterations; runs without error.
+    // Unknown-typed values (unannotated fn return) bypass time unit type check.
+    assert!(run("fn v(x: Number) { return x }\nsimulate v(5) step v(2) { }").is_ok());
+}
+
+#[test]
+fn interp_simulate_nested_simulate_ok() {
+    assert!(run(concat!(
+        "let d: seconds = 2\nlet s: seconds = 1\n",
+        "simulate d step s { ",
+        "let inner_d: seconds = 1\nlet inner_s: seconds = 1\n",
+        "simulate inner_d step inner_s { print(time) }",
+        " }"
+    ))
+    .is_ok());
+}

@@ -1,0 +1,18 @@
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+let door: Door = Door.closed
+let duration: seconds = 1
+let dt: seconds = 1
+
+simulate duration step dt {
+  print(door)
+  transition door -> opening
+  print(door)
+}
