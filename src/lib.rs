@@ -11,6 +11,7 @@ pub mod repl;
 pub mod token;
 pub mod typechecker;
 pub mod value;
+pub mod vm;
 
 #[cfg(test)]
 mod tests;

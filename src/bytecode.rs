@@ -70,7 +70,7 @@ pub enum Instruction {
 }
 
 /// A sequence of instructions paired with a constant pool.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Chunk {
     pub instructions: Vec<Instruction>,
     pub constants: Vec<Constant>,
@@ -95,7 +95,7 @@ impl Chunk {
 }
 
 /// Bytecode for a single named function.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionChunk {
     pub name: String,
     pub params: Vec<String>,
@@ -106,7 +106,7 @@ pub struct FunctionChunk {
 /// The compiled output for a whole Kimin program.
 /// `main` is the top-level chunk; `functions` holds each named function's bytecode
 /// in source order.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BytecodeProgram {
     pub main: Chunk,
     pub functions: Vec<FunctionChunk>,
