@@ -117,6 +117,67 @@ impl Interpreter {
                 Ok(ExecFlow::Continue)
             }
 
+            Stmt::Simulate {
+                duration,
+                step,
+                body,
+                ..
+            } => {
+                let dur_val = self.eval_expr(duration)?;
+                let step_val = self.eval_expr(step)?;
+
+                let dur_num = match dur_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "simulate duration must be a number, got {}",
+                                other.type_name()
+                            ),
+                        })
+                    }
+                };
+                let step_num = match step_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "simulate step must be a number, got {}",
+                                other.type_name()
+                            ),
+                        })
+                    }
+                };
+
+                if step_num <= 0.0 {
+                    return Err(RuntimeError {
+                        msg: "simulate step must be greater than zero".into(),
+                    });
+                }
+                if dur_num < 0.0 {
+                    return Err(RuntimeError {
+                        msg: "simulate duration cannot be negative".into(),
+                    });
+                }
+
+                let iterations = (dur_num / step_num).floor() as usize;
+                for i in 0..iterations {
+                    let t = i as f64 * step_num;
+                    let outer = Rc::clone(&self.env);
+                    self.env = Env::new_child(Rc::clone(&self.env));
+                    self.env
+                        .borrow_mut()
+                        .define("time".to_string(), Value::Number(t));
+                    let result = self.exec_stmts(body);
+                    self.env = outer;
+                    match result? {
+                        ExecFlow::Continue => {}
+                        flow @ ExecFlow::Return(_) => return Ok(flow),
+                    }
+                }
+                Ok(ExecFlow::Continue)
+            }
+
             Stmt::Transition {
                 variable, target, ..
             } => {

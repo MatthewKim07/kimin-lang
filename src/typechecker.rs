@@ -586,6 +586,51 @@ impl TypeChecker {
                 }
                 Ok(())
             }
+
+            Stmt::Simulate {
+                duration,
+                step,
+                body,
+                span,
+            } => {
+                let dur_ty = self.check_expr(duration, *span)?;
+                let step_ty = self.check_expr(step, *span)?;
+
+                // Determine the `time` variable type injected into the body.
+                let time_ty = if dur_ty.is_unknown() {
+                    Type::Unknown
+                } else if is_time_unit(&dur_ty) {
+                    dur_ty.clone()
+                } else {
+                    return Err(TypeError {
+                        msg: format!(
+                            "simulate duration must be a time unit (seconds), got {}",
+                            dur_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                };
+
+                // Step must match the duration type (both unknown is fine; mismatch is not).
+                if !step_ty.is_unknown() && !time_ty.is_unknown() && step_ty != time_ty {
+                    return Err(TypeError {
+                        msg: format!(
+                            "simulate step must have the same unit as duration ({}), got {}",
+                            time_ty.name(),
+                            step_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                self.env.push_scope();
+                self.env.define("time".to_string(), time_ty);
+                let result = self.check_stmt_list(body);
+                self.env.pop_scope();
+                result
+            }
         }
     }
 
@@ -952,5 +997,15 @@ impl TypeChecker {
 impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Returns true if `ty` is exactly `seconds` (the only supported time unit in M6A).
+fn is_time_unit(ty: &Type) -> bool {
+    match ty {
+        Type::NumberWithUnit(dim) => {
+            dim.exponents.len() == 1 && dim.exponents.get("seconds") == Some(&1)
+        }
+        _ => false,
     }
 }
