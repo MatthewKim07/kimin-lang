@@ -2807,3 +2807,229 @@ fn interp_let_mut_without_annotation_infers_type() {
     let interp = run("let mut x = 1\nx = 99").unwrap();
     assert_eq!(interp.get_var("x"), Some(Value::Number(99.0)));
 }
+
+// ============================================================
+// Milestone 7A audit — hardening
+// ============================================================
+
+// --- parser audit ---
+
+#[test]
+fn parse_assign_missing_rhs_is_parse_error() {
+    let result = check("let mut x: Number = 1\nx =");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Parse(e)) = result {
+        assert!(e.msg.contains("expression"));
+    }
+}
+
+#[test]
+fn parse_assign_inside_nested_block_ok() {
+    assert!(check("let mut x: Number = 1\n{ { x = 2 } }").is_ok());
+}
+
+#[test]
+fn parse_assign_in_expression_context_is_parse_error() {
+    // Assignment is statement-only; `print(x = 1)` must be a ParseError.
+    let result = check("let mut x: Number = 1\nprint(x = 1)");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Parse(_)) = result {
+        // ParseError expected (not TypeError or RuntimeError)
+    } else {
+        panic!("expected ParseError for assignment inside expression");
+    }
+}
+
+// --- type checker audit ---
+
+#[test]
+fn type_assign_closure_reads_reassigned_outer_var() {
+    // Closure defined before reassignment reads the updated value (capture by ref via Rc<RefCell>)
+    assert!(check(concat!(
+        "let mut x: Number = 1\n",
+        "fn get_x() -> Number { return x }\n",
+        "x = 2\n",
+        "let r = get_x()"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_closure_mutates_captured_mutable_var() {
+    // Closure body assigns outer mutable variable — type checker should accept
+    assert!(check(concat!(
+        "let mut x: Number = 1\n",
+        "fn inc() -> Number {\n",
+        "  x = x + 1\n",
+        "  return x\n",
+        "}"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_closure_cannot_mutate_captured_immutable() {
+    // Closure body tries to assign outer immutable variable — TypeError
+    let result = check(concat!(
+        "let x: Number = 1\n",
+        "fn bad() -> Number {\n",
+        "  x = 2\n",
+        "  return x\n",
+        "}"
+    ));
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("immutable") && e.msg.contains("'x'"));
+    }
+}
+
+#[test]
+fn type_assign_compound_unit_same_compound_ok() {
+    // Assign meters/seconds to a meters/seconds variable
+    assert!(check(concat!(
+        "let d1: meters = 4\n",
+        "let t1: seconds = 2\n",
+        "let mut v = d1 / t1\n",
+        "let d2: meters = 6\n",
+        "let t2: seconds = 3\n",
+        "v = d2 / t2"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_compound_unit_wrong_unit_error() {
+    // Assign meters to a meters/seconds variable — TypeError
+    assert!(check(concat!(
+        "let d1: meters = 4\n",
+        "let t1: seconds = 2\n",
+        "let mut v = d1 / t1\n",
+        "let d2: meters = 5\n",
+        "v = d2"
+    ))
+    .is_err());
+}
+
+#[test]
+fn type_transition_on_immutable_state_var_ok() {
+    // transition is a separate controlled mutation primitive; does not require let mut
+    assert!(check(concat!(
+        "state Door { closed open transition closed -> open }\n",
+        "let door: Door = Door.closed\n",
+        "transition door -> open"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_assign_bool_variable_ok() {
+    assert!(check("let mut b: Bool = true\nb = false").is_ok());
+}
+
+#[test]
+fn type_assign_text_variable_ok() {
+    assert!(check("let mut s: Text = \"hello\"\ns = \"world\"").is_ok());
+}
+
+#[test]
+fn type_assign_nested_block_reaches_outer_mutable_ok() {
+    assert!(check("let mut x: Number = 1\n{ { x = 99 } }").is_ok());
+}
+
+#[test]
+fn type_assign_bool_mismatch_error() {
+    assert!(check("let mut b: Bool = true\nb = 1").is_err());
+}
+
+// --- interpreter audit ---
+
+#[test]
+fn interp_assign_closure_reads_updated_outer_var() {
+    // Case A: closure reads outer mutable after reassignment
+    let interp = run(concat!(
+        "let mut x: Number = 1\n",
+        "fn get_x() -> Number { return x }\n",
+        "x = 2\n",
+        "let r = get_x()"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_assign_closure_mutates_captured_across_calls() {
+    // Case B: closure writes outer mutable var; second call sees updated value
+    let interp = run(concat!(
+        "let mut x: Number = 1\n",
+        "fn inc() -> Number {\n",
+        "  x = x + 1\n",
+        "  return x\n",
+        "}\n",
+        "let a = inc()\n",
+        "let b = inc()"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Number(2.0)));
+    assert_eq!(interp.get_var("b"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_assign_rhs_evaluated_before_update() {
+    // x = x + 5 where x starts at 3 must produce 8, not use stale value
+    let interp = run("let mut x: Number = 3\nx = x + 5").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(8.0)));
+}
+
+#[test]
+fn interp_assign_simulate_body_local_let_fresh_each_iteration() {
+    // Body-local `let mut local` resets to 0 on each iteration;
+    // outer accumulates 1 per iteration (3 total over 3 iters).
+    let interp = run(concat!(
+        "let mut outer: Number = 0\n",
+        "let duration: seconds = 3\n",
+        "let dt: seconds = 1\n",
+        "simulate duration step dt {\n",
+        "  let mut local: Number = 0\n",
+        "  local = local + 1\n",
+        "  outer = outer + local\n",
+        "}"
+    ))
+    .unwrap();
+    assert_eq!(interp.get_var("outer"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_assign_nested_block_updates_correct_binding() {
+    let interp = run("let mut x: Number = 1\n{ { x = 99 } }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(99.0)));
+}
+
+#[test]
+fn interp_transition_immutable_state_var_updates_value() {
+    // transition works without let mut — controlled mutation primitive
+    let interp = run(concat!(
+        "state Door { closed open transition closed -> open }\n",
+        "let door: Door = Door.closed\n",
+        "transition door -> open"
+    ))
+    .unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".to_string(),
+            variant_name: "open".to_string(),
+        })
+    );
+}
+
+#[test]
+fn interp_assign_bool_updates_value() {
+    let interp = run("let mut b: Bool = true\nb = false").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn interp_assign_text_updates_value() {
+    let interp = run("let mut s: Text = \"hello\"\ns = \"world\"").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("world".to_string())));
+}

@@ -380,7 +380,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-318 tests pass as of Milestone 7A.
+339 tests pass as of Milestone 7A (post-audit).
 
 ---
 
