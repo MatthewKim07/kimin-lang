@@ -96,15 +96,20 @@ This repository contains **Milestone 5**: state machines as first-class language
 - **`simulate` blocks**: `simulate <duration> step <step> { statements }`
   - Deterministic loop: `floor(duration / step)` iterations, no real-time waiting
   - `time` variable injected into the body scope, type matches duration unit
-  - Duration and step must be `seconds`-typed (or `Unknown` for gradual typing)
+  - Duration and step must be a time unit (or `Unknown` for gradual typing)
   - State transitions inside the body persist across iterations (outer variable mutated via `assign_existing`)
 - **Static checks**:
-  - Duration must be a time unit (`seconds`) — plain `Number` is a `TypeError`
-  - Step unit must match duration unit
+  - Duration must be a time unit — plain `Number` is a `TypeError`
+  - Step unit must match duration unit exactly
   - `time` is undefined outside the simulate block
 - **Runtime checks**:
   - `step <= 0` → `RuntimeError`
   - `duration < 0` → `RuntimeError`
+
+### Milestone 6B
+- **Extended time units for `simulate`**: `milliseconds`/`ms`, `minutes`/`min`, `hours`/`h` now accepted in addition to `seconds`/`s`
+  - Duration and step must share the exact same canonical time unit — no conversion between units
+  - `ms` and `milliseconds` are identical types; same for `min`/`minutes` and `h`/`hours`
 
 ---
 
@@ -353,7 +358,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-261 tests pass as of Milestone 6A (post-audit).
+284 tests pass as of Milestone 6B.
 
 ---
 
@@ -373,7 +378,7 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (261 tests)
+  tests.rs        Unit tests (284 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -401,6 +406,8 @@ examples/
   simulate.kimin
   simulate_state.kimin
   simulate_errors.kimin
+  simulate_time_units.kimin
+  simulate_time_unit_errors.kimin
 ```
 
 ---
@@ -418,9 +425,9 @@ examples/
 - State transitions inside function bodies modify the function's local copy, not the caller's variable
 - No state transition guards or entry/exit actions
 - No automatic or event-driven transitions
-- No SI prefixes (`km`, `ms`, `MHz` are not recognized)
+- No SI prefixes (`km`, `MHz` are not recognized)
 - No `5 meters` expression-literal syntax — units can only appear as type annotations
-- `simulate` supports `seconds` only — no other time units for duration/step in M6A
+- No unit conversion between time units — `minutes` and `seconds` are distinct, non-interchangeable types
 - `simulate` body type-checked once; known-variant tracking after transitions inside the body does not carry across iterations statically
 
 ---
@@ -437,5 +444,5 @@ examples/
 | 4B | Compound unit inference (`meters / seconds → meters/seconds`) | ✓ done |
 | 5 | State machines as first-class language constructs | ✓ done |
 | 6A | `simulate` blocks with `seconds` time unit and `time` variable | ✓ done |
-| 6B | Extended time units, time-aware scheduling, entry/exit actions | planned |
+| 6B | Extended time units (`milliseconds`, `minutes`, `hours`) for `simulate` | ✓ done |
 | 7 | Bytecode / IR, potential WASM target | planned |

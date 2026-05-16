@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 6A
+# Kimin Language Specification — Milestone 6B
 
-This document describes the syntax and semantics implemented through Milestone 6A.
+This document describes the syntax and semantics implemented through Milestone 6B.
 
 ---
 
@@ -119,6 +119,9 @@ let time: seconds = 2       // type is seconds
 |---------------|---------------|
 | `m`, `meters` | `meters` |
 | `s`, `seconds` | `seconds` |
+| `ms`, `milliseconds` | `milliseconds` |
+| `min`, `minutes` | `minutes` |
+| `h`, `hours` | `hours` |
 | `kg`, `kilograms` | `kilograms` |
 | `A`, `amps`, `amperes` | `amperes` |
 | `K`, `kelvin` | `kelvin` |
@@ -428,8 +431,8 @@ simulate duration step dt {
 ```
 
 Static rules:
-- `duration` must have type `seconds` (or `Unknown` for gradual typing).
-- `step` must have the same unit type as `duration` (or `Unknown`).
+- `duration` must be a time unit (`seconds`, `milliseconds`, `minutes`, or `hours`), or `Unknown` for gradual typing.
+- `step` must have the exact same unit type as `duration` (or `Unknown`). No conversion between time units.
 - Plain `Number` for duration or step is a `TypeError`.
 - `time` is defined only inside the simulate body; referencing it outside is a `TypeError`.
 - The body is type-checked once with `time` in scope.
@@ -668,7 +671,9 @@ params          = (typed_param ("," typed_param)*)?
 typed_param     = IDENT ":" type_ann
 type_ann        = "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | STATE_NAME
 STATE_NAME      = IDENT (resolved to a state machine name by the type checker)
-UNIT_NAME       = "m" | "meters" | "s" | "seconds" | "kg" | "kilograms"
+UNIT_NAME       = "m" | "meters" | "s" | "seconds"
+                | "ms" | "milliseconds" | "min" | "minutes" | "h" | "hours"
+                | "kg" | "kilograms"
                 | "A" | "amps" | "amperes" | "K" | "kelvin"
                 | "mol" | "moles" | "cd" | "candela"
                 | "rad" | "radians" | "deg" | "degrees"
