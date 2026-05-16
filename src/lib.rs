@@ -1,4 +1,7 @@
 pub mod ast;
+pub mod bytecode;
+pub mod compiler;
+pub mod disassemble;
 pub mod env;
 pub mod error;
 pub mod interpreter;

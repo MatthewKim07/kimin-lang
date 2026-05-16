@@ -66,6 +66,17 @@ impl fmt::Display for TypeError {
     }
 }
 
+#[derive(Debug)]
+pub struct CompileError {
+    pub msg: String,
+}
+
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CompileError: {}", self.msg)
+    }
+}
+
 /// Top-level error type covering all phases of execution.
 #[derive(Debug)]
 pub enum KiminError {
@@ -73,6 +84,7 @@ pub enum KiminError {
     Parse(ParseError),
     Type(TypeError),
     Runtime(RuntimeError),
+    Compile(CompileError),
 }
 
 impl fmt::Display for KiminError {
@@ -82,6 +94,7 @@ impl fmt::Display for KiminError {
             KiminError::Parse(e) => write!(f, "{}", e),
             KiminError::Type(e) => write!(f, "{}", e),
             KiminError::Runtime(e) => write!(f, "{}", e),
+            KiminError::Compile(e) => write!(f, "{}", e),
         }
     }
 }
@@ -107,5 +120,11 @@ impl From<TypeError> for KiminError {
 impl From<RuntimeError> for KiminError {
     fn from(e: RuntimeError) -> Self {
         KiminError::Runtime(e)
+    }
+}
+
+impl From<CompileError> for KiminError {
+    fn from(e: CompileError) -> Self {
+        KiminError::Compile(e)
     }
 }
