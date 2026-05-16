@@ -1,0 +1,20 @@
+let ms_duration: milliseconds = 5
+let ms_step: ms = 2
+
+simulate ms_duration step ms_step {
+  print(time)
+}
+
+let minute_duration: minutes = 3
+let minute_step: min = 1
+
+simulate minute_duration step minute_step {
+  print(time)
+}
+
+let hour_duration: hours = 2
+let hour_step: h = 1
+
+simulate hour_duration step hour_step {
+  print(time)
+}

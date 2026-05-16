@@ -1,0 +1,21 @@
+// This file demonstrates valid simulate usage with extended time units.
+// The commented lines below each produce a TypeError if uncommented.
+
+let duration: minutes = 2
+let dt: minutes = 1
+
+simulate duration step dt {
+  print(time)
+}
+
+// TypeError: simulate step must have the same unit as duration (minutes), got seconds
+// let seconds_step: seconds = 30
+// simulate duration step seconds_step { print(time) }
+
+// TypeError: simulate duration must be a time unit (seconds, milliseconds, minutes, hours), got meters
+// let distance: meters = 10
+// simulate distance step dt { print(time) }
+
+// TypeError: simulate step must have the same unit as duration (hours), got minutes
+// let h_dur: hours = 1
+// simulate h_dur step dt { print(time) }

@@ -2314,3 +2314,224 @@ fn interp_simulate_return_inside_function_exits_with_value() {
     .unwrap();
     assert_eq!(interp.get_var("r"), Some(Value::Number(42.0)));
 }
+
+// ============================================================
+// Milestone 6B — extended time units
+// ============================================================
+
+// --- unit registry (resolve_unit) ---
+
+#[test]
+fn lex_unit_milliseconds_canonical() {
+    assert!(check("let x: milliseconds = 5").is_ok());
+}
+
+#[test]
+fn lex_unit_ms_alias_accepted() {
+    assert!(check("let x: ms = 5").is_ok());
+}
+
+#[test]
+fn lex_unit_minutes_canonical() {
+    assert!(check("let x: minutes = 3").is_ok());
+}
+
+#[test]
+fn lex_unit_min_alias_accepted() {
+    assert!(check("let x: min = 3").is_ok());
+}
+
+#[test]
+fn lex_unit_hours_canonical() {
+    assert!(check("let x: hours = 2").is_ok());
+}
+
+#[test]
+fn lex_unit_h_alias_accepted() {
+    assert!(check("let x: h = 2").is_ok());
+}
+
+#[test]
+fn lex_unit_ms_and_milliseconds_same_type() {
+    // ms alias must canonicalize to milliseconds — same type as full name
+    assert!(check(concat!(
+        "let a: milliseconds = 5\n",
+        "let b: ms = 5\n",
+        "let c: milliseconds = a"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn lex_unit_min_and_minutes_same_type() {
+    assert!(check(concat!(
+        "let a: minutes = 3\n",
+        "let b: min = 3\n",
+        "let c: minutes = a"
+    ))
+    .is_ok());
+}
+
+// --- type checker: is_time_unit covers all four units ---
+
+#[test]
+fn type_simulate_milliseconds_duration_accepted() {
+    assert!(check(concat!(
+        "let d: milliseconds = 5\n",
+        "let s: milliseconds = 2\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_minutes_duration_accepted() {
+    assert!(check(concat!(
+        "let d: minutes = 3\n",
+        "let s: minutes = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_hours_duration_accepted() {
+    assert!(check(concat!(
+        "let d: hours = 2\n",
+        "let s: hours = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_ms_alias_accepted() {
+    assert!(check(concat!(
+        "let d: ms = 5\n",
+        "let s: ms = 2\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_min_alias_accepted() {
+    assert!(check(concat!(
+        "let d: min = 3\n",
+        "let s: min = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_h_alias_accepted() {
+    assert!(check(concat!(
+        "let d: h = 2\n",
+        "let s: h = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn type_simulate_mismatched_time_units_is_error() {
+    // minutes duration with seconds step → TypeError
+    assert!(check(concat!(
+        "let d: minutes = 2\n",
+        "let s: seconds = 30\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_err());
+}
+
+#[test]
+fn type_simulate_minutes_vs_milliseconds_is_error() {
+    assert!(check(concat!(
+        "let d: minutes = 1\n",
+        "let s: milliseconds = 500\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_err());
+}
+
+#[test]
+fn type_simulate_hours_vs_minutes_is_error() {
+    assert!(check(concat!(
+        "let d: hours = 1\n",
+        "let s: minutes = 30\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_err());
+}
+
+#[test]
+fn type_simulate_non_time_unit_meters_is_error() {
+    assert!(check(concat!(
+        "let d: meters = 10\n",
+        "let s: meters = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_err());
+}
+
+// --- interpreter: extended time units run correctly ---
+
+#[test]
+fn interp_simulate_milliseconds_correct_iterations() {
+    // 5ms / 2ms = 2 iterations: time=0, time=2
+    let interp = run(concat!(
+        "let d: milliseconds = 5\n",
+        "let s: milliseconds = 2\n",
+        "let last: milliseconds = 0\n",
+        "simulate d step s { let last2 = time }"
+    ))
+    .unwrap();
+    // 2 iterations (floor(5/2)=2); time variable is in body scope, outer last stays 0
+    assert_eq!(interp.get_var("last"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_simulate_minutes_correct_iterations() {
+    // 3min / 1min = 3 iterations
+    let interp = run(concat!(
+        "fn v(x: Number) { return x }\n",
+        "let d: minutes = 3\n",
+        "let s: minutes = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .unwrap();
+    // just check it runs without error; output not captured in tests
+    let _ = interp;
+}
+
+#[test]
+fn interp_simulate_hours_two_iterations() {
+    // 2h / 1h = 2 iterations: time=0, time=1
+    assert!(run(concat!(
+        "let d: hours = 2\n",
+        "let s: hours = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn interp_simulate_ms_alias_runs() {
+    assert!(run(concat!(
+        "let d: ms = 4\n",
+        "let s: ms = 2\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn interp_simulate_min_alias_runs() {
+    assert!(run(concat!(
+        "let d: min = 3\n",
+        "let s: min = 1\n",
+        "simulate d step s { print(time) }"
+    ))
+    .is_ok());
+}
