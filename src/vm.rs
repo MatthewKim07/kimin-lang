@@ -378,6 +378,57 @@ impl Vm {
                     assign_var(&variable, new_val, locals, &mut self.globals)?;
                 }
 
+                Instruction::Simulate { body_idx } => {
+                    let step = match pop(stack)? {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("simulate step must be a number")),
+                    };
+                    let duration = match pop(stack)? {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("simulate duration must be a number")),
+                    };
+                    if step <= 0.0 {
+                        return Err(runtime_err("simulate step must be greater than zero"));
+                    }
+                    if duration < 0.0 {
+                        return Err(runtime_err("simulate duration cannot be negative"));
+                    }
+
+                    // Clone body chunk to release the immutable borrow on self.program
+                    // before the recursive execute_chunk call.
+                    let body_chunk = self
+                        .program
+                        .simulate_bodies
+                        .get(body_idx)
+                        .ok_or_else(|| {
+                            runtime_err(&format!("invalid simulate body index {}", body_idx))
+                        })?
+                        .chunk
+                        .clone();
+
+                    let iterations = (duration / step).floor() as usize;
+                    for i in 0..iterations {
+                        let current_time = i as f64 * step;
+                        // Fresh scope per iteration: outer globals persist, locals are reset.
+                        locals.push(HashMap::new());
+                        locals
+                            .last_mut()
+                            .unwrap()
+                            .insert("time".to_string(), Value::Number(current_time));
+
+                        let mut iter_stack: Vec<Value> = Vec::new();
+                        let ret =
+                            self.execute_chunk(&body_chunk, &mut iter_stack, locals, is_fn)?;
+
+                        locals.pop();
+
+                        // Propagate a return that originated inside a function.
+                        if ret.is_some() {
+                            return Ok(ret);
+                        }
+                    }
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",
