@@ -115,6 +115,8 @@ pub struct StateMachineType {
 #[derive(Debug, Clone)]
 pub struct VarInfo {
     pub ty: Type,
+    /// True when declared with `let mut`; false for immutable `let` bindings.
+    pub mutable: bool,
     /// Statically known current variant for state-typed variables, when determinable.
     pub known_state_variant: Option<String>,
 }
@@ -188,7 +190,7 @@ impl TypeEnv {
         None
     }
 
-    /// Define a variable with no known state variant (normal non-state variables).
+    /// Define an immutable variable with no known state variant.
     pub fn define(&mut self, name: String, ty: Type) {
         self.scopes
             .last_mut()
@@ -197,13 +199,20 @@ impl TypeEnv {
                 name,
                 VarInfo {
                     ty,
+                    mutable: false,
                     known_state_variant: None,
                 },
             );
     }
 
-    /// Define a variable with an optional known state variant.
-    pub fn define_with_variant(&mut self, name: String, ty: Type, variant: Option<String>) {
+    /// Define a variable with explicit mutability and an optional known state variant.
+    pub fn define_with_variant(
+        &mut self,
+        name: String,
+        ty: Type,
+        variant: Option<String>,
+        mutable: bool,
+    ) {
         self.scopes
             .last_mut()
             .expect("TypeEnv scope stack empty")
@@ -211,6 +220,7 @@ impl TypeEnv {
                 name,
                 VarInfo {
                     ty,
+                    mutable,
                     known_state_variant: variant,
                 },
             );
@@ -432,6 +442,7 @@ impl TypeChecker {
 
             Stmt::Let {
                 name,
+                mutable,
                 annotation,
                 value,
                 span,
@@ -477,8 +488,61 @@ impl TypeChecker {
                     (val_ty, variant)
                 };
 
-                self.env
-                    .define_with_variant(name.clone(), effective_ty, effective_variant);
+                self.env.define_with_variant(
+                    name.clone(),
+                    effective_ty,
+                    effective_variant,
+                    *mutable,
+                );
+                Ok(())
+            }
+
+            Stmt::Assign { name, value, span } => {
+                let (var_ty, var_mutable) = self
+                    .env
+                    .get(name)
+                    .map(|vi| (vi.ty.clone(), vi.mutable))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                // State variables must use `transition`, not assignment.
+                if matches!(var_ty, Type::State(_)) {
+                    return Err(TypeError {
+                        msg: "state variables must be changed with transition, not assignment"
+                            .into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                if !var_mutable {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let val_ty = self.check_expr(value, *span)?;
+                let compatible = val_ty.is_unknown()
+                    || var_ty.is_unknown()
+                    || val_ty == var_ty
+                    || (matches!(&var_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "variable '{}' has type {} but assigned value has type {}",
+                            name,
+                            var_ty.name(),
+                            val_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
                 Ok(())
             }
 
