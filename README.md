@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 4B**: compound unit inference. Built on top of the Milestone 4 unit-aware static types.
+This repository contains **Milestone 5**: state machines as first-class language constructs. Built on top of the Milestone 4B compound unit inference.
 
 ---
 
@@ -78,6 +78,20 @@ This repository contains **Milestone 4B**: compound unit inference. Built on top
 - No new source annotation syntax — compound types are inferred only; annotations remain single base units
 - No runtime changes
 
+### Milestone 5
+- **State machine declarations**: `state Name { variant1  variant2  transition v1 -> v2 }`
+- **State variable binding**: `let door: Door = Door.closed`
+- **Controlled transition statements**: `transition door -> opening`
+- **Static transition checking**: the type checker validates transitions against declared rules
+  - `transition door -> opening` where `closed -> opening` is declared: ok
+  - `transition door -> open` where `closed -> open` is NOT declared: `TypeError: invalid transition for Door: closed -> open`
+  - `transition door -> locked` where `locked` is not a variant: `TypeError: unknown variant 'locked' for state machine 'Door'`
+  - `transition x -> open` where `x` is a `Number`: `TypeError: 'x' has type Number, not a state machine`
+- **Known-variant tracking**: the type checker tracks statically known current variant and updates it after each transition
+- **State types in functions**: `fn foo(d: Door) -> Door { ... }` — functions accept and return state types
+- **Runtime state values** print as `Door.closed`, `Door.opening`, etc.
+- `transition` is a controlled mutation statement — NOT general variable assignment
+
 ---
 
 ## Install
@@ -138,6 +152,34 @@ print(square(add(2, 3)))
 5
 25
 25
+```
+
+### states.kimin — state machines
+
+```kimin
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+let door: Door = Door.closed
+print(door)
+
+transition door -> opening
+print(door)
+
+transition door -> open
+print(door)
+```
+
+```
+Door.closed
+Door.opening
+Door.open
 ```
 
 ### compound_units.kimin — compound unit inference
@@ -280,7 +322,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-181 tests pass as of Milestone 4B.
+213 tests pass as of Milestone 5.
 
 ---
 
@@ -300,7 +342,7 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (181 tests)
+  tests.rs        Unit tests (213 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -322,6 +364,9 @@ examples/
   unit_errors.kimin
   compound_units.kimin
   compound_unit_errors.kimin
+  states.kimin
+  state_errors.kimin
+  state_functions.kimin
 ```
 
 ---
@@ -336,6 +381,9 @@ examples/
 - Units are static-only in M4 — no runtime unit tracking or unit conversion
 - No derived unit simplification (`kg*m/s²` does not automatically reduce to `newtons`)
 - No compound unit annotations in source — compound types are inferred only; you cannot write `let v: meters/seconds = ...`
+- State transitions inside function bodies modify the function's local copy, not the caller's variable
+- No state transition guards or entry/exit actions
+- No automatic or event-driven transitions
 - No SI prefixes (`km`, `ms`, `MHz` are not recognized)
 - No `5 meters` expression-literal syntax — units can only appear as type annotations
 
@@ -351,6 +399,7 @@ examples/
 | 3 | Static type checking | ✓ done |
 | 4 | Unit-aware types (`let d: meters = 10`) | ✓ done |
 | 4B | Compound unit inference (`meters / seconds → meters/seconds`) | ✓ done |
-| 5 | State machines as first-class language constructs | planned |
+| 5 | State machines as first-class language constructs | ✓ done |
+| 6 | Time blocks and simulation primitives | planned |
 | 6 | Time blocks and simulation primitives | planned |
 | 7 | Bytecode / IR, potential WASM target | planned |

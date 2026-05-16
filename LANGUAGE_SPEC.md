@@ -1,4 +1,4 @@
-# Kimin Language Specification — Milestone 4B
+# Kimin Language Specification — Milestone 5
 
 This document describes the syntax and semantics implemented through Milestone 4.
 
@@ -89,17 +89,18 @@ let  if  else  print  fn  return  true  false
 
 ### 2.1 Runtime types
 
-| Type     | Examples            | Notes |
-|----------|---------------------|-------|
-| Number   | `42`, `3.14`        | IEEE 754 `f64` |
-| Text     | `"hello"`           | UTF-8 string |
-| Bool     | `true`, `false`     | |
-| Nil      | (runtime only)      | No literal syntax |
-| Function | (runtime only)      | `FunctionValue` in the interpreter |
+| Type       | Examples               | Notes |
+|------------|------------------------|-------|
+| Number     | `42`, `3.14`           | IEEE 754 `f64` |
+| Text       | `"hello"`              | UTF-8 string |
+| Bool       | `true`, `false`        | |
+| Nil        | (runtime only)         | No literal syntax |
+| Function   | (runtime only)         | `FunctionValue` in the interpreter |
+| StateValue | `Door.closed` at runtime | Produced by state variant expressions |
 
-### 2.2 Static types (Milestones 3–4)
+### 2.2 Static types (Milestones 3–5)
 
-The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, or any unit name from the unit registry.
+The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, any unit name from the unit registry, or a state machine name.
 
 Functions without a return type annotation are assigned `Unknown` — the gradual-typing escape hatch. Operations involving an `Unknown` value propagate `Unknown` without error, so unannotated code remains valid.
 
@@ -182,6 +183,60 @@ let speed = d / t    // type: meters/seconds (inferred)
 | `u < v` etc. (different units) | TypeError |
 | `u == u`, `u != u` (same unit) | `Bool` |
 | `u == v`, `u != v` (different units) | TypeError |
+
+### 2.4 State types (Milestone 5)
+
+A state type represents a variable that holds one variant of a declared state machine.
+
+```kimin
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+let door: Door = Door.closed
+```
+
+State types are static and runtime. At runtime, a state value prints as `StateName.variant` (e.g., `Door.closed`).
+
+**State variant expressions** — a state value is written as `StateName.variant`:
+
+```kimin
+Door.closed
+Door.opening
+```
+
+**Transition statements** — controlled state mutation. Only `transition` can mutate a state variable:
+
+```kimin
+transition door -> opening   // ok: closed -> opening is declared
+transition door -> open      // ok: opening -> open is declared
+transition door -> closed    // TypeError: no open -> closed transition declared
+```
+
+**Static checking rules:**
+
+| Check | Result |
+|-------|--------|
+| State machine name does not exist | TypeError |
+| Variant not declared in the state machine | TypeError |
+| Transition declared and current variant is known statically | ok |
+| Transition not declared and current variant is known | TypeError |
+| Target variant does not exist | TypeError |
+| Transition on a non-state variable | TypeError |
+| Current variant unknown (e.g., returned from a function) | transition allowed if target variant exists |
+
+**Known-variant tracking** — after each valid transition, the type checker updates its record of the variable's current variant. Subsequent transitions are checked against the updated variant:
+
+```kimin
+transition door -> opening   // checker now knows: door = opening
+transition door -> open      // ok: opening -> open declared
+transition door -> closed    // TypeError: no open -> closed transition declared
+```
 
 ---
 
@@ -318,6 +373,40 @@ if score > 10 {
 ### 4.5 Expression Statement
 
 Any expression used as a statement; its value is discarded.
+
+### 4.6 State Declaration
+
+```kimin
+state Name {
+  variant1
+  variant2
+  ...
+
+  transition variant1 -> variant2
+  ...
+}
+```
+
+Declares a state machine named `Name` with a set of variants and allowed transitions. State machine names are globally visible. State declarations have no runtime effect.
+
+### 4.7 Transition Statement
+
+```kimin
+transition variable -> target_variant
+```
+
+Mutates a state variable to a new variant. This is the only form of variable mutation in Kimin. No general assignment (`x = ...`) is available.
+
+```kimin
+let door: Door = Door.closed
+transition door -> opening
+transition door -> open
+```
+
+Static rules:
+- `variable` must exist and have a state machine type.
+- `target_variant` must be a declared variant of that state machine.
+- If the checker has statically tracked the current variant and the transition `(current, target)` is not declared, a `TypeError` is raised.
 
 ---
 
@@ -509,6 +598,11 @@ TypeError at line 3, column 5: cannot add meters and seconds
 TypeError at line 2, column 5: variable 'bad' declared as seconds but initializer has type meters
 TypeError at line 4, column 5: cannot add meters/seconds and meters
 TypeError at line 4, column 5: variable 'v' declared as meters but initializer has type meters/seconds
+TypeError at line 7, column 1: invalid transition for Door: closed -> closed
+TypeError at line 6, column 18: unknown variant 'locked' for state machine 'Door'
+TypeError at line 2, column 1: 'x' has type Number, not a state machine; transition requires a state variable
+TypeError at line 1, column 7: unknown state machine 'Motor'
+TypeError at line 1, column 5: duplicate variant 'closed' in state machine 'Door'
 ```
 
 ### 7.4 Runtime Errors
@@ -524,32 +618,41 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 ## 8. Grammar (EBNF)
 
 ```
-program      = stmt* EOF
-stmt         = fn_decl | return_stmt | let_stmt | print_stmt | if_stmt | block | expr_stmt
-fn_decl      = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
-return_stmt  = "return" expr?
-let_stmt     = "let" IDENT (":" type_ann)? "=" expr
-print_stmt   = "print" "(" expr ")"
-if_stmt      = "if" expr block ("else" block)?
-block        = "{" stmt* "}"
-fn_body      = "{" stmt* "}"
-params       = (typed_param ("," typed_param)*)?
-typed_param  = IDENT ":" type_ann
-type_ann     = "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME
-UNIT_NAME    = "m" | "meters" | "s" | "seconds" | "kg" | "kilograms"
-             | "A" | "amps" | "amperes" | "K" | "kelvin"
-             | "mol" | "moles" | "cd" | "candela"
-             | "rad" | "radians" | "deg" | "degrees"
-             | "V" | "volts" | "W" | "watts" | "J" | "joules" | "N" | "newtons"
-expr_stmt    = expr
+program         = stmt* EOF
+stmt            = state_decl | transition_stmt | fn_decl | return_stmt | let_stmt
+                | print_stmt | if_stmt | block | expr_stmt
+state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
+variant_decl    = IDENT
+inner_transition = "transition" IDENT "->" IDENT
+transition_stmt = "transition" IDENT "->" IDENT
+fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
+return_stmt     = "return" expr?
+let_stmt        = "let" IDENT (":" type_ann)? "=" expr
+print_stmt      = "print" "(" expr ")"
+if_stmt         = "if" expr block ("else" block)?
+block           = "{" stmt* "}"
+fn_body         = "{" stmt* "}"
+params          = (typed_param ("," typed_param)*)?
+typed_param     = IDENT ":" type_ann
+type_ann        = "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | STATE_NAME
+STATE_NAME      = IDENT (resolved to a state machine name by the type checker)
+UNIT_NAME       = "m" | "meters" | "s" | "seconds" | "kg" | "kilograms"
+                | "A" | "amps" | "amperes" | "K" | "kelvin"
+                | "mol" | "moles" | "cd" | "candela"
+                | "rad" | "radians" | "deg" | "degrees"
+                | "V" | "volts" | "W" | "watts" | "J" | "joules" | "N" | "newtons"
+expr_stmt       = expr
 
-expr         = equality
-equality     = comparison (("==" | "!=") comparison)*
-comparison   = term (("<" | "<=" | ">" | ">=") term)*
-term         = factor (("+" | "-") factor)*
-factor       = unary (("*" | "/") unary)*
-unary        = ("-" | "!") unary | call
-call         = primary ("(" args ")")*
-primary      = NUMBER | STRING | "true" | "false" | IDENT | "(" expr ")"
-args         = (expr ("," expr)*)?
+expr            = equality
+equality        = comparison (("==" | "!=") comparison)*
+comparison      = term (("<" | "<=" | ">" | ">=") term)*
+term            = factor (("+" | "-") factor)*
+factor          = unary (("*" | "/") unary)*
+unary           = ("-" | "!") unary | call
+call            = primary ("(" args ")")*
+primary         = NUMBER | STRING | "true" | "false"
+                | IDENT "." IDENT        (state variant expression)
+                | IDENT                  (variable reference)
+                | "(" expr ")"
+args            = (expr ("," expr)*)?
 ```
