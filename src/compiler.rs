@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
-use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
+use crate::ast::{BinaryOp, Expr, Param, Stmt, UnaryOp};
+use crate::bytecode::{BytecodeProgram, Chunk, Constant, FunctionChunk, Instruction};
 use crate::error::CompileError;
 
 pub struct BytecodeCompiler {
@@ -13,6 +13,8 @@ pub struct BytecodeCompiler {
     /// innermost scope is at the end. A name present in any layer here is LOCAL; a name
     /// in `globals` that is absent from all layers is GLOBAL.
     locals_stack: Vec<HashSet<String>>,
+    /// Function chunks collected during compilation, in source order.
+    functions: Vec<FunctionChunk>,
 }
 
 impl BytecodeCompiler {
@@ -21,16 +23,51 @@ impl BytecodeCompiler {
             chunk: Chunk::new(),
             globals: HashSet::new(),
             locals_stack: Vec::new(),
+            functions: Vec::new(),
         }
     }
 
-    /// Lowers a parsed program to a flat bytecode chunk.
+    /// Creates a compiler seeded for a function body. Parameters are pre-loaded as
+    /// the innermost local scope so they resolve to LoadLocal inside the body.
+    fn new_for_function(globals: HashSet<String>, params: &[Param]) -> Self {
+        let param_scope: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        BytecodeCompiler {
+            chunk: Chunk::new(),
+            globals,
+            locals_stack: vec![param_scope],
+            functions: Vec::new(),
+        }
+    }
+
+    /// Lowers a parsed program to bytecode. Emits HALT at end.
     pub fn compile(mut self, stmts: &[Stmt]) -> Result<BytecodeProgram, CompileError> {
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
         self.chunk.emit(Instruction::Halt);
-        Ok(BytecodeProgram::new(self.chunk))
+        Ok(BytecodeProgram::new(self.chunk, self.functions))
+    }
+
+    /// Compiles a function body (no HALT). Appends NIL + RETURN if body does not
+    /// already end with an explicit RETURN.
+    fn compile_function_body(
+        mut self,
+        stmts: &[Stmt],
+    ) -> Result<(Chunk, Vec<FunctionChunk>), CompileError> {
+        for stmt in stmts {
+            self.compile_stmt(stmt)?;
+        }
+        let needs_return = self
+            .chunk
+            .instructions
+            .last()
+            .map(|i| !matches!(i, Instruction::Return))
+            .unwrap_or(true);
+        if needs_return {
+            self.chunk.emit(Instruction::Nil);
+            self.chunk.emit(Instruction::Return);
+        }
+        Ok((self.chunk, self.functions))
     }
 
     /// Returns true if `name` resolves to a local variable in any active block scope.
@@ -51,7 +88,7 @@ impl BytecodeCompiler {
                     self.globals.insert(name.clone());
                     self.chunk.emit(Instruction::DefineGlobal(name.clone()));
                 } else {
-                    // Inside a block — register as local in the innermost scope.
+                    // Inside a block or function body — register as local.
                     self.locals_stack.last_mut().unwrap().insert(name.clone());
                     self.chunk.emit(Instruction::DefineLocal(name.clone()));
                 }
@@ -122,9 +159,28 @@ impl BytecodeCompiler {
                 self.chunk.emit(Instruction::Return);
             }
 
-            Stmt::FnDecl { name, .. } => {
-                self.chunk
-                    .emit(Instruction::Unsupported(format!("fn {}", name)));
+            Stmt::FnDecl {
+                name, params, body, ..
+            } => {
+                // Register in globals before compiling body so recursive calls resolve correctly.
+                self.globals.insert(name.clone());
+
+                let fn_compiler = BytecodeCompiler::new_for_function(self.globals.clone(), params);
+                let (fn_chunk, nested_fns) = fn_compiler.compile_function_body(body)?;
+
+                // Collect any function chunks emitted within the body (nested decls, if any).
+                self.functions.extend(nested_fns);
+
+                self.functions.push(FunctionChunk {
+                    name: name.clone(),
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    arity: params.len(),
+                    chunk: fn_chunk,
+                });
+
+                // Main chunk: make the function visible as a global.
+                self.chunk.emit(Instruction::LoadFunction(name.clone()));
+                self.chunk.emit(Instruction::DefineGlobal(name.clone()));
             }
 
             Stmt::StateDecl { name, .. } => {
@@ -211,13 +267,24 @@ impl BytecodeCompiler {
                 self.compile_expr(inner)?;
             }
 
-            Expr::Call { callee, .. } => {
-                let name = match callee.as_ref() {
-                    Expr::Variable { name, .. } => name.clone(),
-                    _ => "?".to_string(),
-                };
-                self.chunk
-                    .emit(Instruction::Unsupported(format!("call {}", name)));
+            Expr::Call { callee, args, .. } => {
+                match callee.as_ref() {
+                    Expr::Variable { name, .. } => {
+                        // Simple named call: compile args left-to-right, then emit Call.
+                        for arg in args {
+                            self.compile_expr(arg)?;
+                        }
+                        self.chunk.emit(Instruction::Call {
+                            name: name.clone(),
+                            arg_count: args.len(),
+                        });
+                    }
+                    _ => {
+                        // Dynamic call (higher-order, computed callee) — not yet lowered.
+                        self.chunk
+                            .emit(Instruction::Unsupported("dynamic call".to_string()));
+                    }
+                }
             }
 
             Expr::StateVariant {
