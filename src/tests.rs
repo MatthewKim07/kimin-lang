@@ -3371,3 +3371,190 @@ fn disassemble_shows_unsupported_marker() {
     let out = disassemble(&prog);
     assert!(out.contains("UNSUPPORTED(fn foo)"));
 }
+
+// --- M8A audit: scope classification ---
+
+#[test]
+fn bytecode_outer_global_loaded_from_block() {
+    // Bug regression: outer global accessed inside block must emit LOAD_GLOBAL, not LOAD_LOCAL.
+    let prog = compile_prog("let x = 1\n{ print(x) }");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT, DEFINE_GLOBAL x, BEGIN_SCOPE, LOAD_GLOBAL x, PRINT, END_SCOPE, HALT
+    assert!(matches!(&instrs[3], Instruction::LoadGlobal(n) if n == "x"));
+}
+
+#[test]
+fn bytecode_outer_global_stored_from_block() {
+    // Bug regression: assignment to outer global inside block must emit STORE_GLOBAL.
+    let prog = compile_prog("let mut x = 0\n{ x = 1 }");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT, DEFINE_GLOBAL x, BEGIN_SCOPE, CONSTANT, STORE_GLOBAL x, END_SCOPE, HALT
+    assert!(matches!(&instrs[4], Instruction::StoreGlobal(n) if n == "x"));
+}
+
+#[test]
+fn bytecode_local_variable_stays_local() {
+    // A variable defined inside a block must use LOCAL instructions.
+    let prog = compile_prog("{ let y = 2\nprint(y) }");
+    let instrs = &prog.chunk.instructions;
+    // BEGIN_SCOPE, CONSTANT, DEFINE_LOCAL y, LOAD_LOCAL y, PRINT, END_SCOPE, HALT
+    assert!(matches!(&instrs[2], Instruction::DefineLocal(n) if n == "y"));
+    assert!(matches!(&instrs[3], Instruction::LoadLocal(n) if n == "y"));
+}
+
+#[test]
+fn bytecode_nested_blocks_scope_balanced() {
+    // Two nested blocks must emit two BeginScope/EndScope pairs.
+    let prog = compile_prog("{ { let z = 1 } }");
+    let instrs = &prog.chunk.instructions;
+    let begin_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::BeginScope))
+        .count();
+    let end_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::EndScope))
+        .count();
+    assert_eq!(begin_count, 2);
+    assert_eq!(end_count, 2);
+}
+
+#[test]
+fn bytecode_nested_if_jump_targets() {
+    // Nested if: outer JIF_FALSE jumps past both ifs; inner JIF_FALSE jumps past inner then.
+    // let x = 1 / if x==1 { if x==2 { print("inner") } }
+    let prog = compile_prog("let x = 1\nif x == 1 { if x == 2 { print(\"inner\") } }");
+    let instrs = &prog.chunk.instructions;
+    // 0:CONST, 1:DEF_GLOBAL x, 2:LOAD_GLOBAL x, 3:CONST, 4:EQUAL, 5:JIF_FALSE(@16),
+    // 6:BEGIN_SCOPE, 7:LOAD_GLOBAL x, 8:CONST, 9:EQUAL, 10:JIF_FALSE(@15),
+    // 11:BEGIN_SCOPE, 12:CONST, 13:PRINT, 14:END_SCOPE, 15:END_SCOPE, 16:HALT
+    assert!(matches!(instrs[5], Instruction::JumpIfFalse(16)));
+    assert!(matches!(instrs[10], Instruction::JumpIfFalse(15)));
+    assert!(matches!(instrs[16], Instruction::Halt));
+}
+
+#[test]
+fn bytecode_if_else_inside_block_jump_targets() {
+    // if/else inside a block: JIF_FALSE and JUMP still patch correctly.
+    let prog = compile_prog("let x = 5\n{ if x > 3 { print(\"big\") } else { print(\"small\") } }");
+    let instrs = &prog.chunk.instructions;
+    // 0:CONST, 1:DEF_GLOBAL x, 2:BEGIN_SCOPE, 3:LOAD_GLOBAL x, 4:CONST, 5:GREATER,
+    // 6:JIF_FALSE(@12), 7:BEGIN_SCOPE, 8:CONST, 9:PRINT, 10:END_SCOPE, 11:JUMP(@16),
+    // 12:BEGIN_SCOPE, 13:CONST, 14:PRINT, 15:END_SCOPE, 16:END_SCOPE, 17:HALT
+    assert!(matches!(instrs[6], Instruction::JumpIfFalse(12)));
+    assert!(matches!(instrs[11], Instruction::Jump(16)));
+    assert!(matches!(instrs[17], Instruction::Halt));
+}
+
+// --- M8A audit: missing comparison operators ---
+
+#[test]
+fn bytecode_not_equal_emits_not_equal() {
+    let prog = compile_prog("let b = 1 != 2");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::NotEqual));
+}
+
+#[test]
+fn bytecode_less_equal_emits_less_equal() {
+    let prog = compile_prog("let b = 1 <= 2");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::LessEqual));
+}
+
+#[test]
+fn bytecode_greater_emits_greater() {
+    let prog = compile_prog("let b = 2 > 1");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::Greater));
+}
+
+#[test]
+fn bytecode_greater_equal_emits_greater_equal() {
+    let prog = compile_prog("let b = 2 >= 1");
+    assert!(matches!(
+        prog.chunk.instructions[2],
+        Instruction::GreaterEqual
+    ));
+}
+
+// --- M8A audit: disassembler coverage ---
+
+#[test]
+fn disassemble_string_constant_has_quotes() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("print(\"hello\")");
+    let out = disassemble(&prog);
+    assert!(out.contains("Text(\"hello\")"));
+}
+
+#[test]
+fn disassemble_nil_instruction_shown() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("return");
+    let out = disassemble(&prog);
+    assert!(out.contains("NIL"));
+}
+
+#[test]
+fn disassemble_store_global_shown() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let mut x = 0\nx = 5");
+    let out = disassemble(&prog);
+    assert!(out.contains("STORE_GLOBAL x"));
+}
+
+#[test]
+fn disassemble_begin_end_scope_balanced() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("{ let y = 1 }");
+    let out = disassemble(&prog);
+    assert!(out.contains("BEGIN_SCOPE"));
+    assert!(out.contains("END_SCOPE"));
+}
+
+#[test]
+fn disassemble_load_global_shown() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let x = 1\n{ print(x) }");
+    let out = disassemble(&prog);
+    // After fix: inner reference to x uses LOAD_GLOBAL
+    assert!(out.contains("LOAD_GLOBAL x"));
+}
+
+// --- M8A audit: unsupported coverage ---
+
+#[test]
+fn bytecode_state_variant_expr_emits_unsupported() {
+    // Door.closed as an expression emits UNSUPPORTED marker.
+    let prog = compile_prog(
+        "state Door { closed open transition closed -> open }\nlet d: Door = Door.closed",
+    );
+    let has_variant = prog
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "Door.closed"));
+    assert!(has_variant);
+}
+
+#[test]
+fn bytecode_unsupported_does_not_crash_on_fndecl() {
+    // FnDecl with body and typed params must not panic.
+    let result = std::panic::catch_unwind(|| {
+        compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }")
+    });
+    assert!(result.is_ok());
+}
+
+#[test]
+fn bytecode_unsupported_does_not_crash_on_call() {
+    let result = std::panic::catch_unwind(|| compile_prog("fn f() { } f()"));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn bytecode_constants_not_deduplicated() {
+    // Constants are appended per-use — no deduplication in M8A (expected behavior).
+    let prog = compile_prog("let a = 1\nlet b = 1");
+    assert_eq!(prog.chunk.constants.len(), 2);
+    assert!(matches!(prog.chunk.constants[0], Constant::Number(n) if n == 1.0));
+    assert!(matches!(prog.chunk.constants[1], Constant::Number(n) if n == 1.0));
+}

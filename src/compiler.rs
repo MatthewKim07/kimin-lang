@@ -1,18 +1,26 @@
+use std::collections::HashSet;
+
 use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
 use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
 use crate::error::CompileError;
 
 pub struct BytecodeCompiler {
     chunk: Chunk,
-    /// Tracks block nesting depth. 0 = global scope; > 0 = local scope.
-    scope_depth: usize,
+    /// Names defined at global scope (depth 0). Used to correctly classify variable
+    /// references inside blocks as GLOBAL or LOCAL regardless of current scope depth.
+    globals: HashSet<String>,
+    /// Stack of locally-defined name sets, one entry per active block scope. The
+    /// innermost scope is at the end. A name present in any layer here is LOCAL; a name
+    /// in `globals` that is absent from all layers is GLOBAL.
+    locals_stack: Vec<HashSet<String>>,
 }
 
 impl BytecodeCompiler {
     pub fn new() -> Self {
         BytecodeCompiler {
             chunk: Chunk::new(),
-            scope_depth: 0,
+            globals: HashSet::new(),
+            locals_stack: Vec::new(),
         }
     }
 
@@ -25,23 +33,36 @@ impl BytecodeCompiler {
         Ok(BytecodeProgram::new(self.chunk))
     }
 
+    /// Returns true if `name` resolves to a local variable in any active block scope.
+    /// A name that is NOT local is classified as global.
+    fn is_local(&self, name: &str) -> bool {
+        self.locals_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompileError> {
         match stmt {
             Stmt::Let { name, value, .. } => {
                 self.compile_expr(value)?;
-                if self.scope_depth == 0 {
+                if self.locals_stack.is_empty() {
+                    // Top-level (global) scope.
+                    self.globals.insert(name.clone());
                     self.chunk.emit(Instruction::DefineGlobal(name.clone()));
                 } else {
+                    // Inside a block — register as local in the innermost scope.
+                    self.locals_stack.last_mut().unwrap().insert(name.clone());
                     self.chunk.emit(Instruction::DefineLocal(name.clone()));
                 }
             }
 
             Stmt::Assign { name, value, .. } => {
                 self.compile_expr(value)?;
-                if self.scope_depth == 0 {
-                    self.chunk.emit(Instruction::StoreGlobal(name.clone()));
-                } else {
+                if self.is_local(name) {
                     self.chunk.emit(Instruction::StoreLocal(name.clone()));
+                } else {
+                    self.chunk.emit(Instruction::StoreGlobal(name.clone()));
                 }
             }
 
@@ -57,11 +78,11 @@ impl BytecodeCompiler {
 
             Stmt::Block(stmts) => {
                 self.chunk.emit(Instruction::BeginScope);
-                self.scope_depth += 1;
+                self.locals_stack.push(HashSet::new());
                 for s in stmts {
                     self.compile_stmt(s)?;
                 }
-                self.scope_depth -= 1;
+                self.locals_stack.pop();
                 self.chunk.emit(Instruction::EndScope);
             }
 
@@ -149,10 +170,10 @@ impl BytecodeCompiler {
             }
 
             Expr::Variable { name, .. } => {
-                if self.scope_depth == 0 {
-                    self.chunk.emit(Instruction::LoadGlobal(name.clone()));
-                } else {
+                if self.is_local(name) {
                     self.chunk.emit(Instruction::LoadLocal(name.clone()));
+                } else {
+                    self.chunk.emit(Instruction::LoadGlobal(name.clone()));
                 }
             }
 
