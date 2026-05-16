@@ -3829,3 +3829,363 @@ fn disassemble_multiple_function_chunks_in_order() {
     let second_pos = out.find("function second/0").unwrap();
     assert!(first_pos < second_pos);
 }
+
+// --- M8B audit: function chunk correctness ---
+
+#[test]
+fn bytecode_fn_chunk_contains_no_halt() {
+    // Function bodies must never contain HALT — HALT is only emitted for the main chunk.
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(!body.iter().any(|i| matches!(i, Instruction::Halt)));
+}
+
+#[test]
+fn bytecode_fn_bare_return_in_body_emits_nil_return() {
+    // `return` (no value) inside a function emits NIL + RETURN.
+    let prog = compile_prog("fn f() { return }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(matches!(body[0], Instruction::Nil));
+    assert!(matches!(body[1], Instruction::Return));
+}
+
+#[test]
+fn bytecode_fn_if_else_inside_body_patches_jumps() {
+    // if/else jump patching must work inside a function chunk, not only in main.
+    let prog = compile_prog(concat!(
+        "fn pick(x: Number) -> Number {\n",
+        "  if x > 0 { return 1 } else { return 0 }\n",
+        "}"
+    ));
+    let body = &prog.functions[0].chunk.instructions;
+    let has_patched_jif = body
+        .iter()
+        .any(|i| matches!(i, Instruction::JumpIfFalse(t) if *t > 0));
+    let has_patched_jump = body
+        .iter()
+        .any(|i| matches!(i, Instruction::Jump(t) if *t > 0));
+    assert!(
+        has_patched_jif,
+        "JumpIfFalse must be patched to non-zero target"
+    );
+    assert!(has_patched_jump, "Jump must be patched to non-zero target");
+}
+
+#[test]
+fn bytecode_fn_nested_block_emits_scope_instructions() {
+    // A block inside a function body must emit BEGIN_SCOPE / END_SCOPE.
+    let prog = compile_prog(concat!(
+        "fn f() -> Number {\n",
+        "  { let x = 1 }\n",
+        "  return 0\n",
+        "}"
+    ));
+    let body = &prog.functions[0].chunk.instructions;
+    let begin_count = body
+        .iter()
+        .filter(|i| matches!(i, Instruction::BeginScope))
+        .count();
+    let end_count = body
+        .iter()
+        .filter(|i| matches!(i, Instruction::EndScope))
+        .count();
+    assert_eq!(begin_count, 1);
+    assert_eq!(end_count, 1);
+}
+
+// --- M8B audit: variable resolution inside function chunks ---
+
+#[test]
+fn bytecode_fn_param_shadows_global_of_same_name() {
+    // Parameter named the same as a top-level global must load as LOAD_LOCAL, not LOAD_GLOBAL.
+    let prog = compile_prog(concat!(
+        "let x = 10\n",
+        "fn f(x: Number) -> Number { return x }"
+    ));
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(
+        body.iter()
+            .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "x")),
+        "parameter x must emit LOAD_LOCAL"
+    );
+    assert!(
+        !body
+            .iter()
+            .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "x")),
+        "parameter x must NOT emit LOAD_GLOBAL"
+    );
+}
+
+#[test]
+fn bytecode_fn_global_ref_inside_fn_emits_load_global() {
+    // A top-level global referenced inside a function must emit LOAD_GLOBAL.
+    let prog = compile_prog(concat!(
+        "let speed = 10\n",
+        "fn f() -> Number { return speed }"
+    ));
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "speed")));
+}
+
+#[test]
+fn bytecode_fn_global_ref_from_nested_block_inside_fn_emits_load_global() {
+    // Global accessed from a block inside a function must still emit LOAD_GLOBAL.
+    let prog = compile_prog(concat!("let g = 99\n", "fn f() -> Number { { return g } }"));
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "g")));
+}
+
+#[test]
+fn bytecode_fn_local_mut_store_emits_store_local() {
+    // Assignment to a function-local mutable variable must emit STORE_LOCAL.
+    let prog = compile_prog(concat!(
+        "fn f() -> Number {\n",
+        "  let mut x = 0\n",
+        "  x = 5\n",
+        "  return x\n",
+        "}"
+    ));
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::StoreLocal(n) if n == "x")));
+}
+
+#[test]
+fn bytecode_fn_assign_to_global_mut_inside_fn_emits_store_global() {
+    // Assignment to a top-level mutable global inside a function must emit STORE_GLOBAL.
+    let prog = compile_prog(concat!("let mut g = 0\n", "fn f() {\n", "  g = 1\n", "}"));
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::StoreGlobal(n) if n == "g")));
+}
+
+#[test]
+fn bytecode_fn_local_let_same_name_as_param_uses_local_ops() {
+    // Let with same name as a parameter uses DefineLocal/LoadLocal (no crash, no global ops).
+    // Documented provisional behavior: the new let shadows the param in the local scope set.
+    let prog = compile_prog("fn f(x: Number) -> Number { let x = 99\nreturn x }");
+    let body = &prog.functions[0].chunk.instructions;
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::DefineLocal(n) if n == "x")));
+    assert!(body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "x")));
+    assert!(!body
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "x")));
+}
+
+// --- M8B audit: call lowering edge cases ---
+
+#[test]
+fn bytecode_call_as_expr_stmt_emits_pop() {
+    // A call used as a statement (result discarded) must emit POP after CALL.
+    let prog = compile_prog("fn f() { } f()");
+    let instrs = &prog.main.instructions;
+    let call_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "f"))
+        .unwrap();
+    assert!(
+        matches!(instrs[call_idx + 1], Instruction::Pop),
+        "POP must follow CALL when call is a statement"
+    );
+}
+
+#[test]
+fn bytecode_call_in_print_emits_print_after_call() {
+    // print(f()) must emit CALL then PRINT — not PRINT then CALL.
+    let prog = compile_prog("fn f() -> Number { return 1 }\nprint(f())");
+    let instrs = &prog.main.instructions;
+    let call_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "f"))
+        .unwrap();
+    assert!(
+        matches!(instrs[call_idx + 1], Instruction::Print),
+        "PRINT must immediately follow CALL f in print(f())"
+    );
+}
+
+#[test]
+fn bytecode_call_result_in_binary_expr_correct_order() {
+    // add(2, 3) + 1: CALL add must be emitted before ADD.
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "let z = add(2, 3) + 1"
+    ));
+    let instrs = &prog.main.instructions;
+    let call_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "add"))
+        .unwrap();
+    let add_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Add))
+        .unwrap();
+    assert!(call_idx < add_idx, "CALL add must precede ADD");
+}
+
+#[test]
+fn bytecode_mutual_recursion_emits_cross_calls() {
+    // is_even calls is_odd and vice versa — each function chunk must emit a CALL to the other.
+    let prog = compile_prog(concat!(
+        "fn is_even(n: Number) -> Bool {\n",
+        "  if n == 0 { return true }\n",
+        "  return is_odd(n - 1)\n",
+        "}\n",
+        "fn is_odd(n: Number) -> Bool {\n",
+        "  if n == 0 { return false }\n",
+        "  return is_even(n - 1)\n",
+        "}"
+    ));
+    let even_body = &prog.functions[0].chunk.instructions;
+    assert!(
+        even_body
+            .iter()
+            .any(|i| matches!(i, Instruction::Call { name, arg_count: 1 } if name == "is_odd")),
+        "is_even must call is_odd"
+    );
+    let odd_body = &prog.functions[1].chunk.instructions;
+    assert!(
+        odd_body
+            .iter()
+            .any(|i| matches!(i, Instruction::Call { name, arg_count: 1 } if name == "is_even")),
+        "is_odd must call is_even"
+    );
+}
+
+#[test]
+fn bytecode_dynamic_call_emits_unsupported_marker() {
+    // f()() — outer callee is a Call expression, not a Variable — must emit UNSUPPORTED(dynamic call).
+    let prog = compile_prog("fn f() { } f()()");
+    let has_unsupported = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "dynamic call"));
+    assert!(
+        has_unsupported,
+        "dynamic call must emit UNSUPPORTED(dynamic call)"
+    );
+}
+
+// --- M8B audit: nested function declarations (provisional behavior) ---
+
+#[test]
+fn bytecode_nested_fn_decl_does_not_panic() {
+    // A function declared inside another function body must not panic.
+    // Nested fn lowering is provisional: inner appears in prog.functions as a flat chunk.
+    let result = std::panic::catch_unwind(|| {
+        compile_prog(concat!(
+            "fn outer() -> Number {\n",
+            "  fn inner() -> Number { return 1 }\n",
+            "  return inner()\n",
+            "}"
+        ))
+    });
+    assert!(result.is_ok(), "nested fn decl must not panic");
+}
+
+#[test]
+fn bytecode_nested_fn_decl_both_appear_in_functions() {
+    // Nested fn decl: both outer and inner appear in prog.functions (flat function table).
+    // inner is extended before outer is pushed, so inner appears first.
+    let prog = compile_prog(concat!(
+        "fn outer() -> Number {\n",
+        "  fn inner() -> Number { return 1 }\n",
+        "  return inner()\n",
+        "}"
+    ));
+    assert_eq!(prog.functions.len(), 2);
+    let names: Vec<&str> = prog.functions.iter().map(|f| f.name.as_str()).collect();
+    assert!(
+        names.contains(&"inner"),
+        "inner must appear in function table"
+    );
+    assert!(
+        names.contains(&"outer"),
+        "outer must appear in function table"
+    );
+}
+
+// --- M8B audit: disassembler stability ---
+
+#[test]
+fn disassemble_function_constants_in_fn_chunk_not_main() {
+    // A function with a constant in its body must show that constant under the function section.
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn double(x: Number) -> Number { return x * 2 }");
+    let out = disassemble(&prog);
+    let fn_pos = out.find("=== function double/1 ===").unwrap();
+    let number2_pos = out.find("Number(2)").unwrap();
+    // The Number(2) constant must appear after the function section header.
+    assert!(
+        number2_pos > fn_pos,
+        "function constant must appear in the function section, not main"
+    );
+}
+
+#[test]
+fn disassemble_no_params_line_for_zero_param_fn() {
+    // Zero-param function must not produce a params: line in the output.
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn f() { }");
+    let out = disassemble(&prog);
+    assert!(
+        !out.contains("params:"),
+        "zero-param function must not show params: line"
+    );
+}
+
+#[test]
+fn disassemble_call_format_stable() {
+    // CALL instruction must be formatted as "CALL name arg_count".
+    use crate::disassemble::disassemble;
+    let prog = compile_prog(concat!(
+        "fn f(a: Number, b: Number, c: Number) -> Number { return a }\n",
+        "let x = f(1, 2, 3)"
+    ));
+    let out = disassemble(&prog);
+    assert!(out.contains("CALL f 3"));
+}
+
+#[test]
+fn disassemble_load_function_format_stable() {
+    // LOAD_FUNCTION instruction must be formatted as "LOAD_FUNCTION name".
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn my_func() { }");
+    let out = disassemble(&prog);
+    assert!(out.contains("LOAD_FUNCTION my_func"));
+}
+
+#[test]
+fn disassemble_fn_chunk_return_shown() {
+    // Function body with explicit return must show RETURN in the function section.
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn f() -> Number { return 1 }");
+    let out = disassemble(&prog);
+    let fn_pos = out.find("=== function f/0 ===").unwrap();
+    let return_pos = out.rfind("RETURN").unwrap();
+    assert!(
+        return_pos > fn_pos,
+        "RETURN must appear inside the function section"
+    );
+}
+
+#[test]
+fn disassemble_fn_implicit_return_shows_nil_return() {
+    // Empty function body must show NIL + RETURN in the function section.
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn f() { }");
+    let out = disassemble(&prog);
+    assert!(out.contains("NIL"), "implicit return must emit NIL");
+    assert!(out.contains("RETURN"), "implicit return must emit RETURN");
+}
