@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 6B
+# Kimin Language Specification — Milestone 7A
 
-This document describes the syntax and semantics implemented through Milestone 6B.
+This document describes the syntax and semantics implemented through Milestone 7A.
 
 ---
 
@@ -56,7 +56,7 @@ foo  bar_baz  _x  score1
 ### 1.5 Keywords
 
 ```
-let  if  else  print  fn  return  true  false  state  transition  simulate  step
+let  mut  if  else  print  fn  return  true  false  state  transition  simulate  step
 ```
 
 ### 1.6 Operators and Delimiters
@@ -398,7 +398,7 @@ Declares a state machine named `Name` with a set of variants and allowed transit
 transition variable -> target_variant
 ```
 
-Mutates a state variable to a new variant. This is the only form of variable mutation in Kimin. No general assignment (`x = ...`) is available.
+Mutates a state variable to a new variant. State variables must use `transition` — the assignment statement (`x = expr`) does not apply to state-typed variables.
 
 ```kimin
 let door: Door = Door.closed
@@ -441,6 +441,80 @@ Runtime rules:
 - `step <= 0` → `RuntimeError`
 - `duration < 0` → `RuntimeError`
 - State mutations (`transition`) inside the body affect the outer variable and persist across iterations.
+- `let mut` assignments inside the body update outer mutable variables via scope-chain walk.
+
+---
+
+### 4.9 Mutable Variables and Assignment
+
+Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
+
+```kimin
+let mut x: Number = 0
+x = x + 1
+print(x)   // 1
+```
+
+Unit-typed variables work the same way:
+
+```kimin
+let mut distance: meters = 10
+let extra: meters = 5
+distance = distance + extra
+print(distance)   // 15
+```
+
+A plain `Number` literal or expression promotes to the target unit type at the assignment site (same rule as `let` initializers):
+
+```kimin
+let mut d: meters = 10
+d = 20   // ok — Number promotes to meters
+```
+
+**Static rules:**
+- `let x = ...` creates an immutable binding.
+- `let mut x = ...` creates a mutable binding.
+- `x = expr` reassigns `x`; `x` must be declared with `let mut`.
+- The type of `expr` must equal the declared type of `x`, or be `Number` when `x` has a unit type.
+- Assignment to a state-typed variable is a `TypeError` — use `transition`.
+- Assignment is a statement only; it does not produce a value.
+- No compound assignment operators (`+=`, `-=`, etc.).
+
+**Error examples:**
+```kimin
+let x: Number = 1
+x = 2   // TypeError: cannot assign to immutable variable 'x'
+
+let mut x: Number = 1
+x = "hi"   // TypeError: variable 'x' has type Number but assigned value has type Text
+
+let mut d: meters = 1
+let t: seconds = 2
+d = t   // TypeError: variable 'd' has type meters but assigned value has type seconds
+
+state Door { closed open transition closed -> open }
+let mut door: Door = Door.closed
+door = Door.open   // TypeError: state variables must be changed with transition, not assignment
+```
+
+**Simulate interaction:**
+
+Mutable outer variables can accumulate values across simulate iterations:
+
+```kimin
+let mut position: meters = 0
+let dist_per_step: meters = 2
+let unit_time: seconds = 1
+let velocity = dist_per_step / unit_time
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  position = position + velocity * dt
+  print(position)
+}
+// 2 / 4 / 6
+```
 
 ---
 
@@ -653,7 +727,7 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 
 ```
 program         = stmt* EOF
-stmt            = state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt
+stmt            = state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
                 | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
@@ -662,7 +736,8 @@ transition_stmt = "transition" IDENT "->" IDENT
 simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
 return_stmt     = "return" expr?
-let_stmt        = "let" IDENT (":" type_ann)? "=" expr
+let_stmt        = "let" "mut"? IDENT (":" type_ann)? "=" expr
+assign_stmt     = IDENT "=" expr    (only when IDENT followed by single "=", not "==")
 print_stmt      = "print" "(" expr ")"
 if_stmt         = "if" expr block ("else" block)?
 block           = "{" stmt* "}"

@@ -111,6 +111,28 @@ This repository contains **Milestone 5**: state machines as first-class language
   - Duration and step must share the exact same canonical time unit — no conversion between units
   - `ms` and `milliseconds` are identical types; same for `min`/`minutes` and `h`/`hours`
 
+### Milestone 7A
+- **`let mut` and assignment**: disciplined, type-safe variable reassignment
+  - Variables are immutable by default; only `let mut` bindings may be reassigned
+  - `let mut x: Number = 0` declares a mutable variable
+  - `x = x + 1` reassigns it — type must be preserved; Number promotes to unit at assignment site
+  - State variables must use `transition` — `door = Door.open` is a `TypeError`
+  - Assignment is a statement, not an expression; no `+=` or compound operators
+- **`simulate` + mutation** — mutable outer variables update across iterations:
+  ```
+  let mut position: meters = 0
+  let dist_per_step: meters = 2
+  let unit_time: seconds = 1
+  let velocity = dist_per_step / unit_time
+  let duration: seconds = 3
+  let dt: seconds = 1
+  simulate duration step dt {
+    position = position + velocity * dt
+    print(position)
+  }
+  // 2 / 4 / 6
+  ```
+
 ---
 
 ## Install
@@ -358,7 +380,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-284 tests pass as of Milestone 6B.
+318 tests pass as of Milestone 7A.
 
 ---
 
@@ -378,7 +400,7 @@ src/
   interpreter.rs  Tree-walk interpreter
   error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime)
   repl.rs         Interactive REPL
-  tests.rs        Unit tests (284 tests)
+  tests.rs        Unit tests (318 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -408,6 +430,10 @@ examples/
   simulate_errors.kimin
   simulate_time_units.kimin
   simulate_time_unit_errors.kimin
+  mutable.kimin
+  mutable_units.kimin
+  mutable_errors.kimin
+  simulate_motion.kimin
 ```
 
 ---
@@ -429,6 +455,9 @@ examples/
 - No `5 meters` expression-literal syntax — units can only appear as type annotations
 - No unit conversion between time units — `minutes` and `seconds` are distinct, non-interchangeable types
 - `simulate` body type-checked once; known-variant tracking after transitions inside the body does not carry across iterations statically
+- No compound assignment operators (`+=`, `-=`, `*=`, `/=`)
+- No mutable function parameters — parameters are always immutable
+- No general loops (`while`, `for`) — only `simulate` blocks
 
 ---
 
@@ -445,4 +474,5 @@ examples/
 | 5 | State machines as first-class language constructs | ✓ done |
 | 6A | `simulate` blocks with `seconds` time unit and `time` variable | ✓ done |
 | 6B | Extended time units (`milliseconds`, `minutes`, `hours`) for `simulate` | ✓ done |
+| 7A | `let mut` and type-safe assignment; mutable simulate accumulators | ✓ done |
 | 7 | Bytecode / IR, potential WASM target | planned |
