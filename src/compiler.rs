@@ -183,18 +183,29 @@ impl BytecodeCompiler {
                 self.chunk.emit(Instruction::DefineGlobal(name.clone()));
             }
 
-            Stmt::StateDecl { name, .. } => {
-                self.chunk
-                    .emit(Instruction::Unsupported(format!("state {}", name)));
+            Stmt::StateDecl {
+                name,
+                variants,
+                transitions,
+                ..
+            } => {
+                self.chunk.emit(Instruction::DefineState {
+                    name: name.clone(),
+                    variants: variants.iter().map(|v| v.name.clone()).collect(),
+                    transitions: transitions
+                        .iter()
+                        .map(|t| (t.from.clone(), t.to.clone()))
+                        .collect(),
+                });
             }
 
             Stmt::Transition {
                 variable, target, ..
             } => {
-                self.chunk.emit(Instruction::Unsupported(format!(
-                    "transition {} -> {}",
-                    variable, target
-                )));
+                self.chunk.emit(Instruction::Transition {
+                    variable: variable.clone(),
+                    target: target.clone(),
+                });
             }
 
             Stmt::Simulate { .. } => {
@@ -292,10 +303,10 @@ impl BytecodeCompiler {
                 variant_name,
                 ..
             } => {
-                self.chunk.emit(Instruction::Unsupported(format!(
-                    "{}.{}",
-                    state_name, variant_name
-                )));
+                self.chunk.emit(Instruction::LoadState {
+                    state_name: state_name.clone(),
+                    variant_name: variant_name.clone(),
+                });
             }
         }
         Ok(())
