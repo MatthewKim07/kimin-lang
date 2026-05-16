@@ -4,7 +4,8 @@ use std::process;
 use clap::{Parser, Subcommand};
 
 use kimin::{
-    error::KiminError, interpreter::Interpreter, lexer::Lexer, parser::Parser as KiminParser, repl,
+    compiler::BytecodeCompiler, disassemble::disassemble, error::KiminError,
+    interpreter::Interpreter, lexer::Lexer, parser::Parser as KiminParser, repl,
     typechecker::TypeChecker,
 };
 
@@ -29,6 +30,11 @@ enum Command {
     },
     /// Start the interactive REPL
     Repl,
+    /// Compile and print the bytecode IR for a .kimin file
+    Bytecode {
+        /// Path to the .kimin file
+        file: String,
+    },
 }
 
 fn main() {
@@ -55,6 +61,16 @@ fn main() {
         Command::Repl => {
             repl::run_repl();
         }
+        Command::Bytecode { file } => {
+            let source = read_file(&file);
+            match bytecode_source(&source) {
+                Ok(listing) => print!("{}", listing),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    process::exit(1);
+                }
+            }
+        }
     }
 }
 
@@ -79,4 +95,12 @@ fn check_source(source: &str) -> Result<(), KiminError> {
     let stmts = KiminParser::new(tokens).parse()?;
     TypeChecker::new().check(&stmts)?;
     Ok(())
+}
+
+fn bytecode_source(source: &str) -> Result<String, KiminError> {
+    let tokens = Lexer::new(source).tokenize()?;
+    let stmts = KiminParser::new(tokens).parse()?;
+    TypeChecker::new().check(&stmts)?;
+    let program = BytecodeCompiler::new().compile(&stmts)?;
+    Ok(disassemble(&program))
 }
