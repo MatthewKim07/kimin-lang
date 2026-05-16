@@ -3292,7 +3292,7 @@ fn bytecode_transition_emits_transition_instruction() {
 }
 
 #[test]
-fn bytecode_simulate_emits_unsupported() {
+fn bytecode_simulate_emits_simulate_instruction() {
     let prog = compile_prog(concat!(
         "let dur = 3\n",
         "let dt = 1\n",
@@ -3302,8 +3302,9 @@ fn bytecode_simulate_emits_unsupported() {
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "simulate"));
-    assert!(has_simulate);
+        .any(|i| matches!(i, Instruction::Simulate { .. }));
+    assert!(has_simulate, "simulate must emit Instruction::Simulate");
+    assert_eq!(prog.simulate_bodies.len(), 1, "one simulate body expected");
 }
 
 #[test]
@@ -4668,21 +4669,16 @@ fn vm_transition_sequence_works() {
 }
 
 #[test]
-fn vm_unsupported_simulate_errors() {
+fn vm_simulate_empty_body_runs() {
+    // Simulate with empty body produces no output but doesn't error.
     let src = "let d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { }";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
     let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
     use crate::vm::Vm;
     let mut vm = Vm::new(prog);
-    let result = vm.run();
-    assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("bytecode feature not yet executable"),
-        "got: {}",
-        msg
-    );
+    vm.run().unwrap();
+    assert!(vm.take_output().is_empty());
 }
 
 #[test]
@@ -4887,14 +4883,26 @@ fn bytecode_state_variant_let_emits_load_state_then_define_global() {
 }
 
 #[test]
-fn bytecode_simulate_still_emits_unsupported() {
+fn bytecode_simulate_emits_simulate_not_unsupported() {
     let prog = compile_prog("let dur = 3\nlet dt = 1\nsimulate dur step dt { }");
+    let has_simulate_instr = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Simulate { .. }));
+    assert!(
+        has_simulate_instr,
+        "simulate must emit Instruction::Simulate"
+    );
     let has_unsupported = prog
         .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::Unsupported(s) if s == "simulate"));
-    assert!(has_unsupported, "simulate must still emit Unsupported");
+    assert!(
+        !has_unsupported,
+        "simulate must not emit Unsupported after M8E"
+    );
 }
 
 #[test]
@@ -5163,22 +5171,16 @@ fn vm_transition_invalid_edge_errors() {
 }
 
 #[test]
-fn vm_simulate_still_unsupported() {
-    // simulate must remain Unsupported after M8D.
+fn vm_simulate_now_executes() {
+    // simulate now executes in the VM after M8E.
     let src = "let d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { }";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
     let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
     use crate::vm::Vm;
     let mut vm = Vm::new(prog);
-    let result = vm.run();
-    assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("bytecode feature not yet executable"),
-        "got: {}",
-        msg
-    );
+    vm.run().unwrap();
+    assert!(vm.take_output().is_empty());
 }
 
 // ─── M8D: cross-validation vs tree-walk ────────────────────────────────────
@@ -5349,4 +5351,326 @@ fn vm_state_value_passed_through_two_functions() {
     );
     let out = vm_run_state(&src).unwrap();
     assert_eq!(out, vec!["Door.opening"]);
+}
+
+// ─── M8E: simulate bytecode compiler tests ─────────────────────────────────
+
+#[test]
+fn bytecode_simulate_no_longer_unsupported() {
+    let prog = compile_prog("let dur = 3\nlet dt = 1\nsimulate dur step dt { }");
+    let no_unsupported = prog
+        .main
+        .instructions
+        .iter()
+        .all(|i| !matches!(i, Instruction::Unsupported(s) if s == "simulate"));
+    assert!(
+        no_unsupported,
+        "simulate must not emit Unsupported after M8E"
+    );
+}
+
+#[test]
+fn bytecode_simulate_stores_one_body() {
+    let prog = compile_prog("let dur = 3\nlet dt = 1\nsimulate dur step dt { print(1) }");
+    assert_eq!(prog.simulate_bodies.len(), 1);
+    assert_eq!(prog.simulate_bodies[0].name, "simulate#0");
+}
+
+#[test]
+fn bytecode_simulate_two_bodies_indexed_correctly() {
+    let src =
+        "let d = 1\nlet s = 1\nsimulate d step s { print(1) }\nsimulate d step s { print(2) }";
+    let prog = compile_prog(src);
+    assert_eq!(prog.simulate_bodies.len(), 2);
+    assert_eq!(prog.simulate_bodies[0].name, "simulate#0");
+    assert_eq!(prog.simulate_bodies[1].name, "simulate#1");
+    // Main chunk should have two SIMULATE instructions with correct indices.
+    let sim_instrs: Vec<usize> = prog
+        .main
+        .instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::Simulate { body_idx } => Some(*body_idx),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sim_instrs, vec![0, 1]);
+}
+
+#[test]
+fn bytecode_simulate_body_contains_load_local_time() {
+    let prog = compile_prog("let dur = 1\nlet dt = 1\nsimulate dur step dt { print(time) }");
+    let body = &prog.simulate_bodies[0].chunk;
+    let has_load_time = body
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "time"));
+    assert!(has_load_time, "simulate body must load 'time' as local");
+}
+
+#[test]
+fn bytecode_simulate_body_loads_outer_global() {
+    let src = "let mut pos = 0\nlet dur = 1\nlet dt = 1\nsimulate dur step dt { pos = pos + 1 }";
+    let prog = compile_prog(src);
+    let body = &prog.simulate_bodies[0].chunk;
+    let has_load_global = body
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "pos"));
+    let has_store_global = body
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StoreGlobal(n) if n == "pos"));
+    assert!(has_load_global, "simulate body must LoadGlobal outer var");
+    assert!(has_store_global, "simulate body must StoreGlobal outer var");
+}
+
+#[test]
+fn bytecode_simulate_body_can_contain_transition() {
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nlet dur = 1\nlet dt = 1\nsimulate dur step dt {{ transition door -> opening }}",
+        DOOR_SRC
+    );
+    let prog = compile_prog(&src);
+    let body = &prog.simulate_bodies[0].chunk;
+    let has_transition = body.instructions.iter().any(|i| {
+        matches!(i, Instruction::Transition { variable, target }
+            if variable == "door" && target == "opening")
+    });
+    assert!(
+        has_transition,
+        "simulate body must contain Transition instruction"
+    );
+}
+
+#[test]
+fn disassemble_simulate_body_section_shown() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let dur = 1\nlet dt = 1\nsimulate dur step dt { print(time) }");
+    let out = disassemble(&prog);
+    assert!(
+        out.contains("simulate simulate#0"),
+        "expected simulate body section header"
+    );
+    assert!(
+        out.contains("SIMULATE #0"),
+        "expected SIMULATE instruction in main"
+    );
+    assert!(
+        out.contains("LOAD_LOCAL time"),
+        "expected LOAD_LOCAL time in simulate body"
+    );
+}
+
+#[test]
+fn disassemble_simulate_motion_no_unsupported() {
+    use crate::disassemble::disassemble;
+    let src = std::fs::read_to_string("examples/simulate_motion.kimin").unwrap();
+    let prog = compile_prog(&src);
+    let out = disassemble(&prog);
+    assert!(
+        !out.contains("UNSUPPORTED(simulate)"),
+        "simulate_motion.kimin must not have UNSUPPORTED(simulate) after M8E"
+    );
+    assert!(out.contains("SIMULATE"), "expected SIMULATE instruction");
+}
+
+// ─── M8E: VM simulate execution tests ──────────────────────────────────────
+
+#[test]
+fn vm_simulate_print_time_seconds() {
+    // duration=3, dt=1 → 3 iterations, time = 0, 1, 2
+    let out =
+        vm_run("let dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { print(time) }")
+            .unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn vm_simulate_fractional_step() {
+    // duration=1, step=0.5 → 2 iterations, time = 0, 0.5
+    let out =
+        vm_run("let dur: seconds = 1\nlet dt: seconds = 0.5\nsimulate dur step dt { print(time) }")
+            .unwrap();
+    assert_eq!(out, vec!["0", "0.5"]);
+}
+
+#[test]
+fn vm_simulate_zero_duration_no_output() {
+    let out =
+        vm_run("let dur: seconds = 0\nlet dt: seconds = 1\nsimulate dur step dt { print(99) }")
+            .unwrap();
+    assert!(out.is_empty(), "zero duration: no iterations");
+}
+
+#[test]
+fn vm_simulate_step_zero_runtime_error() {
+    let src = "let dur: seconds = 1\nlet dt: seconds = 0\nsimulate dur step dt { }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let prog = BytecodeCompiler::new().compile(&stmts).unwrap();
+    use crate::vm::Vm;
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("greater than zero"), "got: {}", msg);
+}
+
+#[test]
+fn vm_simulate_negative_duration_runtime_error() {
+    // Manually create program with duration = -1 to bypass type checker.
+    use crate::{
+        bytecode::{BytecodeProgram, Chunk, Constant, SimulateChunk},
+        vm::Vm,
+    };
+    let mut main = Chunk::new();
+    let neg_idx = main.add_constant(Constant::Number(-1.0));
+    let step_idx = main.add_constant(Constant::Number(1.0));
+    main.emit(Instruction::Constant(neg_idx));
+    main.emit(Instruction::Constant(step_idx));
+    main.emit(Instruction::Simulate { body_idx: 0 });
+    main.emit(Instruction::Halt);
+    let prog = BytecodeProgram::new(
+        main,
+        vec![],
+        vec![SimulateChunk {
+            name: "simulate#0".into(),
+            chunk: Chunk::new(),
+        }],
+    );
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("cannot be negative"), "got: {}", msg);
+}
+
+#[test]
+fn vm_simulate_body_local_fresh_each_iteration() {
+    // A let binding inside the body is fresh per iteration — not cumulative.
+    let src = "let dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { let x = time\nprint(x) }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn vm_simulate_mutable_position_motion() {
+    // Key M8E feature: mutable outer variable updated across iterations.
+    // velocity is inferred as meters/seconds via compound unit inference.
+    let src = r#"let mut position: meters = 0
+let dist_per_step: meters = 2
+let unit_time: seconds = 1
+let velocity = dist_per_step / unit_time
+let duration: seconds = 3
+let dt: seconds = 1
+simulate duration step dt {
+  position = position + velocity * dt
+  print(position)
+}"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2", "4", "6"]);
+}
+
+#[test]
+fn vm_simulate_two_loops_independent() {
+    // Two sequential simulate blocks operate independently.
+    let src = r#"let mut x = 0
+let dur: seconds = 2
+let dt: seconds = 1
+simulate dur step dt { x = x + 1 }
+let first = x
+simulate dur step dt { x = x + 10 }
+print(first)
+print(x)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2", "22"]);
+}
+
+#[test]
+fn vm_simulate_state_transition_one_iteration() {
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nlet dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {{\n  print(door)\n  transition door -> opening\n  print(door)\n}}",
+        DOOR_SRC
+    );
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed", "Door.opening"]);
+}
+
+#[test]
+fn vm_simulate_state_toggler() {
+    // Blinker toggles off->on->off each iteration; starts and ends off each iteration.
+    let src = "state Blinker { off on  transition off -> on  transition on -> off }\nlet light: Blinker = Blinker.off\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  transition light -> on\n  print(light)\n  transition light -> off\n}";
+    let out = vm_run_unchecked(src).unwrap();
+    assert_eq!(out, vec!["Blinker.on", "Blinker.on", "Blinker.on"]);
+}
+
+#[test]
+fn vm_simulate_return_inside_function() {
+    // return inside simulate inside a function must exit the function.
+    let src = r#"fn f() -> Number {
+  let dur: seconds = 3
+  let dt: seconds = 1
+  simulate dur step dt {
+    return 42
+  }
+  return 0
+}
+print(f())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// ─── M8E: cross-validation vs tree-walk ────────────────────────────────────
+
+#[test]
+fn vm_simulate_matches_tree_simulate_example() {
+    let src = std::fs::read_to_string("examples/simulate.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn vm_simulate_matches_tree_simulate_state_example() {
+    let src = std::fs::read_to_string("examples/simulate_state.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    // simulate_state.kimin: 1 iteration, prints Door.closed then Door.opening
+    assert_eq!(out, vec!["Door.closed", "Door.opening"]);
+}
+
+#[test]
+fn vm_simulate_matches_tree_simulate_motion_example() {
+    let src = std::fs::read_to_string("examples/simulate_motion.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["2", "4", "6"]);
+}
+
+#[test]
+fn vm_simulate_matches_tree_simulate_errors_example() {
+    let src = std::fs::read_to_string("examples/simulate_errors.kimin").unwrap();
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+// ─── M8E: runtime error tests ─────────────────────────────────────────────
+
+#[test]
+fn vm_simulate_invalid_body_index_errors() {
+    use crate::{
+        bytecode::{BytecodeProgram, Chunk},
+        vm::Vm,
+    };
+    let mut main = Chunk::new();
+    let dur_idx = main.add_constant(Constant::Number(1.0));
+    let step_idx = main.add_constant(Constant::Number(1.0));
+    main.emit(Instruction::Constant(dur_idx));
+    main.emit(Instruction::Constant(step_idx));
+    main.emit(Instruction::Simulate { body_idx: 99 });
+    main.emit(Instruction::Halt);
+    let prog = BytecodeProgram::new(main, vec![], vec![]);
+    let mut vm = Vm::new(prog);
+    let result = vm.run();
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("invalid simulate body index"), "got: {}", msg);
 }

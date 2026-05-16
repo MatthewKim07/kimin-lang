@@ -1,0 +1,23 @@
+// Blinker state machine toggling inside a simulate loop.
+// Each iteration: print time, print state, transition off->on, print, transition on->off.
+// kimin vm examples/vm_simulate_state.kimin
+
+state Blinker {
+  off
+  on
+
+  transition off -> on
+  transition on -> off
+}
+
+let light: Blinker = Blinker.off
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  print(time)
+  print(light)
+  transition light -> on
+  print(light)
+  transition light -> off
+}
