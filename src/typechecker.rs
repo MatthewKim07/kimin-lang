@@ -604,7 +604,7 @@ impl TypeChecker {
                 } else {
                     return Err(TypeError {
                         msg: format!(
-                            "simulate duration must be a time unit (seconds), got {}",
+                            "simulate duration must be a time unit (seconds, milliseconds, minutes, hours), got {}",
                             dur_ty.name()
                         ),
                         line: span.line,
@@ -1000,11 +1000,12 @@ impl Default for TypeChecker {
     }
 }
 
-/// Returns true if `ty` is exactly `seconds` (the only supported time unit in M6A).
+/// Returns true if `ty` is a single-exponent-1 time unit (seconds, milliseconds, minutes, hours).
 fn is_time_unit(ty: &Type) -> bool {
+    const TIME_UNITS: [&str; 4] = ["seconds", "milliseconds", "minutes", "hours"];
     match ty {
         Type::NumberWithUnit(dim) => {
-            dim.exponents.len() == 1 && dim.exponents.get("seconds") == Some(&1)
+            dim.exponents.len() == 1 && TIME_UNITS.iter().any(|&u| dim.exponents.get(u) == Some(&1))
         }
         _ => false,
     }

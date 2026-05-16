@@ -634,6 +634,9 @@ pub fn resolve_unit(name: &str) -> Option<&'static str> {
     match name {
         "m" | "meters" => Some("meters"),
         "s" | "seconds" => Some("seconds"),
+        "ms" | "milliseconds" => Some("milliseconds"),
+        "min" | "minutes" => Some("minutes"),
+        "h" | "hours" => Some("hours"),
         "kg" | "kilograms" => Some("kilograms"),
         "A" | "amps" | "amperes" => Some("amperes"),
         "K" | "kelvin" => Some("kelvin"),
