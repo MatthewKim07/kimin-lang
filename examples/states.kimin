@@ -1,0 +1,20 @@
+// State machines — Milestone 5
+// Demonstrates state declaration, state variable binding, and controlled transitions.
+
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+let door: Door = Door.closed
+print(door)
+
+transition door -> opening
+print(door)
+
+transition door -> open
+print(door)

@@ -162,13 +162,14 @@ fn parse_error_missing_param_type() {
 
 #[test]
 fn parse_error_unknown_type_name() {
+    // Unknown type names now defer to the type checker and produce TypeError, not ParseError.
     assert!(matches!(
         check("let x: Banana = 5"),
-        Err(KiminError::Parse(_))
+        Err(KiminError::Type(_))
     ));
     assert!(matches!(
         check("fn f(x: Meters) { }"),
-        Err(KiminError::Parse(_))
+        Err(KiminError::Type(_))
     ));
 }
 
@@ -1507,4 +1508,293 @@ fn type_compound_closure_captures_compound_type() {
 fn type_compound_meters_squared_runtime_value() {
     let interp = run("let w: meters = 3\nlet h: meters = 4\nlet area = w * h").unwrap();
     assert_eq!(interp.get_var("area"), Some(Value::Number(12.0)));
+}
+
+// ============================================================
+// Milestone 5 — State machines
+// ============================================================
+
+// --- lexer ---
+
+#[test]
+fn lex_state_keyword() {
+    let kinds = tokenize("state");
+    assert!(matches!(kinds[0], TokenKind::State));
+}
+
+#[test]
+fn lex_transition_keyword() {
+    let kinds = tokenize("transition");
+    assert!(matches!(kinds[0], TokenKind::Transition));
+}
+
+#[test]
+fn lex_dot_token() {
+    let kinds = tokenize("Door.closed");
+    assert!(matches!(kinds[0], TokenKind::Ident(ref s) if s == "Door"));
+    assert!(matches!(kinds[1], TokenKind::Dot));
+    assert!(matches!(kinds[2], TokenKind::Ident(ref s) if s == "closed"));
+}
+
+// --- parser ---
+
+#[test]
+fn parse_state_decl_ok() {
+    assert!(check("state Door {\n  closed\n  open\n  transition closed -> open\n}").is_ok());
+}
+
+#[test]
+fn parse_state_variant_expr_ok() {
+    assert!(check("state Door { closed open }\nlet d: Door = Door.closed").is_ok());
+}
+
+#[test]
+fn parse_transition_stmt_ok() {
+    assert!(check(
+        "state Door {\n  closed\n  open\n  transition closed -> open\n}\nlet door: Door = Door.closed\ntransition door -> open"
+    )
+    .is_ok());
+}
+
+#[test]
+fn parse_state_missing_brace_is_parse_error() {
+    assert!(matches!(
+        check("state Door { closed"),
+        Err(KiminError::Parse(_))
+    ));
+}
+
+#[test]
+fn parse_transition_missing_arrow_is_parse_error() {
+    assert!(matches!(
+        check("state Door { closed open }\nlet d: Door = Door.closed\ntransition d closed"),
+        Err(KiminError::Parse(_))
+    ));
+}
+
+// --- type checker: state declarations ---
+
+#[test]
+fn type_state_decl_registers_type_ok() {
+    assert!(check("state Door { closed open }").is_ok());
+}
+
+#[test]
+fn type_state_duplicate_variant_is_type_error() {
+    assert!(matches!(
+        check("state Door { closed closed }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_duplicate_state_name_is_type_error() {
+    assert!(matches!(
+        check("state Door { closed }\nstate Door { open }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_transition_unknown_from_variant_is_error() {
+    assert!(matches!(
+        check("state Door { closed open\n  transition locked -> open\n}"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_transition_unknown_to_variant_is_error() {
+    assert!(matches!(
+        check("state Door { closed open\n  transition closed -> locked\n}"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+// --- type checker: state variable bindings ---
+
+#[test]
+fn type_state_let_valid_variant_ok() {
+    assert!(check("state Door { closed open }\nlet door: Door = Door.closed").is_ok());
+}
+
+#[test]
+fn type_state_let_invalid_variant_is_error() {
+    assert!(matches!(
+        check("state Door { closed open }\nlet door: Door = Door.locked"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_unknown_state_type_annotation_is_error() {
+    assert!(matches!(
+        check("let x: Motor = 5"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_variant_from_unknown_state_is_error() {
+    assert!(matches!(
+        check("let x = Door.closed"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_assign_wrong_state_type_is_error() {
+    assert!(matches!(
+        check("state Door { closed }\nstate Motor { stopped }\nlet d: Door = Motor.stopped"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+// --- type checker: functions with state types ---
+
+#[test]
+fn type_state_fn_returning_state_type_ok() {
+    assert!(
+        check("state Door { closed open }\nfn initial() -> Door { return Door.closed }").is_ok()
+    );
+}
+
+#[test]
+fn type_state_fn_return_wrong_type_is_error() {
+    assert!(matches!(
+        check("state Door { closed open }\nfn initial() -> Door { return 42 }"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_fn_param_state_type_ok() {
+    assert!(check("state Door { closed open }\nfn show(d: Door) { print(d) }").is_ok());
+}
+
+// --- type checker: transition statements ---
+
+#[test]
+fn type_state_transition_valid_ok() {
+    assert!(check(
+        "state Door {\n  closed\n  open\n  transition closed -> open\n}\nlet door: Door = Door.closed\ntransition door -> open"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_state_transition_invalid_is_error() {
+    assert!(matches!(
+        check(
+            "state Door {\n  closed\n  open\n  transition closed -> open\n}\nlet door: Door = Door.closed\ntransition door -> closed"
+        ),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_transition_unknown_target_variant_is_error() {
+    assert!(matches!(
+        check(
+            "state Door { closed open }\nlet door: Door = Door.closed\ntransition door -> locked"
+        ),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_transition_on_non_state_variable_is_error() {
+    assert!(matches!(
+        check("let x: Number = 10\ntransition x -> open"),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_known_variant_updates_after_transition() {
+    // After valid transition closed -> open, door is known to be `open`.
+    // Transitioning open -> closed is invalid (no such transition declared).
+    assert!(matches!(
+        check(
+            "state Door {\n  closed\n  open\n  transition closed -> open\n}\nlet door: Door = Door.closed\ntransition door -> open\ntransition door -> closed"
+        ),
+        Err(KiminError::Type(_))
+    ));
+}
+
+#[test]
+fn type_state_chain_of_transitions_ok() {
+    assert!(check(
+        "state Door {\n  closed\n  opening\n  open\n  transition closed -> opening\n  transition opening -> open\n}\nlet door: Door = Door.closed\ntransition door -> opening\ntransition door -> open"
+    )
+    .is_ok());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_state_variant_eval() {
+    let interp = run("state Door { closed open }\nlet door: Door = Door.closed").unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "closed".into(),
+        })
+    );
+}
+
+#[test]
+fn interp_state_transition_updates_value() {
+    let interp = run(
+        "state Door {\n  closed\n  open\n  transition closed -> open\n}\nlet door: Door = Door.closed\ntransition door -> open"
+    )
+    .unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "open".into(),
+        })
+    );
+}
+
+#[test]
+fn interp_state_transition_sequence() {
+    // Three-step transition sequence, checking final value.
+    let interp = run(concat!(
+        "state Door {\n  closed\n  opening\n  open\n",
+        "  transition closed -> opening\n  transition opening -> open\n}\n",
+        "let door: Door = Door.closed\n",
+        "transition door -> opening\n",
+        "transition door -> open"
+    ))
+    .unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "open".into(),
+        })
+    );
+}
+
+#[test]
+fn interp_state_function_returns_state_value() {
+    let interp = run(
+        "state Door { closed open }\nfn initial() -> Door { return Door.closed }\nlet door: Door = initial()"
+    )
+    .unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".into(),
+            variant_name: "closed".into(),
+        })
+    );
+}
+
+#[test]
+fn interp_state_print_state_value_ok() {
+    assert!(run("state Door { closed open }\nlet door: Door = Door.closed\nprint(door)").is_ok());
 }

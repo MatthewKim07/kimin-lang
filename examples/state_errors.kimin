@@ -1,0 +1,30 @@
+// State machine errors — Milestone 5
+// This file runs cleanly by default.
+// Uncomment blocks to see specific TypeErrors.
+
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+let door: Door = Door.closed
+print(door)
+
+// Uncomment to test invalid variant:
+// let bad: Door = Door.locked
+
+// Uncomment to test invalid transition (no open -> closed declared):
+// transition door -> opening
+// transition door -> open
+// transition door -> closed
+
+// Uncomment to test unknown state type annotation:
+// let x: Motor = Door.closed
+
+// Uncomment to test transition on non-state variable:
+// let n: Number = 5
+// transition n -> open

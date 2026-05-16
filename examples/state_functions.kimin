@@ -1,0 +1,25 @@
+// State machines with functions — Milestone 5
+// Functions can accept and return state types.
+
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+fn initial_door() -> Door {
+  return Door.closed
+}
+
+fn show_door(d: Door) {
+  print(d)
+}
+
+let door: Door = initial_door()
+show_door(door)
+
+transition door -> opening
+show_door(door)
