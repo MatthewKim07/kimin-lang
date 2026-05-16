@@ -83,7 +83,13 @@ pub enum Instruction {
         target: String,
     },
 
-    /// Placeholder for language features not yet lowered (simulate).
+    /// Execute a simulate loop. Duration and step are already on the stack (duration first, then step).
+    /// The body is stored in `BytecodeProgram.simulate_bodies[body_idx]`.
+    Simulate {
+        body_idx: usize,
+    },
+
+    /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }
 
@@ -121,17 +127,34 @@ pub struct FunctionChunk {
     pub chunk: Chunk,
 }
 
+/// Bytecode for a single simulate body.
+/// `name` is a stable identifier like `"simulate#0"` used by the disassembler.
+#[derive(Debug, Clone)]
+pub struct SimulateChunk {
+    pub name: String,
+    pub chunk: Chunk,
+}
+
 /// The compiled output for a whole Kimin program.
 /// `main` is the top-level chunk; `functions` holds each named function's bytecode
-/// in source order.
+/// in source order; `simulate_bodies` holds each simulate body chunk in source order.
 #[derive(Debug, Clone)]
 pub struct BytecodeProgram {
     pub main: Chunk,
     pub functions: Vec<FunctionChunk>,
+    pub simulate_bodies: Vec<SimulateChunk>,
 }
 
 impl BytecodeProgram {
-    pub fn new(main: Chunk, functions: Vec<FunctionChunk>) -> Self {
-        BytecodeProgram { main, functions }
+    pub fn new(
+        main: Chunk,
+        functions: Vec<FunctionChunk>,
+        simulate_bodies: Vec<SimulateChunk>,
+    ) -> Self {
+        BytecodeProgram {
+            main,
+            functions,
+            simulate_bodies,
+        }
     }
 }

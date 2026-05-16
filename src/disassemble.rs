@@ -1,7 +1,7 @@
 use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
 
 /// Returns a human-readable listing of a compiled program: main chunk followed by
-/// each function chunk in source order.
+/// each function chunk then each simulate body chunk in source order.
 pub fn disassemble(program: &BytecodeProgram) -> String {
     let mut out = disassemble_chunk(&program.main, "main");
     for fc in &program.functions {
@@ -15,6 +15,16 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
             if let Some(nl) = section.find('\n') {
                 section.insert_str(nl + 1, &params_line);
             }
+        }
+        out.push_str(&section);
+    }
+    for sc in &program.simulate_bodies {
+        out.push('\n');
+        let mut section = disassemble_chunk(&sc.chunk, &format!("simulate {}", sc.name));
+        // Inject "params: time" to show the injected time variable.
+        let params_line = "params: time\n";
+        if let Some(nl) = section.find('\n') {
+            section.insert_str(nl + 1, params_line);
         }
         out.push_str(&section);
     }
@@ -112,6 +122,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Transition { variable, target } => {
             format!("TRANSITION {} -> {}", variable, target)
         }
+        Instruction::Simulate { body_idx } => format!("SIMULATE #{}", body_idx),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }
