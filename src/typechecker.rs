@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::ast::{BinaryOp, Expr, Param, Stmt, TypeAnnotation, UnaryOp};
+use crate::ast::{
+    BinaryOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation, UnaryOp,
+};
 use crate::error::TypeError;
 use crate::token::Span;
 
@@ -101,12 +103,27 @@ impl UnitDimension {
     }
 }
 
+/// Static description of a state machine registered by a `state` declaration.
+pub struct StateMachineType {
+    pub name: String,
+    pub variants: HashSet<String>,
+    /// Set of (from_variant, to_variant) allowed transitions.
+    pub transitions: HashSet<(String, String)>,
+}
+
+/// Type and optional known-state-variant for a single variable binding.
+#[derive(Debug, Clone)]
+pub struct VarInfo {
+    pub ty: Type,
+    /// Statically known current variant for state-typed variables, when determinable.
+    pub known_state_variant: Option<String>,
+}
+
 /// Static type representation used by the type checker.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Number,
     /// A numeric value with a physical unit dimension.
-    /// User-facing errors call `UnitDimension::display_name()`.
     NumberWithUnit(UnitDimension),
     Text,
     Bool,
@@ -115,9 +132,9 @@ pub enum Type {
         params: Vec<Type>,
         ret: Box<Type>,
     },
+    /// A state machine value. The String is the state machine name.
+    State(String),
     /// Inferred or unannotated type — skips type checking on operations involving it.
-    /// Used for functions without return-type annotations and for values whose type
-    /// cannot be determined statically (e.g., calls to Unknown-returning functions).
     Unknown,
 }
 
@@ -130,6 +147,7 @@ impl Type {
             Type::Bool => "Bool".into(),
             Type::Nil => "Nil".into(),
             Type::Function { .. } => "Function".into(),
+            Type::State(s) => s.clone(),
             Type::Unknown => "Unknown".into(),
         }
     }
@@ -141,7 +159,7 @@ impl Type {
 
 /// Lexical scope stack for static types.
 pub struct TypeEnv {
-    scopes: Vec<HashMap<String, Type>>,
+    scopes: Vec<HashMap<String, VarInfo>>,
 }
 
 impl TypeEnv {
@@ -161,20 +179,51 @@ impl TypeEnv {
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<&Type> {
+    pub fn get(&self, name: &str) -> Option<&VarInfo> {
         for scope in self.scopes.iter().rev() {
-            if let Some(t) = scope.get(name) {
-                return Some(t);
+            if let Some(info) = scope.get(name) {
+                return Some(info);
             }
         }
         None
     }
 
+    /// Define a variable with no known state variant (normal non-state variables).
     pub fn define(&mut self, name: String, ty: Type) {
         self.scopes
             .last_mut()
             .expect("TypeEnv scope stack empty")
-            .insert(name, ty);
+            .insert(
+                name,
+                VarInfo {
+                    ty,
+                    known_state_variant: None,
+                },
+            );
+    }
+
+    /// Define a variable with an optional known state variant.
+    pub fn define_with_variant(&mut self, name: String, ty: Type, variant: Option<String>) {
+        self.scopes
+            .last_mut()
+            .expect("TypeEnv scope stack empty")
+            .insert(
+                name,
+                VarInfo {
+                    ty,
+                    known_state_variant: variant,
+                },
+            );
+    }
+
+    /// Update the known state variant for an existing variable, searching from inner to outer scope.
+    pub fn update_variant(&mut self, name: &str, variant: String) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(name) {
+                info.known_state_variant = Some(variant);
+                return;
+            }
+        }
     }
 }
 
@@ -188,6 +237,8 @@ pub struct TypeChecker {
     pub env: TypeEnv,
     /// Return type of the function currently being checked. None at top level.
     current_fn_return_type: Option<Type>,
+    /// Registry of declared state machines. Populated by state declaration pre-pass.
+    states: HashMap<String, StateMachineType>,
 }
 
 impl TypeChecker {
@@ -195,6 +246,7 @@ impl TypeChecker {
         TypeChecker {
             env: TypeEnv::new(),
             current_fn_return_type: None,
+            states: HashMap::new(),
         }
     }
 
@@ -204,31 +256,180 @@ impl TypeChecker {
     }
 
     /// Type-check a list of statements.
-    /// Pre-registers all function declarations before checking any statement,
-    /// so mutually recursive functions resolve correctly.
+    ///
+    /// Three-pass design:
+    ///   Pass 1 — register all state machine declarations (so function signatures can reference them)
+    ///   Pass 2 — register all function signatures (enables mutual recursion type-checking)
+    ///   Pass 3 — check all statements
     fn check_stmt_list(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
-        // Pass 1: register function signatures so forward and mutual references work.
+        // Pass 1: register state machines.
+        for stmt in stmts {
+            if let Stmt::StateDecl {
+                name,
+                variants,
+                transitions,
+                span,
+            } = stmt
+            {
+                self.register_state(name, variants, transitions, *span)?;
+            }
+        }
+        // Pass 2: register function signatures.
         for stmt in stmts {
             if let Stmt::FnDecl {
                 name,
                 params,
                 return_type,
+                span,
                 ..
             } = stmt
             {
-                let ty = build_fn_type(params, return_type.as_ref());
+                let ty = self.build_fn_type(params, return_type.as_ref(), *span)?;
                 self.env.define(name.clone(), ty);
             }
         }
-        // Pass 2: check all statements.
+        // Pass 3: check all statements.
         for stmt in stmts {
             self.check_stmt(stmt)?;
         }
         Ok(())
     }
 
+    fn register_state(
+        &mut self,
+        name: &str,
+        variants: &[StateVariant],
+        transitions: &[StateTransition],
+        span: Span,
+    ) -> Result<(), TypeError> {
+        if self.states.contains_key(name) {
+            return Err(TypeError {
+                msg: format!("duplicate state machine '{}'", name),
+                line: span.line,
+                col: span.col,
+            });
+        }
+
+        // Check for duplicate variant names.
+        let mut variant_set = HashSet::new();
+        for v in variants {
+            if !variant_set.insert(v.name.clone()) {
+                return Err(TypeError {
+                    msg: format!("duplicate variant '{}' in state machine '{}'", v.name, name),
+                    line: v.span.line,
+                    col: v.span.col,
+                });
+            }
+        }
+
+        // Validate transitions reference known variants.
+        let mut transition_set = HashSet::new();
+        for t in transitions {
+            if !variant_set.contains(&t.from) {
+                return Err(TypeError {
+                    msg: format!(
+                        "transition 'from' variant '{}' is not declared in state machine '{}'",
+                        t.from, name
+                    ),
+                    line: t.span.line,
+                    col: t.span.col,
+                });
+            }
+            if !variant_set.contains(&t.to) {
+                return Err(TypeError {
+                    msg: format!(
+                        "transition 'to' variant '{}' is not declared in state machine '{}'",
+                        t.to, name
+                    ),
+                    line: t.span.line,
+                    col: t.span.col,
+                });
+            }
+            transition_set.insert((t.from.clone(), t.to.clone()));
+        }
+
+        self.states.insert(
+            name.to_string(),
+            StateMachineType {
+                name: name.to_string(),
+                variants: variant_set,
+                transitions: transition_set,
+            },
+        );
+        Ok(())
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match stmt {
+            Stmt::StateDecl { .. } => {
+                // Already registered in the pre-pass; nothing more to do.
+                Ok(())
+            }
+
+            Stmt::Transition {
+                variable,
+                target,
+                span,
+            } => {
+                // Clone what we need before any mutable borrows.
+                let (ty, known_variant) = self
+                    .env
+                    .get(variable)
+                    .map(|vi| (vi.ty.clone(), vi.known_state_variant.clone()))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", variable),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                let state_name = match ty {
+                    Type::State(s) => s,
+                    other => {
+                        return Err(TypeError {
+                            msg: format!(
+                                "'{}' has type {}, not a state machine; transition requires a state variable",
+                                variable,
+                                other.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                };
+
+                let sm = self
+                    .states
+                    .get(&state_name)
+                    .expect("Type::State references unregistered state machine");
+
+                if !sm.variants.contains(target) {
+                    return Err(TypeError {
+                        msg: format!(
+                            "unknown variant '{}' for state machine '{}'",
+                            target, state_name
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                if let Some(current) = known_variant {
+                    if !sm.transitions.contains(&(current.clone(), target.clone())) {
+                        return Err(TypeError {
+                            msg: format!(
+                                "invalid transition for {}: {} -> {}",
+                                state_name, current, target
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                }
+                // Valid — update the tracked known variant.
+                self.env.update_variant(variable, target.clone());
+                Ok(())
+            }
+
             Stmt::Let {
                 name,
                 annotation,
@@ -236,12 +437,19 @@ impl TypeChecker {
                 span,
             } => {
                 let val_ty = self.check_expr(value, *span)?;
-                if let Some(ann) = annotation {
-                    let ann_ty = annotation_to_type(ann);
-                    // A dimensionless Number can satisfy a unit annotation (annotation promotion).
+
+                // Extract known variant when the initializer is a direct state variant expression.
+                let known_variant = match value {
+                    Expr::StateVariant { variant_name, .. } => Some(variant_name.clone()),
+                    _ => None,
+                };
+
+                let (effective_ty, effective_variant) = if let Some(ann) = annotation {
+                    let ann_ty = self.resolve_annotation(ann, *span)?;
                     let compatible = val_ty.is_unknown()
                         || val_ty == ann_ty
-                        || (matches!(&ann_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
+                        || (matches!(&ann_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number)
+                        || (matches!(&ann_ty, Type::State(_)) && val_ty.is_unknown());
                     if !compatible {
                         return Err(TypeError {
                             msg: format!(
@@ -254,16 +462,28 @@ impl TypeChecker {
                             col: span.col,
                         });
                     }
-                    self.env.define(name.clone(), ann_ty);
+                    let variant = if matches!(ann_ty, Type::State(_)) {
+                        known_variant
+                    } else {
+                        None
+                    };
+                    (ann_ty, variant)
                 } else {
-                    self.env.define(name.clone(), val_ty);
-                }
+                    let variant = if matches!(val_ty, Type::State(_)) {
+                        known_variant
+                    } else {
+                        None
+                    };
+                    (val_ty, variant)
+                };
+
+                self.env
+                    .define_with_variant(name.clone(), effective_ty, effective_variant);
                 Ok(())
             }
 
             Stmt::Print { value } => {
                 let ty = self.check_expr(value, Span { line: 0, col: 0 })?;
-                // Function values are not printable.
                 if matches!(ty, Type::Function { .. }) {
                     return Err(TypeError {
                         msg: "cannot print a Function value".into(),
@@ -310,22 +530,20 @@ impl TypeChecker {
                 params,
                 return_type,
                 body,
+                span,
                 ..
             } => {
-                // Signature already registered by the pre-pass in check_stmt_list.
-                // Push a new scope, bind params, check body.
+                // Signature already registered by the pre-pass.
                 let saved_ret = self.current_fn_return_type.take();
-                self.current_fn_return_type = Some(
-                    return_type
-                        .as_ref()
-                        .map(annotation_to_type)
-                        .unwrap_or(Type::Unknown),
-                );
+                self.current_fn_return_type = Some(match return_type.as_ref() {
+                    Some(ann) => self.resolve_annotation(ann, *span)?,
+                    None => Type::Unknown,
+                });
 
                 self.env.push_scope();
                 for param in params {
-                    self.env
-                        .define(param.name.clone(), annotation_to_type(&param.ty));
+                    let param_ty = self.resolve_annotation(&param.ty, param.span)?;
+                    self.env.define(param.name.clone(), param_ty);
                 }
                 let result = self.check_stmt_list(body);
                 self.env.pop_scope();
@@ -351,12 +569,11 @@ impl TypeChecker {
                     Some(expr) => self.check_expr(expr, *span)?,
                     None => Type::Nil,
                 };
-                // A dimensionless Number can satisfy a unit return type (annotation promotion).
-                let return_compatible = declared.is_unknown()
+                let compatible = declared.is_unknown()
                     || ret_ty.is_unknown()
                     || ret_ty == declared
                     || (matches!(&declared, Type::NumberWithUnit(_)) && ret_ty == Type::Number);
-                if !return_compatible {
+                if !compatible {
                     return Err(TypeError {
                         msg: format!(
                             "function declared return type {} but returned {}",
@@ -372,19 +589,45 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check an expression and return its static type.
-    /// `context_span` is used for errors on nodes that carry no span themselves.
     fn check_expr(&mut self, expr: &Expr, context_span: Span) -> Result<Type, TypeError> {
         match expr {
             Expr::Number(_) => Ok(Type::Number),
             Expr::Str(_) => Ok(Type::Text),
             Expr::Bool(_) => Ok(Type::Bool),
 
-            Expr::Variable { name, span } => self.env.get(name).cloned().ok_or_else(|| TypeError {
-                msg: format!("undefined variable '{}'", name),
-                line: span.line,
-                col: span.col,
-            }),
+            Expr::Variable { name, span } => {
+                self.env
+                    .get(name)
+                    .map(|vi| vi.ty.clone())
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })
+            }
+
+            Expr::StateVariant {
+                state_name,
+                variant_name,
+                span,
+            } => {
+                let sm = self.states.get(state_name).ok_or_else(|| TypeError {
+                    msg: format!("unknown state machine '{}'", state_name),
+                    line: span.line,
+                    col: span.col,
+                })?;
+                if !sm.variants.contains(variant_name) {
+                    return Err(TypeError {
+                        msg: format!(
+                            "unknown variant '{}' for state machine '{}'",
+                            variant_name, state_name
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(Type::State(state_name.clone()))
+            }
 
             Expr::Grouping(inner) => self.check_expr(inner, context_span),
 
@@ -424,7 +667,6 @@ impl TypeChecker {
 
             Expr::Call { callee, args, span } => {
                 let callee_ty = self.check_expr(callee, *span)?;
-                // Extract name for error messages when callee is a simple variable.
                 let callee_name = if let Expr::Variable { name, .. } = callee.as_ref() {
                     name.as_str()
                 } else {
@@ -432,7 +674,6 @@ impl TypeChecker {
                 };
                 match callee_ty {
                     Type::Unknown => {
-                        // Unknown callee — check args but don't error on callee type.
                         for arg in args {
                             self.check_expr(arg, *span)?;
                         }
@@ -458,7 +699,6 @@ impl TypeChecker {
                         for (i, (arg, expected)) in args.iter().zip(param_types.iter()).enumerate()
                         {
                             let arg_ty = self.check_expr(arg, *span)?;
-                            // A dimensionless Number can satisfy a unit parameter (annotation promotion).
                             let compatible = arg_ty.is_unknown()
                                 || expected.is_unknown()
                                 || arg_ty == *expected
@@ -501,7 +741,6 @@ impl TypeChecker {
         rt: Type,
         span: Span,
     ) -> Result<Type, TypeError> {
-        // Unknown on either side → propagate Unknown without error.
         if lt.is_unknown() || rt.is_unknown() {
             return Ok(Type::Unknown);
         }
@@ -566,7 +805,6 @@ impl TypeChecker {
                 (Type::Number, Type::Number) => Ok(Type::Number),
                 (Type::Number, Type::NumberWithUnit(u)) => Ok(Type::NumberWithUnit(u.clone())),
                 (Type::NumberWithUnit(u), Type::Number) => Ok(Type::NumberWithUnit(u.clone())),
-                // Unit * unit: infer compound dimension. Dimensionless result simplifies to Number.
                 (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
                     let result = u.mul(v);
                     if result.is_dimensionless() {
@@ -588,7 +826,6 @@ impl TypeChecker {
             BinaryOp::Div => match (&lt, &rt) {
                 (Type::Number, Type::Number) => Ok(Type::Number),
                 (Type::NumberWithUnit(u), Type::Number) => Ok(Type::NumberWithUnit(u.clone())),
-                // Unit / unit: infer compound dimension. Dimensionless (same unit) simplifies to Number.
                 (Type::NumberWithUnit(u), Type::NumberWithUnit(v)) => {
                     let result = u.div(v);
                     if result.is_dimensionless() {
@@ -597,7 +834,6 @@ impl TypeChecker {
                         Ok(Type::NumberWithUnit(result))
                     }
                 }
-                // Number / unit: infer reciprocal unit (e.g., Number / seconds → 1/seconds).
                 (Type::Number, Type::NumberWithUnit(v)) => {
                     let result = UnitDimension::dimensionless().div(v);
                     Ok(Type::NumberWithUnit(result))
@@ -668,29 +904,53 @@ impl TypeChecker {
             }
         }
     }
+
+    /// Resolve a type annotation to a static Type.
+    /// For `TypeAnnotation::Named`, looks up the state machine registry.
+    fn resolve_annotation(&self, ann: &TypeAnnotation, span: Span) -> Result<Type, TypeError> {
+        match ann {
+            TypeAnnotation::Number => Ok(Type::Number),
+            TypeAnnotation::NumberWithUnit(u) => Ok(Type::NumberWithUnit(UnitDimension::base(u))),
+            TypeAnnotation::Text => Ok(Type::Text),
+            TypeAnnotation::Bool => Ok(Type::Bool),
+            TypeAnnotation::Nil => Ok(Type::Nil),
+            TypeAnnotation::Named(name) => {
+                if self.states.contains_key(name) {
+                    Ok(Type::State(name.clone()))
+                } else {
+                    Err(TypeError {
+                        msg: format!("unknown type '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })
+                }
+            }
+        }
+    }
+
+    fn build_fn_type(
+        &self,
+        params: &[Param],
+        return_type: Option<&TypeAnnotation>,
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let mut param_types = Vec::new();
+        for param in params {
+            param_types.push(self.resolve_annotation(&param.ty, span)?);
+        }
+        let ret = match return_type {
+            Some(ann) => self.resolve_annotation(ann, span)?,
+            None => Type::Unknown,
+        };
+        Ok(Type::Function {
+            params: param_types,
+            ret: Box::new(ret),
+        })
+    }
 }
 
 impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// --- helpers ---
-
-pub fn annotation_to_type(ann: &TypeAnnotation) -> Type {
-    match ann {
-        TypeAnnotation::Number => Type::Number,
-        TypeAnnotation::NumberWithUnit(u) => Type::NumberWithUnit(UnitDimension::base(u)),
-        TypeAnnotation::Text => Type::Text,
-        TypeAnnotation::Bool => Type::Bool,
-        TypeAnnotation::Nil => Type::Nil,
-    }
-}
-
-pub fn build_fn_type(params: &[Param], return_type: Option<&TypeAnnotation>) -> Type {
-    Type::Function {
-        params: params.iter().map(|p| annotation_to_type(&p.ty)).collect(),
-        ret: Box::new(return_type.map(annotation_to_type).unwrap_or(Type::Unknown)),
     }
 }
