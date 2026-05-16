@@ -5206,3 +5206,147 @@ fn vm_matches_tree_state_errors_example() {
     let out = vm_run_unchecked(&src).unwrap();
     assert_eq!(out, vec!["Door.closed"]);
 }
+
+// ─── M8D audit: compiler lowering completeness ─────────────────────────────
+
+#[test]
+fn bytecode_state_variant_in_return_lowers_correctly() {
+    // Expr::StateVariant inside a return statement must emit LoadState.
+    let src = format!(
+        "{}\nfn make_closed() -> Door {{ return Door.closed }}",
+        DOOR_SRC
+    );
+    let prog = compile_prog(&src);
+    let fn_chunk = prog
+        .functions
+        .iter()
+        .find(|f| f.name == "make_closed")
+        .expect("function not found");
+    let has_load_state = fn_chunk.chunk.instructions.iter().any(|i| {
+        matches!(i, Instruction::LoadState { state_name, variant_name }
+            if state_name == "Door" && variant_name == "closed")
+    });
+    assert!(
+        has_load_state,
+        "return Door.closed must emit LoadState in function chunk"
+    );
+}
+
+#[test]
+fn bytecode_transition_inside_if_lowers_correctly() {
+    // Transition inside an if branch must still emit Instruction::Transition.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nif true {{ transition door -> opening }}",
+        DOOR_SRC
+    );
+    let prog = compile_prog(&src);
+    let has_transition = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::Transition { variable, target }
+            if variable == "door" && target == "opening")
+    });
+    assert!(
+        has_transition,
+        "transition inside if must emit Transition instruction"
+    );
+}
+
+// ─── M8D audit: VM state value behavior ────────────────────────────────────
+
+#[test]
+fn vm_print_state_literal_directly() {
+    // print(Door.closed) without a let binding — LoadState pushes onto stack, Print consumes it.
+    let src = format!("{}\nprint(Door.closed)", DOOR_SRC);
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn vm_state_value_in_local_scope() {
+    // State value stored in block-local: accessible inside block, not outside.
+    let src = format!(
+        "{}\n{{ let d: Door = Door.opening\nprint(d) }}\nprint(1)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening", "1"]);
+}
+
+#[test]
+fn vm_transition_immutable_state_does_not_require_let_mut() {
+    // State variables use transition for mutation — let mut is not required.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\ntransition door -> opening\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+// ─── M8D audit: transition scope behavior ──────────────────────────────────
+
+#[test]
+fn vm_transition_local_shadow_updates_local_not_global() {
+    // Block-local `door` shadows global `door`.
+    // Transition inside block updates the local shadow; global is unchanged.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\n{{ let door: Door = Door.closed\ntransition door -> opening\nprint(door) }}\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening", "Door.closed"]);
+}
+
+#[test]
+fn vm_transition_after_shadow_ends_targets_global() {
+    // After a block with a local shadow exits, transitioning targets the global again.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\n{{ let door: Door = Door.closed }}\ntransition door -> opening\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+#[test]
+fn vm_transition_inside_if_branch() {
+    // Transition inside an if branch executes only when condition is true.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nif true {{ transition door -> opening }}\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
+
+#[test]
+fn vm_transition_inside_if_not_taken() {
+    // Transition inside an if branch is skipped when condition is false.
+    let src = format!(
+        "{}\nlet door: Door = Door.closed\nif false {{ transition door -> opening }}\nprint(door)",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+// ─── M8D audit: function interaction ───────────────────────────────────────
+
+#[test]
+fn vm_transition_function_updates_global_state_directly() {
+    // A function that references and transitions a global state variable (not via parameter)
+    // must update the global in-place — get_var finds it in globals, assign_var updates globals.
+    let src = "state Door { closed open  transition closed -> open }\nlet door: Door = Door.closed\nfn open_door() {\n  transition door -> open\n}\nopen_door()\nprint(door)";
+    let out = vm_run_state(src).unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn vm_state_value_passed_through_two_functions() {
+    // State values survive passing through multiple function call frames.
+    let src = format!(
+        "{}\nfn wrap(d: Door) -> Door {{ return d }}\nfn outer(d: Door) -> Door {{ return wrap(d) }}\nlet door: Door = Door.opening\nprint(outer(door))",
+        DOOR_SRC
+    );
+    let out = vm_run_state(&src).unwrap();
+    assert_eq!(out, vec!["Door.opening"]);
+}
