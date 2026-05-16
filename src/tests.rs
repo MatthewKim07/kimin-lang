@@ -1,4 +1,6 @@
 use crate::{
+    bytecode::{Constant, Instruction},
+    compiler::BytecodeCompiler,
     error::KiminError,
     interpreter::Interpreter,
     lexer::Lexer,
@@ -35,6 +37,13 @@ fn check(source: &str) -> Result<(), KiminError> {
     let stmts = Parser::new(tokens).parse()?;
     TypeChecker::new().check(&stmts)?;
     Ok(())
+}
+
+/// Lex, parse, and compile to bytecode (no type check — focused on IR shape).
+fn compile_prog(source: &str) -> crate::bytecode::BytecodeProgram {
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    BytecodeCompiler::new().compile(&stmts).unwrap()
 }
 
 // --- lexer tests ---
@@ -3032,4 +3041,333 @@ fn interp_assign_bool_updates_value() {
 fn interp_assign_text_updates_value() {
     let interp = run("let mut s: Text = \"hello\"\ns = \"world\"").unwrap();
     assert_eq!(interp.get_var("s"), Some(Value::Str("world".to_string())));
+}
+
+// --- bytecode / compiler tests ---
+
+#[test]
+fn bytecode_number_literal_emits_constant() {
+    let prog = compile_prog("print(10)");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::Constant(0)));
+    assert!(matches!(instrs[1], Instruction::Print));
+    assert!(matches!(instrs[2], Instruction::Halt));
+    assert!(matches!(prog.chunk.constants[0], Constant::Number(n) if n == 10.0));
+}
+
+#[test]
+fn bytecode_string_literal_emits_constant() {
+    let prog = compile_prog("print(\"hi\")");
+    assert!(matches!(&prog.chunk.constants[0], Constant::Text(s) if s == "hi"));
+    assert!(matches!(
+        prog.chunk.instructions[0],
+        Instruction::Constant(0)
+    ));
+}
+
+#[test]
+fn bytecode_bool_true_emits_true() {
+    let prog = compile_prog("let b = true");
+    assert!(matches!(prog.chunk.instructions[0], Instruction::True));
+}
+
+#[test]
+fn bytecode_bool_false_emits_false() {
+    let prog = compile_prog("let b = false");
+    assert!(matches!(prog.chunk.instructions[0], Instruction::False));
+}
+
+#[test]
+fn bytecode_let_defines_global() {
+    let prog = compile_prog("let x = 5");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::Constant(0)));
+    assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "x"));
+    assert!(matches!(instrs[2], Instruction::Halt));
+}
+
+#[test]
+fn bytecode_let_mut_defines_global() {
+    // `let mut` and `let` both emit DEFINE_GLOBAL — mutability is a type-checker concern
+    let prog = compile_prog("let mut count = 0");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "count"));
+}
+
+#[test]
+fn bytecode_assign_stores_global() {
+    let prog = compile_prog("let mut x = 0\nx = 1");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT(0), DEFINE_GLOBAL x, CONSTANT(1), STORE_GLOBAL x, HALT
+    assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "x"));
+    assert!(matches!(&instrs[3], Instruction::StoreGlobal(n) if n == "x"));
+}
+
+#[test]
+fn bytecode_print_emits_print_instr() {
+    let prog = compile_prog("print(42)");
+    assert!(matches!(prog.chunk.instructions[1], Instruction::Print));
+}
+
+#[test]
+fn bytecode_binary_add_emits_add() {
+    let prog = compile_prog("let z = 1 + 2");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT(0), CONSTANT(1), ADD, DEFINE_GLOBAL z, HALT
+    assert!(matches!(instrs[0], Instruction::Constant(0)));
+    assert!(matches!(instrs[1], Instruction::Constant(1)));
+    assert!(matches!(instrs[2], Instruction::Add));
+    assert!(matches!(&instrs[3], Instruction::DefineGlobal(n) if n == "z"));
+}
+
+#[test]
+fn bytecode_binary_subtract_emits_subtract() {
+    let prog = compile_prog("let z = 5 - 3");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::Subtract));
+}
+
+#[test]
+fn bytecode_binary_multiply_emits_multiply() {
+    let prog = compile_prog("let z = 4 * 3");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::Multiply));
+}
+
+#[test]
+fn bytecode_binary_divide_emits_divide() {
+    let prog = compile_prog("let z = 10 / 2");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::Divide));
+}
+
+#[test]
+fn bytecode_unary_neg_emits_negate() {
+    let prog = compile_prog("let z = -5");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::Constant(0)));
+    assert!(matches!(instrs[1], Instruction::Negate));
+}
+
+#[test]
+fn bytecode_unary_not_emits_not() {
+    let prog = compile_prog("let b = !true");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::True));
+    assert!(matches!(instrs[1], Instruction::Not));
+}
+
+#[test]
+fn bytecode_variable_load_global() {
+    let prog = compile_prog("let x = 1\nprint(x)");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT, DEFINE_GLOBAL x, LOAD_GLOBAL x, PRINT, HALT
+    assert!(matches!(&instrs[2], Instruction::LoadGlobal(n) if n == "x"));
+}
+
+#[test]
+fn bytecode_comparison_eq_emits_equal() {
+    let prog = compile_prog("let b = 1 == 1");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::Equal));
+}
+
+#[test]
+fn bytecode_comparison_lt_emits_less() {
+    let prog = compile_prog("let b = 1 < 2");
+    assert!(matches!(prog.chunk.instructions[2], Instruction::Less));
+}
+
+#[test]
+fn bytecode_if_no_else_patches_jump() {
+    // if true { print(1) }
+    // TRUE, JIF_FALSE(?), BEGIN_SCOPE, CONSTANT, PRINT, END_SCOPE, HALT
+    let prog = compile_prog("if true { print(1) }");
+    let instrs = &prog.chunk.instructions;
+    assert_eq!(instrs.len(), 7);
+    assert!(matches!(instrs[0], Instruction::True));
+    assert!(matches!(instrs[1], Instruction::JumpIfFalse(6)));
+    assert!(matches!(instrs[2], Instruction::BeginScope));
+    assert!(matches!(instrs[5], Instruction::EndScope));
+    assert!(matches!(instrs[6], Instruction::Halt));
+}
+
+#[test]
+fn bytecode_if_else_patches_both_jumps() {
+    // if true { print(1) } else { print(2) }
+    // TRUE, JIF_FALSE(7), BEGIN_SCOPE, CONSTANT, PRINT, END_SCOPE, JUMP(11),
+    // BEGIN_SCOPE, CONSTANT, PRINT, END_SCOPE, HALT
+    let prog = compile_prog("if true { print(1) } else { print(2) }");
+    let instrs = &prog.chunk.instructions;
+    assert_eq!(instrs.len(), 12);
+    assert!(matches!(instrs[0], Instruction::True));
+    assert!(matches!(instrs[1], Instruction::JumpIfFalse(7)));
+    assert!(matches!(instrs[6], Instruction::Jump(11)));
+    assert!(matches!(instrs[11], Instruction::Halt));
+}
+
+#[test]
+fn bytecode_block_emits_scope_instructions() {
+    // { let x = 1 }
+    let prog = compile_prog("{ let x = 1 }");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::BeginScope));
+    assert!(matches!(&instrs[2], Instruction::DefineLocal(n) if n == "x"));
+    assert!(matches!(instrs[3], Instruction::EndScope));
+    assert!(matches!(instrs[4], Instruction::Halt));
+}
+
+#[test]
+fn bytecode_block_uses_define_local() {
+    let prog = compile_prog("{ let y = 99 }");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(&instrs[2], Instruction::DefineLocal(n) if n == "y"));
+}
+
+#[test]
+fn bytecode_return_with_value() {
+    let prog = compile_prog("return 5");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT(0), RETURN, HALT
+    assert!(matches!(instrs[0], Instruction::Constant(0)));
+    assert!(matches!(instrs[1], Instruction::Return));
+    assert!(matches!(instrs[2], Instruction::Halt));
+}
+
+#[test]
+fn bytecode_return_bare_emits_nil() {
+    let prog = compile_prog("return");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::Nil));
+    assert!(matches!(instrs[1], Instruction::Return));
+}
+
+#[test]
+fn bytecode_fn_decl_emits_unsupported() {
+    let prog = compile_prog("fn add(a: Number, b: Number) -> Number { return a + b }");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(&instrs[0], Instruction::Unsupported(s) if s == "fn add"));
+}
+
+#[test]
+fn bytecode_call_emits_unsupported() {
+    let prog = compile_prog("fn f() { } f()");
+    // fn emits UNSUPPORTED, f() emits UNSUPPORTED, then POP (expr stmt), then HALT
+    let has_call_unsupported = prog
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "call f"));
+    assert!(has_call_unsupported);
+}
+
+#[test]
+fn bytecode_state_decl_emits_unsupported() {
+    let prog = compile_prog("state Door { closed open transition closed -> open }");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(&instrs[0], Instruction::Unsupported(s) if s == "state Door"));
+}
+
+#[test]
+fn bytecode_transition_emits_unsupported() {
+    let prog = compile_prog(concat!(
+        "state Door { closed open transition closed -> open }\n",
+        "let door: Door = Door.closed\n",
+        "transition door -> open"
+    ));
+    let has_transition = prog
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "transition door -> open"));
+    assert!(has_transition);
+}
+
+#[test]
+fn bytecode_simulate_emits_unsupported() {
+    let prog = compile_prog(concat!(
+        "let dur = 3\n",
+        "let dt = 1\n",
+        "simulate dur step dt { }"
+    ));
+    let has_simulate = prog
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "simulate"));
+    assert!(has_simulate);
+}
+
+#[test]
+fn bytecode_halt_is_last_instruction() {
+    let prog = compile_prog("let x = 1\nlet y = 2\nprint(x)");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs.last().unwrap(), Instruction::Halt));
+}
+
+#[test]
+fn bytecode_constant_pool_indexes_are_sequential() {
+    let prog = compile_prog("let a = 1\nlet b = 2\nlet c = 3");
+    assert_eq!(prog.chunk.constants.len(), 3);
+    assert!(matches!(prog.chunk.constants[0], Constant::Number(n) if n == 1.0));
+    assert!(matches!(prog.chunk.constants[1], Constant::Number(n) if n == 2.0));
+    assert!(matches!(prog.chunk.constants[2], Constant::Number(n) if n == 3.0));
+}
+
+#[test]
+fn bytecode_expr_stmt_emits_pop() {
+    // An expression used as a statement pushes a value — POP discards it.
+    let prog = compile_prog("1 + 2");
+    let instrs = &prog.chunk.instructions;
+    // CONSTANT, CONSTANT, ADD, POP, HALT
+    assert!(matches!(instrs[3], Instruction::Pop));
+}
+
+#[test]
+fn bytecode_grouping_transparent() {
+    let prog = compile_prog("let x = (5)");
+    let instrs = &prog.chunk.instructions;
+    assert!(matches!(instrs[0], Instruction::Constant(0)));
+    assert!(matches!(&instrs[1], Instruction::DefineGlobal(n) if n == "x"));
+}
+
+// --- disassembler tests ---
+
+#[test]
+fn disassemble_produces_chunk_header() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("print(1)");
+    let out = disassemble(&prog);
+    assert!(out.contains("=== main ==="));
+    assert!(out.contains("PRINT"));
+    assert!(out.contains("HALT"));
+}
+
+#[test]
+fn disassemble_lists_constants_section() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("print(42)");
+    let out = disassemble(&prog);
+    assert!(out.contains("constants:"));
+    assert!(out.contains("Number(42)"));
+}
+
+#[test]
+fn disassemble_shows_define_global() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let speed = 5");
+    let out = disassemble(&prog);
+    assert!(out.contains("DEFINE_GLOBAL speed"));
+}
+
+#[test]
+fn disassemble_shows_jump_targets() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("if true { print(1) }");
+    let out = disassemble(&prog);
+    assert!(out.contains("JUMP_IF_FALSE @6"));
+}
+
+#[test]
+fn disassemble_shows_unsupported_marker() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn foo() { }");
+    let out = disassemble(&prog);
+    assert!(out.contains("UNSUPPORTED(fn foo)"));
 }

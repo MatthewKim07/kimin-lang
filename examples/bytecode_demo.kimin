@@ -1,0 +1,16 @@
+// Demonstrates core features that lower to clean bytecode.
+
+let x: Number = 10
+let y: Number = 5
+let sum = x + y
+print(sum)
+
+let mut count: Number = 0
+count = count + 1
+print(count)
+
+if sum > 8 {
+  print("large")
+} else {
+  print("small")
+}
