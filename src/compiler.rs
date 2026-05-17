@@ -350,23 +350,16 @@ impl BytecodeCompiler {
             }
 
             Expr::Call { callee, args, .. } => {
-                match callee.as_ref() {
-                    Expr::Variable { name, .. } => {
-                        // Simple named call: compile args left-to-right, then emit Call.
-                        for arg in args {
-                            self.compile_expr(arg)?;
-                        }
-                        self.chunk.emit(Instruction::Call {
-                            name: name.clone(),
-                            arg_count: args.len(),
-                        });
-                    }
-                    _ => {
-                        // Dynamic call (higher-order, computed callee) — not yet lowered.
-                        self.chunk
-                            .emit(Instruction::Unsupported("dynamic call".to_string()));
-                    }
+                // Compile callee first (pushes function value onto stack),
+                // then arguments left-to-right, then emit stack-based Call.
+                // This handles named calls, returned closures, and chained calls uniformly.
+                self.compile_expr(callee)?;
+                for arg in args {
+                    self.compile_expr(arg)?;
                 }
+                self.chunk.emit(Instruction::Call {
+                    arg_count: args.len(),
+                });
             }
 
             Expr::StateVariant {
