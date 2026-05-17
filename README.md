@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8F** (complete): closure and free-variable capture in the bytecode VM. Built on top of Milestones 8A–8E.
+This repository contains **Milestone 8G** (complete): dynamic/computed function call execution in the bytecode VM. Built on top of Milestones 8A–8F.
 
 ---
 
@@ -203,6 +203,18 @@ This repository contains **Milestone 8F** (complete): closure and free-variable 
   - `FnDecl` compiler fix: nested functions emit `DefineLocal` so they bind in the enclosing call env, not global
   - All variable ops (`LoadGlobal`/`LoadLocal`/`StoreGlobal`/`StoreLocal`) walk the unified env chain
   - `kimin vm examples/vm_closure_capture.kimin` → `3` (nested mutable capture across two calls)
+  - Tree-walk interpreter unchanged; `kimin run` unaffected
+
+### Milestone 8G
+- **Dynamic/computed function call execution in bytecode VM**: `kimin vm` now supports chained calls like `make_getter()()` and `make_adder(2)(3)`
+  - `Instruction::Call` changed from `Call { name: String, arg_count }` to `Call { arg_count }` — stack-based callee dispatch
+  - Compiler now compiles the callee expression first (pushing the function value), then arguments left-to-right, then `CALL arg_count`
+  - VM pops N args, pops callee value from stack, dispatches on `Value::BytecodeFunction { name, env }`
+  - Works for all callee shapes: simple variable (`g()`), returned function (`make_getter()()`), curried call (`make_adder(2)(3)`)
+  - Non-function callee produces clean `RuntimeError: attempted to call non-function value of type ...`
+  - Wrong arity produces `RuntimeError: function '...' expects N argument(s), got M`
+  - `kimin vm examples/vm_dynamic_calls.kimin` → `77`
+  - `kimin vm examples/vm_dynamic_adder.kimin` → `5`
   - Tree-walk interpreter unchanged; `kimin run` unaffected
 
 ---
@@ -465,7 +477,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-609 tests pass as of Milestone 8F (including M8F audit hardening).
+618 tests pass as of Milestone 8G.
 
 ---
 
@@ -488,7 +500,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (609 tests)
+  tests.rs        Unit tests (618 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -524,6 +536,9 @@ examples/
   simulate_motion.kimin
   bytecode_demo.kimin
   bytecode_functions.kimin
+  vm_closure_capture.kimin
+  vm_dynamic_calls.kimin
+  vm_dynamic_adder.kimin
 ```
 
 ---
@@ -548,9 +563,7 @@ examples/
 - No compound assignment operators (`+=`, `-=`, `*=`, `/=`)
 - No mutable function parameters — parameters are always immutable
 - No general loops (`while`, `for`) — only `simulate` blocks
-- Bytecode VM: simulate bodies can only access top-level (global) outer variables — simulate inside a block with outer locals is not supported
-- Bytecode VM: dynamic/computed calls (`get_fn()(args)`) emit `UNSUPPORTED(dynamic call)` — not yet supported
-- Bytecode VM: free variable capture (closures) inside function bodies emits `LOAD_GLOBAL` provisionally — not semantically correct for all closure patterns
+- Bytecode VM: `Rc` reference cycles on recursive closures (a function stored in its own captured env) — memory leak; programs run-and-exit so no crash
 - State transitions inside function bodies (in the VM) modify the function's local parameter copy, not the caller's variable — matches tree-walk semantics
 
 ---
@@ -575,3 +588,4 @@ examples/
 | 8D | State machine execution in bytecode VM | ✓ done |
 | 8E | `simulate` block execution in bytecode VM | ✓ done |
 | 8F | Closure and free-variable capture in bytecode VM | ✓ done |
+| 8G | Dynamic/computed call execution in bytecode VM | ✓ done |
