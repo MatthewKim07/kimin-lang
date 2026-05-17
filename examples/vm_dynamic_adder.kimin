@@ -1,0 +1,13 @@
+// Demonstrates chained call with arguments (Milestone 8G).
+// make_adder(2) returns a function that adds 2 to its argument.
+// make_adder(2)(3) calls make_adder(2) first, then calls the returned function with 3.
+
+fn make_adder(a: Number) {
+  fn add_to(b: Number) -> Number {
+    return a + b
+  }
+
+  return add_to
+}
+
+print(make_adder(2)(3))

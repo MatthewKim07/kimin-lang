@@ -3254,14 +3254,20 @@ fn bytecode_fn_decl_emits_load_function() {
 
 #[test]
 fn bytecode_call_emits_call_instruction() {
-    // M8B: named calls now lower to CALL name arg_count, not UNSUPPORTED.
+    // M8G: calls lower to stack-based CALL arg_count (no name in instruction).
     let prog = compile_prog("fn f() { } f()");
     let has_call = prog
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Call { name, arg_count: 0 } if name == "f"));
+        .any(|i| matches!(i, Instruction::Call { arg_count: 0 }));
     assert!(has_call);
+    // Callee must be loaded via LoadGlobal/LoadLocal/LoadFunction before the call.
+    let has_load_f =
+        prog.main.instructions.iter().any(
+            |i| matches!(i, Instruction::LoadGlobal(n) | Instruction::LoadLocal(n) if n == "f"),
+        );
+    assert!(has_load_f, "callee 'f' must be loaded before CALL");
 }
 
 #[test]
@@ -3677,6 +3683,7 @@ fn bytecode_multiple_fn_decls_emit_load_functions_in_main() {
 
 #[test]
 fn bytecode_simple_call_emits_call_instr() {
+    // M8G: Call no longer carries the function name; arg_count is the identifier.
     let prog = compile_prog(concat!(
         "fn add(a: Number, b: Number) -> Number { return a + b }\n",
         "let z = add(2, 3)"
@@ -3685,7 +3692,7 @@ fn bytecode_simple_call_emits_call_instr() {
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Call { name, arg_count: 2 } if name == "add")));
+        .any(|i| matches!(i, Instruction::Call { arg_count: 2 })));
 }
 
 #[test]
@@ -3698,7 +3705,7 @@ fn bytecode_call_arg_count_correct() {
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Call { name, arg_count: 3 } if name == "f")));
+        .any(|i| matches!(i, Instruction::Call { arg_count: 3 })));
 }
 
 #[test]
@@ -3722,26 +3729,28 @@ fn bytecode_call_args_constants_precede_call() {
 
 #[test]
 fn bytecode_nested_call_inner_before_outer() {
-    // square(add(2, 3)): inner CALL add must precede outer CALL square.
+    // square(add(2, 3)): inner CALL 2 (add's args) must precede outer CALL 1 (square's arg).
+    // M8G: callee is on stack; calls are distinguished by arg count, not name.
     let prog = compile_prog(concat!(
         "fn add(a: Number, b: Number) -> Number { return a + b }\n",
         "fn square(x: Number) -> Number { return x * x }\n",
         "let z = square(add(2, 3))"
     ));
     let instrs = &prog.main.instructions;
-    let add_idx = instrs
+    let inner_call_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "add"))
+        .position(|i| matches!(i, Instruction::Call { arg_count: 2 }))
         .unwrap();
-    let sq_idx = instrs
+    let outer_call_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "square"))
+        .position(|i| matches!(i, Instruction::Call { arg_count: 1 }))
         .unwrap();
-    assert!(add_idx < sq_idx);
+    assert!(inner_call_idx < outer_call_idx);
 }
 
 #[test]
 fn bytecode_recursive_call_emits_call_to_self() {
+    // M8G: recursive call compiles to LoadGlobal("fact") + CALL 1.
     let prog = compile_prog(concat!(
         "fn fact(n: Number) -> Number {\n",
         "  if n <= 1 { return 1 }\n",
@@ -3749,9 +3758,14 @@ fn bytecode_recursive_call_emits_call_to_self() {
         "}"
     ));
     let body = &prog.functions[0].chunk.instructions;
-    assert!(body
+    let has_load_fact = body
         .iter()
-        .any(|i| matches!(i, Instruction::Call { name, arg_count: 1 } if name == "fact")));
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "fact"));
+    let has_call_1 = body
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { arg_count: 1 }));
+    assert!(has_load_fact, "recursive call must load 'fact' callee");
+    assert!(has_call_1, "recursive call must emit CALL 1");
 }
 
 #[test]
@@ -3761,7 +3775,7 @@ fn bytecode_zero_arg_call_emits_call_zero() {
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Call { name, arg_count: 0 } if name == "f")));
+        .any(|i| matches!(i, Instruction::Call { arg_count: 0 })));
 }
 
 // --- M8B: disassembler ---
@@ -3798,7 +3812,9 @@ fn disassemble_shows_call_instruction() {
         "print(add(2, 3))"
     ));
     let out = disassemble(&prog);
-    assert!(out.contains("CALL add 2"));
+    // M8G: CALL no longer includes callee name; callee loaded via LOAD_GLOBAL.
+    assert!(out.contains("CALL 2"));
+    assert!(out.contains("LOAD_GLOBAL add"));
 }
 
 #[test]
@@ -3998,7 +4014,7 @@ fn bytecode_call_as_expr_stmt_emits_pop() {
     let instrs = &prog.main.instructions;
     let call_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "f"))
+        .position(|i| matches!(i, Instruction::Call { .. }))
         .unwrap();
     assert!(
         matches!(instrs[call_idx + 1], Instruction::Pop),
@@ -4013,17 +4029,17 @@ fn bytecode_call_in_print_emits_print_after_call() {
     let instrs = &prog.main.instructions;
     let call_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "f"))
+        .position(|i| matches!(i, Instruction::Call { .. }))
         .unwrap();
     assert!(
         matches!(instrs[call_idx + 1], Instruction::Print),
-        "PRINT must immediately follow CALL f in print(f())"
+        "PRINT must immediately follow CALL in print(f())"
     );
 }
 
 #[test]
 fn bytecode_call_result_in_binary_expr_correct_order() {
-    // add(2, 3) + 1: CALL add must be emitted before ADD.
+    // add(2, 3) + 1: CALL must be emitted before ADD.
     let prog = compile_prog(concat!(
         "fn add(a: Number, b: Number) -> Number { return a + b }\n",
         "let z = add(2, 3) + 1"
@@ -4031,18 +4047,19 @@ fn bytecode_call_result_in_binary_expr_correct_order() {
     let instrs = &prog.main.instructions;
     let call_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::Call { name, .. } if name == "add"))
+        .position(|i| matches!(i, Instruction::Call { .. }))
         .unwrap();
     let add_idx = instrs
         .iter()
         .position(|i| matches!(i, Instruction::Add))
         .unwrap();
-    assert!(call_idx < add_idx, "CALL add must precede ADD");
+    assert!(call_idx < add_idx, "CALL must precede ADD");
 }
 
 #[test]
 fn bytecode_mutual_recursion_emits_cross_calls() {
-    // is_even calls is_odd and vice versa — each function chunk must emit a CALL to the other.
+    // M8G: mutual recursion loads callee via LoadGlobal before each CALL.
+    // is_even chunk must load is_odd; is_odd chunk must load is_even.
     let prog = compile_prog(concat!(
         "fn is_even(n: Number) -> Bool {\n",
         "  if n == 0 { return true }\n",
@@ -4057,30 +4074,53 @@ fn bytecode_mutual_recursion_emits_cross_calls() {
     assert!(
         even_body
             .iter()
-            .any(|i| matches!(i, Instruction::Call { name, arg_count: 1 } if name == "is_odd")),
-        "is_even must call is_odd"
+            .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "is_odd")),
+        "is_even must load 'is_odd' callee"
+    );
+    assert!(
+        even_body
+            .iter()
+            .any(|i| matches!(i, Instruction::Call { arg_count: 1 })),
+        "is_even must emit CALL 1"
     );
     let odd_body = &prog.functions[1].chunk.instructions;
     assert!(
         odd_body
             .iter()
-            .any(|i| matches!(i, Instruction::Call { name, arg_count: 1 } if name == "is_even")),
-        "is_odd must call is_even"
+            .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "is_even")),
+        "is_odd must load 'is_even' callee"
+    );
+    assert!(
+        odd_body
+            .iter()
+            .any(|i| matches!(i, Instruction::Call { arg_count: 1 })),
+        "is_odd must emit CALL 1"
     );
 }
 
 #[test]
-fn bytecode_dynamic_call_emits_unsupported_marker() {
-    // f()() — outer callee is a Call expression, not a Variable — must emit UNSUPPORTED(dynamic call).
+fn bytecode_dynamic_call_no_longer_unsupported() {
+    // M8G: chained call f()() compiles to stack-based calls — no Unsupported instruction.
     let prog = compile_prog("fn f() { } f()()");
     let has_unsupported = prog
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::Unsupported(s) if s == "dynamic call"));
+        .any(|i| matches!(i, Instruction::Unsupported(_)));
     assert!(
-        has_unsupported,
-        "dynamic call must emit UNSUPPORTED(dynamic call)"
+        !has_unsupported,
+        "dynamic call must no longer emit UNSUPPORTED after M8G"
+    );
+    // Must emit two CALL 0 instructions: one for f(), one for the chained ().
+    let call_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Call { arg_count: 0 }))
+        .count();
+    assert_eq!(
+        call_count, 2,
+        "f()() must emit exactly two CALL 0 instructions"
     );
 }
 
@@ -4154,14 +4194,23 @@ fn disassemble_no_params_line_for_zero_param_fn() {
 
 #[test]
 fn disassemble_call_format_stable() {
-    // CALL instruction must be formatted as "CALL name arg_count".
+    // M8G: CALL instruction is formatted as "CALL arg_count" (no name).
+    // The callee name appears in the preceding LOAD_GLOBAL instruction.
     use crate::disassemble::disassemble;
     let prog = compile_prog(concat!(
         "fn f(a: Number, b: Number, c: Number) -> Number { return a }\n",
         "let x = f(1, 2, 3)"
     ));
     let out = disassemble(&prog);
-    assert!(out.contains("CALL f 3"));
+    assert!(out.contains("CALL 3"), "CALL must include arg count");
+    assert!(
+        out.contains("LOAD_GLOBAL f"),
+        "callee must be loaded via LOAD_GLOBAL"
+    );
+    assert!(
+        !out.contains("CALL f"),
+        "CALL must not include function name after M8G"
+    );
 }
 
 #[test]
@@ -4720,8 +4769,9 @@ fn vm_load_unknown_state_errors() {
 }
 
 #[test]
-fn vm_unsupported_dynamic_call_errors() {
-    // f()() — outer callee is a Call expression, not a Variable → Unsupported("dynamic call")
+fn vm_dynamic_call_nil_callee_errors() {
+    // M8G: f()() now executes. f() returns nil; calling nil as a function produces
+    // a clean RuntimeError about non-function type, not an Unsupported error.
     let src = "fn f() { }\nf()()";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
@@ -4732,15 +4782,21 @@ fn vm_unsupported_dynamic_call_errors() {
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("bytecode feature not yet executable"),
-        "got: {}",
+        msg.contains("non-function") || msg.contains("Nil"),
+        "calling nil must produce a non-function error, got: {}",
+        msg
+    );
+    assert!(
+        !msg.contains("bytecode feature not yet executable"),
+        "must not mention Unsupported after M8G, got: {}",
         msg
     );
 }
 
 #[test]
 fn vm_unknown_function_error() {
-    // Call to a name not in the function table
+    // M8G: calling an undefined name fails at LoadGlobal (undefined variable),
+    // before even reaching the Call instruction.
     let src = "print(nonexistent(1))";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
@@ -4750,7 +4806,11 @@ fn vm_unknown_function_error() {
     let result = vm.run();
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("unknown function"), "got: {}", msg);
+    assert!(
+        msg.contains("nonexistent") || msg.contains("undefined"),
+        "must mention the undefined name, got: {}",
+        msg
+    );
 }
 
 // ─── Audit: cross-validation against tree-walk interpreter ─────────────────
@@ -6361,22 +6421,181 @@ print(f())"#;
     assert_eq!(vm_out, vec!["3"]);
 }
 
-// ── M8F audit: unsupported dynamic calls ─────────────────────────────────────
+// ── M8G: dynamic call execution tests ────────────────────────────────────────
 
 #[test]
-fn vm_dynamic_call_still_errors() {
-    // A chained call where the callee is not a named variable — make_fn()() —
-    // compiles to Unsupported("dynamic call"). The VM must return a clean
-    // RuntimeError with no panic.
-    let src = "fn make_fn() -> Number { return 1 }\nprint(make_fn()())";
-    let result = vm_run_unchecked(src);
-    assert!(result.is_err(), "dynamic call must produce a RuntimeError");
+fn vm_dynamic_call_chained_returns_function() {
+    // M8G: make_getter()() chains two calls — first returns a BytecodeFunction,
+    // second invokes it. Must produce correct output without Unsupported error.
+    let src = r#"fn make_getter() {
+  let x = 77
+  fn get() {
+    return x
+  }
+  return get
+}
+print(make_getter()())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["77"]);
+}
+
+// ── M8G: additional dynamic call tests ───────────────────────────────────────
+
+#[test]
+fn vm_dynamic_call_adder_chained() {
+    // make_adder(a)(b) — returns a closure that adds a, then calls it with b.
+    let src = r#"fn make_adder(a: Number) {
+  fn add_to(b: Number) -> Number {
+    return a + b
+  }
+  return add_to
+}
+print(make_adder(2)(3))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_dynamic_call_preserves_closure_capture() {
+    // Returned closure carries its captured env; calling via variable preserves state.
+    let src = r#"fn make_getter() {
+  let x: Number = 42
+  fn get() -> Number {
+    return x
+  }
+  return get
+}
+let g = make_getter()
+print(g())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_dynamic_call_wrong_arity_errors() {
+    // Calling a returned function with wrong arity produces a clean RuntimeError.
+    let src = r#"fn make_getter() {
+  fn get() -> Number {
+    return 1
+  }
+  return get
+}
+print(make_getter()(99))"#;
+    let result = vm_run(src);
+    assert!(result.is_err(), "wrong arity must error");
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("dynamic call") || msg.contains("not yet executable"),
-        "error must mention 'dynamic call', got: {}",
+        msg.contains("expects") || msg.contains("argument"),
+        "arity error must mention arguments, got: {}",
         msg
     );
+}
+
+#[test]
+fn vm_call_non_function_errors() {
+    // Calling a non-function value (e.g. Number) via dynamic dispatch errors cleanly.
+    let src = "fn make_fn() -> Number { return 1 }\nprint(make_fn()())";
+    let result = vm_run_unchecked(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("non-function") || msg.contains("Number"),
+        "must report non-function type, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_dynamic_call_arg_order_preserved() {
+    // Arguments to a dynamically dispatched call arrive in left-to-right order.
+    let src = r#"fn make_sub() {
+  fn sub(a: Number, b: Number) -> Number {
+    return a - b
+  }
+  return sub
+}
+print(make_sub()(10, 3))"#;
+    let out = vm_run(src).unwrap();
+    // 10 - 3 = 7, not 3 - 10 = -7
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_dynamic_call_inside_simulate() {
+    // Dynamic call inside a simulate body uses captured env correctly.
+    let src = r#"fn make_adder(n: Number) {
+  fn add(x: Number) -> Number {
+    return x + n
+  }
+  return add
+}
+
+let add5 = make_adder(5)
+let dur: seconds = 2
+let dt: seconds = 1
+let mut total: Number = 0
+
+simulate dur step dt {
+  total = total + add5(time)
+}
+print(total)"#;
+    // iter 0: add5(0) = 5; iter 1: add5(1) = 6; total = 11
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn vm_bytecode_callee_load_precedes_call() {
+    // Compiler emits callee load before args and before CALL instruction.
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "let z = add(2, 3)"
+    ));
+    let instrs = &prog.main.instructions;
+    let load_add_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::LoadGlobal(n) if n == "add"))
+        .expect("LoadGlobal add must exist");
+    let call_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Call { .. }))
+        .expect("Call must exist");
+    assert!(load_add_idx < call_idx, "callee load must precede CALL");
+}
+
+#[test]
+fn vm_bytecode_dynamic_call_emits_two_calls() {
+    // f()() emits: LoadGlobal f, CALL 0, CALL 0. No Unsupported.
+    let prog = compile_prog("fn f() { } f()()");
+    let instrs = &prog.main.instructions;
+    let call_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::Call { arg_count: 0 }))
+        .count();
+    assert_eq!(
+        call_count, 2,
+        "f()() must emit exactly 2 CALL 0 instructions"
+    );
+    assert!(
+        !instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::Unsupported(_))),
+        "no Unsupported instructions after M8G"
+    );
+}
+
+#[test]
+fn vm_dynamic_adder_output_matches_tree() {
+    // VM and tree-walk must agree on make_adder(2)(3) → 5.
+    let src = r#"fn make_adder(a: Number) {
+  fn add_to(b: Number) -> Number {
+    return a + b
+  }
+  return add_to
+}
+print(make_adder(2)(3))"#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["5"]);
 }
 
 // ── M8F audit: recursive function no crash ────────────────────────────────────

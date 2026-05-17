@@ -1,0 +1,15 @@
+// Demonstrates dynamic/computed calls in the bytecode VM (Milestone 8G).
+// make_getter() returns a nested function value; calling make_getter()()
+// chains two calls — the first returns the function, the second invokes it.
+
+fn make_getter() {
+  let x: Number = 77
+
+  fn get() -> Number {
+    return x
+  }
+
+  return get
+}
+
+print(make_getter()())
