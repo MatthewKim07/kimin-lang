@@ -1,5 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation, UnaryOp,
+    BinaryOp, CompoundAssignOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation,
+    UnaryOp,
 };
 use crate::error::ParseError;
 use crate::token::{Span, Token, TokenKind};
@@ -19,7 +20,8 @@ use crate::token::{Span, Token, TokenKind};
 ///   typed_params    → (IDENT ":" type_ann ("," IDENT ":" type_ann)*)?
 ///   return_stmt     → "return" expr?
 ///   let_stmt        → "let" "mut"? IDENT (":" type_ann)? "=" expr
-///   assign_stmt     → IDENT "=" expr      (lookahead: Ident followed by single "=")
+///   assign_stmt           → IDENT "=" expr      (lookahead: Ident followed by single "=")
+///   compound_assign_stmt  → IDENT ("+=" | "-=" | "*=" | "/=") expr
 ///   print_stmt      → "print" "(" expr ")"
 ///   if_stmt         → "if" expr block ("else" block)?
 ///   block           → "{" stmt* "}"
@@ -78,6 +80,16 @@ impl Parser {
             && matches!(self.peek_kind(), TokenKind::Eq)
         {
             self.parse_assign()
+        } else if matches!(self.current_kind(), TokenKind::Ident(_))
+            && matches!(
+                self.peek_kind(),
+                TokenKind::PlusEqual
+                    | TokenKind::MinusEqual
+                    | TokenKind::StarEqual
+                    | TokenKind::SlashEqual
+            )
+        {
+            self.parse_compound_assign()
         } else {
             Ok(Stmt::Expr(self.parse_expr()?))
         }
@@ -342,6 +354,30 @@ impl Parser {
             name,
             mutable,
             annotation,
+            value,
+            span,
+        })
+    }
+
+    fn parse_compound_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        self.advance(); // consume identifier
+        let op = match self.current_kind() {
+            TokenKind::PlusEqual => CompoundAssignOp::Add,
+            TokenKind::MinusEqual => CompoundAssignOp::Subtract,
+            TokenKind::StarEqual => CompoundAssignOp::Multiply,
+            TokenKind::SlashEqual => CompoundAssignOp::Divide,
+            _ => unreachable!(),
+        };
+        self.advance(); // consume compound operator
+        let value = self.parse_expr()?;
+        Ok(Stmt::CompoundAssign {
+            name,
+            op,
             value,
             span,
         })

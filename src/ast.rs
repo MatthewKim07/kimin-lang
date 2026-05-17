@@ -91,6 +91,15 @@ pub struct StateTransition {
     pub span: Span,
 }
 
+/// Operator used in a compound assignment statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompoundAssignOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
 /// Statement nodes.
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -106,6 +115,13 @@ pub enum Stmt {
     /// Variable reassignment: `x = expr`. Only valid for `let mut` bindings.
     Assign {
         name: String,
+        value: Expr,
+        span: Span,
+    },
+    /// Compound assignment: `x += expr`, `x -= expr`, `x *= expr`, `x /= expr`.
+    CompoundAssign {
+        name: String,
+        op: CompoundAssignOp,
         value: Expr,
         span: Span,
     },
