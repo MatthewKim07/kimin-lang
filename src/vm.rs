@@ -266,25 +266,25 @@ impl Vm {
 
                 // Named call: resolve the function value via the env chain, then
                 // call it using its captured environment as parent (lexical scope).
-                Instruction::Call { name, arg_count } => {
+                // Stack-based call (M8G): callee is on stack below the arguments.
+                // Layout before CALL n: [..., callee, arg1, ..., argN]
+                Instruction::Call { arg_count } => {
+                    // Pop args in reverse order, then reverse to restore original order.
                     let mut args: Vec<Value> = (0..arg_count)
                         .map(|_| pop(stack))
                         .collect::<Result<Vec<_>, _>>()?;
                     args.reverse();
 
-                    // Resolve the function value through the current env chain.
-                    let fn_val = current_env
-                        .borrow()
-                        .get(&name)
-                        .ok_or_else(|| runtime_err(&format!("unknown function '{}'", name)))?;
+                    // Pop callee from below the args.
+                    let callee = pop(stack)?;
 
-                    let (fn_chunk, fn_params, fn_arity, captured_env) = match fn_val {
+                    let (fn_chunk, fn_params, fn_arity, fn_name, captured_env) = match callee {
                         Value::BytecodeFunction {
                             name: fn_name,
                             env: captured_env,
                         } => {
-                            // Clone chunk data out of self.program before the
-                            // recursive execute_chunk call to release the borrow.
+                            // Clone chunk data before the recursive execute_chunk call
+                            // to release the borrow on self.program.
                             let (chunk, params, arity) = {
                                 let fc = self
                                     .program
@@ -299,15 +299,20 @@ impl Vm {
                                     })?;
                                 (fc.chunk.clone(), fc.params.clone(), fc.arity)
                             };
-                            (chunk, params, arity, captured_env)
+                            (chunk, params, arity, fn_name, captured_env)
                         }
-                        _ => return Err(runtime_err(&format!("'{}' is not a function", name))),
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "attempted to call non-function value of type {}",
+                                other.type_name()
+                            )))
+                        }
                     };
 
                     if args.len() != fn_arity {
                         return Err(runtime_err(&format!(
                             "function '{}' expects {} argument(s), got {}",
-                            name,
+                            fn_name,
                             fn_arity,
                             args.len()
                         )));
