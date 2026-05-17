@@ -1,0 +1,27 @@
+// Compound assignment error cases (type-checked, not runnable all at once)
+// Each block below shows a case that produces a TypeError if uncommented.
+
+// Immutable variable:
+// let x = 10
+// x += 1   // TypeError: cannot assign to immutable variable 'x'
+
+// Undefined variable:
+// y += 1   // TypeError: undefined variable 'y'
+
+// Unit mismatch (adding meters to seconds):
+// let mut d: meters = 0
+// let t: seconds = 5
+// d += t   // TypeError: cannot add meters and seconds
+
+// State variable:
+// state Door { open closed }
+// let door: Door = Door.open
+// door += 1   // TypeError: state variables must be changed with transition, not compound assignment
+
+// This file intentionally has no runnable statements.
+// Run `kimin check` on a file containing one of the above to see the error.
+
+// Runnable demonstration that valid compound assignment works:
+let mut n = 42
+n -= 2
+print(n)   // 40

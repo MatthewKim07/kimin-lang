@@ -1,0 +1,12 @@
+// Using compound assignment inside simulate blocks
+
+let mut position: meters = 0
+let velocity: meters = 10
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+    position += velocity
+    print(position)
+}
+// prints: 10, 20, 30

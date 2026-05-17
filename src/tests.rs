@@ -6773,3 +6773,371 @@ print(fact(5))"#;
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["120"]);
 }
+
+// ── Milestone 9A: compound assignment operators ────────────────────────────
+
+// --- lexer ---
+
+#[test]
+fn lex_plus_equal() {
+    let kinds = tokenize("x += 1");
+    assert!(matches!(kinds[0], TokenKind::Ident(_)));
+    assert_eq!(kinds[1], TokenKind::PlusEqual);
+    assert!(matches!(kinds[2], TokenKind::Number(_)));
+}
+
+#[test]
+fn lex_minus_equal() {
+    let kinds = tokenize("x -= 1");
+    assert_eq!(kinds[1], TokenKind::MinusEqual);
+}
+
+#[test]
+fn lex_star_equal() {
+    let kinds = tokenize("x *= 2");
+    assert_eq!(kinds[1], TokenKind::StarEqual);
+}
+
+#[test]
+fn lex_slash_equal() {
+    let kinds = tokenize("x /= 2");
+    assert_eq!(kinds[1], TokenKind::SlashEqual);
+}
+
+#[test]
+fn lex_plus_equal_not_two_tokens() {
+    // += must be a single token, not Plus then Eq
+    let kinds = tokenize("x += 1");
+    assert_eq!(kinds.len(), 4); // Ident, PlusEqual, Number, Eof
+    assert_eq!(kinds[1], TokenKind::PlusEqual);
+}
+
+// --- parser ---
+
+#[test]
+fn parse_compound_assign_plus() {
+    let src = "let mut x = 0\nx += 1";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 2);
+    assert!(matches!(
+        &stmts[1],
+        crate::ast::Stmt::CompoundAssign {
+            op: crate::ast::CompoundAssignOp::Add,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_compound_assign_minus() {
+    let src = "let mut x = 10\nx -= 3";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[1],
+        crate::ast::Stmt::CompoundAssign {
+            op: crate::ast::CompoundAssignOp::Subtract,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_compound_assign_star() {
+    let src = "let mut x = 5\nx *= 3";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[1],
+        crate::ast::Stmt::CompoundAssign {
+            op: crate::ast::CompoundAssignOp::Multiply,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_compound_assign_slash() {
+    let src = "let mut x = 10\nx /= 2";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[1],
+        crate::ast::Stmt::CompoundAssign {
+            op: crate::ast::CompoundAssignOp::Divide,
+            ..
+        }
+    ));
+}
+
+// --- type checker ---
+
+#[test]
+fn type_compound_assign_immutable_errors() {
+    let err = check("let x = 10\nx += 1").unwrap_err();
+    assert!(err.to_string().contains("immutable"));
+}
+
+#[test]
+fn type_compound_assign_undefined_errors() {
+    let err = check("y += 1").unwrap_err();
+    assert!(err.to_string().contains("undefined variable 'y'"));
+}
+
+#[test]
+fn type_compound_assign_state_variable_errors() {
+    let src = "state Door { open closed transition open -> closed }\nlet mut door: Door = Door.open\ndoor += 1";
+    let err = check(src).unwrap_err();
+    assert!(err.to_string().contains("transition"));
+}
+
+#[test]
+fn type_compound_assign_unit_mismatch_errors() {
+    let src = "let mut d: meters = 0\nlet t: seconds = 5\nd += t";
+    let err = check(src).unwrap_err();
+    assert!(err.to_string().contains("cannot add"));
+}
+
+#[test]
+fn type_compound_assign_number_ok() {
+    assert!(check("let mut x = 10\nx += 5").is_ok());
+    assert!(check("let mut x = 10\nx -= 3").is_ok());
+    assert!(check("let mut x = 10\nx *= 2").is_ok());
+    assert!(check("let mut x = 10\nx /= 4").is_ok());
+}
+
+#[test]
+fn type_compound_assign_same_unit_plus_ok() {
+    // meters += meters is valid
+    assert!(check("let mut d: meters = 0\nlet inc: meters = 5\nd += inc").is_ok());
+}
+
+#[test]
+fn type_compound_assign_unit_plus_bare_number_errors() {
+    // meters += Number is NOT valid — unit-safe; check_binary(Add, meters, Number) → error
+    match check("let mut d: meters = 0\nd += 10") {
+        Err(e) => {
+            assert!(e.to_string().contains("operator '+'") || e.to_string().contains("Number"))
+        }
+        Ok(()) => panic!("expected TypeError"),
+    }
+}
+
+#[test]
+fn type_compound_assign_unit_times_number_ok() {
+    assert!(check("let mut d: meters = 10\nd *= 2").is_ok());
+}
+
+// --- interpreter (tree-walk) ---
+
+#[test]
+fn interp_compound_assign_plus_equals() {
+    let interp = run("let mut x = 10\nx += 5").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(15.0)));
+}
+
+#[test]
+fn interp_compound_assign_minus_equals() {
+    let interp = run("let mut x = 10\nx -= 3").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(7.0)));
+}
+
+#[test]
+fn interp_compound_assign_star_equals() {
+    let interp = run("let mut x = 4\nx *= 3").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn interp_compound_assign_slash_equals() {
+    let interp = run("let mut x = 20\nx /= 4").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_compound_assign_chain() {
+    let interp = run("let mut x = 10\nx += 5\nx -= 3\nx *= 2\nx /= 4").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn interp_compound_assign_in_block() {
+    let interp = run("let mut counter = 0\n{ counter += 1\ncounter += 1 }").unwrap();
+    assert_eq!(interp.get_var("counter"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_compound_assign_in_function() {
+    let src = r#"fn add_to(start: Number, amount: Number) -> Number {
+  let mut result = start
+  result += amount
+  return result
+}
+let out = add_to(10, 7)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("out"), Some(Value::Number(17.0)));
+}
+
+#[test]
+fn interp_compound_assign_accumulate_in_simulate() {
+    let src = r#"let mut pos: meters = 0
+let vel: meters = 10
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    pos += vel
+}"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("pos"), Some(Value::Number(30.0)));
+}
+
+#[test]
+fn interp_compound_assign_unit_times_number() {
+    let interp = run("let mut d: meters = 10\nd *= 2").unwrap();
+    assert_eq!(interp.get_var("d"), Some(Value::Number(20.0)));
+}
+
+#[test]
+fn interp_compound_assign_div_by_zero_errors() {
+    match run("let mut x = 10\nx /= 0") {
+        Err(e) => assert!(e.to_string().contains("division by zero")),
+        Ok(_) => panic!("expected error"),
+    }
+}
+
+#[test]
+fn interp_compound_assign_print_output() {
+    let tokens = Lexer::new("let mut x = 5\nx += 3\nprint(x)")
+        .tokenize()
+        .unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let mut interp = Interpreter::new();
+    interp.run(&stmts).unwrap();
+    // Value is 8
+    assert_eq!(interp.get_var("x"), Some(Value::Number(8.0)));
+}
+
+// --- bytecode compiler (IR shape) ---
+
+#[test]
+fn bytecode_compound_assign_plus_desugars_to_load_op_store() {
+    let prog = compile_prog("let mut x = 0\nx += 5");
+    let instrs = &prog.main.instructions;
+    // Expect somewhere: LoadGlobal("x"), Constant(5), Add, StoreGlobal("x")
+    let has_load = instrs
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) if n == "x"));
+    let has_add = instrs.iter().any(|i| matches!(i, Instruction::Add));
+    let has_store = instrs
+        .iter()
+        .any(|i| matches!(i, Instruction::StoreGlobal(n) if n == "x"));
+    assert!(has_load, "missing LoadGlobal x");
+    assert!(has_add, "missing Add");
+    assert!(has_store, "missing StoreGlobal x");
+}
+
+#[test]
+fn bytecode_compound_assign_minus_desugars() {
+    let prog = compile_prog("let mut x = 10\nx -= 3");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Subtract)));
+}
+
+#[test]
+fn bytecode_compound_assign_multiply_desugars() {
+    let prog = compile_prog("let mut x = 5\nx *= 4");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Multiply)));
+}
+
+#[test]
+fn bytecode_compound_assign_divide_desugars() {
+    let prog = compile_prog("let mut x = 20\nx /= 4");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Divide)));
+}
+
+#[test]
+fn bytecode_compound_assign_local_uses_load_store_local() {
+    // Inside a block, compound assign uses LoadLocal / StoreLocal
+    let prog = compile_prog("{ let mut x = 0\nx += 1 }");
+    let instrs = &prog.main.instructions;
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "x")));
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, Instruction::StoreLocal(n) if n == "x")));
+}
+
+// --- VM execution ---
+
+#[test]
+fn vm_compound_assign_plus_equals() {
+    let out = vm_run("let mut x = 10\nx += 5\nprint(x)").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_compound_assign_minus_equals() {
+    let out = vm_run("let mut x = 10\nx -= 3\nprint(x)").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_compound_assign_star_equals() {
+    let out = vm_run("let mut x = 4\nx *= 3\nprint(x)").unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn vm_compound_assign_slash_equals() {
+    let out = vm_run("let mut x = 20\nx /= 4\nprint(x)").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_compound_assign_chain() {
+    let out = vm_run("let mut x = 10\nx += 5\nx -= 3\nx *= 2\nx /= 4\nprint(x)").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_compound_assign_in_block() {
+    let out =
+        vm_run("let mut counter = 0\n{ counter += 1\ncounter += 1 }\nprint(counter)").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_compound_assign_accumulate_in_simulate() {
+    let src = r#"let mut pos: meters = 0
+let vel: meters = 10
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    pos += vel
+}
+print(pos)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn vm_compound_assign_matches_tree_walk() {
+    let src = "let mut x = 3\nx *= 7\nx -= 1\nprint(x)";
+    let tree_out = {
+        let tokens = Lexer::new(src).tokenize().unwrap();
+        let stmts = Parser::new(tokens).parse().unwrap();
+        TypeChecker::new().check(&stmts).unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+        interp.get_var("x")
+    };
+    let vm_out = vm_run(src).unwrap();
+    // tree: 3*7=21, 21-1=20
+    assert_eq!(tree_out, Some(Value::Number(20.0)));
+    assert_eq!(vm_out, vec!["20"]);
+}

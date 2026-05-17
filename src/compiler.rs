@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{BinaryOp, Expr, Param, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, CompoundAssignOp, Expr, Param, Stmt, UnaryOp};
 use crate::bytecode::{
     BytecodeProgram, Chunk, Constant, FunctionChunk, Instruction, SimulateChunk,
 };
@@ -133,6 +133,30 @@ impl BytecodeCompiler {
 
             Stmt::Assign { name, value, .. } => {
                 self.compile_expr(value)?;
+                if self.is_local(name) {
+                    self.chunk.emit(Instruction::StoreLocal(name.clone()));
+                } else {
+                    self.chunk.emit(Instruction::StoreGlobal(name.clone()));
+                }
+            }
+
+            Stmt::CompoundAssign {
+                name, op, value, ..
+            } => {
+                // Desugar: Load(var) → compile(rhs) → Op → Store(var)
+                if self.is_local(name) {
+                    self.chunk.emit(Instruction::LoadLocal(name.clone()));
+                } else {
+                    self.chunk.emit(Instruction::LoadGlobal(name.clone()));
+                }
+                self.compile_expr(value)?;
+                let instr = match op {
+                    CompoundAssignOp::Add => Instruction::Add,
+                    CompoundAssignOp::Subtract => Instruction::Subtract,
+                    CompoundAssignOp::Multiply => Instruction::Multiply,
+                    CompoundAssignOp::Divide => Instruction::Divide,
+                };
+                self.chunk.emit(instr);
                 if self.is_local(name) {
                     self.chunk.emit(Instruction::StoreLocal(name.clone()));
                 } else {

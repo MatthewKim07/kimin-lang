@@ -1,0 +1,22 @@
+// Compound assignment with unit-typed variables
+
+let mut distance: meters = 0
+let lap: meters = 10
+distance += lap
+distance += lap
+print(distance)   // 20
+
+// Subtraction between same units
+let mut remaining: meters = 100
+let used: meters = 25
+remaining -= used
+print(remaining)   // 75
+
+// Scaling by a dimensionless Number
+let mut speed: meters = 50
+speed *= 2
+print(speed)   // 100
+
+let mut budget: meters = 200
+budget /= 4
+print(budget)   // 50
