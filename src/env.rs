@@ -48,6 +48,11 @@ impl Env {
         self.bindings.insert(name, value);
     }
 
+    /// Returns a clone of the parent environment reference, if any.
+    pub fn parent_ref(&self) -> Option<EnvRef> {
+        self.parent.clone()
+    }
+
     /// Update an existing variable binding, searching from this frame up through parents.
     /// Returns true if the variable was found and updated, false if not found.
     /// Used by both `transition` statements and `let mut` assignment statements.

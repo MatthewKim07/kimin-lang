@@ -31,8 +31,11 @@ pub enum Value {
     Bool(bool),
     Nil,
     Function(FunctionValue),
-    /// A function known only by name in the bytecode VM (no closure capture).
-    BytecodeFunction(String),
+    /// A bytecode function value capturing its lexical definition environment.
+    BytecodeFunction {
+        name: String,
+        env: EnvRef,
+    },
     StateValue {
         state_name: String,
         variant_name: String,
@@ -47,7 +50,7 @@ impl Value {
             Value::Bool(_) => "Bool",
             Value::Nil => "Nil",
             Value::Function(_) => "Function",
-            Value::BytecodeFunction(_) => "Function",
+            Value::BytecodeFunction { .. } => "Function",
             Value::StateValue { .. } => "StateValue",
         }
     }
@@ -60,7 +63,9 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
-            (Value::BytecodeFunction(a), Value::BytecodeFunction(b)) => a == b,
+            (Value::BytecodeFunction { name: a, .. }, Value::BytecodeFunction { name: b, .. }) => {
+                a == b
+            }
             (
                 Value::StateValue {
                     state_name: s1,
@@ -87,7 +92,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Nil => write!(f, "nil"),
             Value::Function(func) => write!(f, "<fn {}>", func.name),
-            Value::BytecodeFunction(name) => write!(f, "<fn {}>", name),
+            Value::BytecodeFunction { name, .. } => write!(f, "<fn {}>", name),
             Value::StateValue {
                 state_name,
                 variant_name,
