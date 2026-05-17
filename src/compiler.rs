@@ -217,9 +217,15 @@ impl BytecodeCompiler {
                     chunk: fn_chunk,
                 });
 
-                // Main chunk: make the function visible as a global.
                 self.chunk.emit(Instruction::LoadFunction(name.clone()));
-                self.chunk.emit(Instruction::DefineGlobal(name.clone()));
+                // Top-level functions go into global scope; nested functions into the
+                // current local scope so each call site captures its own closure.
+                if self.locals_stack.is_empty() {
+                    self.chunk.emit(Instruction::DefineGlobal(name.clone()));
+                } else {
+                    self.locals_stack.last_mut().unwrap().insert(name.clone());
+                    self.chunk.emit(Instruction::DefineLocal(name.clone()));
+                }
             }
 
             Stmt::StateDecl {
