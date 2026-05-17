@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8D** (complete): bytecode VM execution of state machines and transitions. Built on top of the Milestones 8A/8B/8C bytecode IR and VM.
+This repository contains **Milestone 8F** (complete): closure and free-variable capture in the bytecode VM. Built on top of Milestones 8A–8E.
 
 ---
 
@@ -191,6 +191,19 @@ This repository contains **Milestone 8D** (complete): bytecode VM execution of s
   - Disassembler prints each simulate body as `=== simulate simulate#0 ===` section after function sections
   - `kimin vm examples/simulate.kimin`, `simulate_state.kimin`, `simulate_motion.kimin` all match `kimin run` output
   - Dynamic calls and closures remain `Unsupported(...)` in the VM
+
+### Milestone 8F
+- **Closure and free-variable capture in bytecode VM**: `kimin vm` now correctly captures lexical environments
+  - `Value::BytecodeFunction` gains `env: EnvRef` — the definition-site environment
+  - VM replaced `globals: HashMap` with `global_env: EnvRef` (root of the env chain)
+  - `execute_chunk` takes `env: EnvRef`; `BeginScope`/`EndScope` push/pop child envs using `Env::new_child`
+  - `LoadFunction` captures `Rc::clone(&current_env)` — functions close over their definition scope
+  - `Call` creates `Env::new_child(captured_env)` as the call frame (lexical scoping, not dynamic)
+  - `Simulate` creates `Env::new_child(current_env)` per iteration — block-local outer variables now accessible
+  - `FnDecl` compiler fix: nested functions emit `DefineLocal` so they bind in the enclosing call env, not global
+  - All variable ops (`LoadGlobal`/`LoadLocal`/`StoreGlobal`/`StoreLocal`) walk the unified env chain
+  - `kimin vm examples/vm_closure_capture.kimin` → `3` (nested mutable capture across two calls)
+  - Tree-walk interpreter unchanged; `kimin run` unaffected
 
 ---
 
@@ -452,7 +465,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-584 tests pass as of Milestone 8E (including M8E audit hardening).
+594 tests pass as of Milestone 8F.
 
 ---
 
@@ -475,7 +488,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (584 tests)
+  tests.rs        Unit tests (594 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -561,4 +574,4 @@ examples/
 | 8C | Minimal stack-based bytecode VM (`kimin vm`); VM audit and hardening | ✓ done |
 | 8D | State machine execution in bytecode VM | ✓ done |
 | 8E | `simulate` block execution in bytecode VM | ✓ done |
-| 8F | Closures and dynamic calls in bytecode VM | planned |
+| 8F | Closure and free-variable capture in bytecode VM | ✓ done |
