@@ -1,6 +1,7 @@
 use crate::{
     bytecode::{Constant, Instruction},
     compiler::BytecodeCompiler,
+    env::Env,
     error::KiminError,
     interpreter::Interpreter,
     lexer::Lexer,
@@ -4468,7 +4469,13 @@ fn vm_define_state_runs_without_output() {
 #[test]
 fn vm_bytecode_function_value_display() {
     assert_eq!(
-        format!("{}", Value::BytecodeFunction("foo".into())),
+        format!(
+            "{}",
+            Value::BytecodeFunction {
+                name: "foo".into(),
+                env: Env::new_global()
+            }
+        ),
         "<fn foo>"
     );
 }
@@ -4476,7 +4483,11 @@ fn vm_bytecode_function_value_display() {
 #[test]
 fn vm_bytecode_function_value_type_name() {
     assert_eq!(
-        Value::BytecodeFunction("foo".into()).type_name(),
+        Value::BytecodeFunction {
+            name: "foo".into(),
+            env: Env::new_global()
+        }
+        .type_name(),
         "Function"
     );
 }
@@ -4484,12 +4495,24 @@ fn vm_bytecode_function_value_type_name() {
 #[test]
 fn vm_bytecode_function_value_equality() {
     assert_eq!(
-        Value::BytecodeFunction("f".into()),
-        Value::BytecodeFunction("f".into())
+        Value::BytecodeFunction {
+            name: "f".into(),
+            env: Env::new_global()
+        },
+        Value::BytecodeFunction {
+            name: "f".into(),
+            env: Env::new_global()
+        }
     );
     assert_ne!(
-        Value::BytecodeFunction("f".into()),
-        Value::BytecodeFunction("g".into())
+        Value::BytecodeFunction {
+            name: "f".into(),
+            env: Env::new_global()
+        },
+        Value::BytecodeFunction {
+            name: "g".into(),
+            env: Env::new_global()
+        }
     );
 }
 
@@ -5787,11 +5810,9 @@ print(x)"#;
 
 #[test]
 fn vm_simulate_inside_block_local_capture_confirmed_limitation() {
-    // The type checker accepts this program (it sees `captured` in scope), but the
-    // bytecode body compiler only inherits top-level globals — not block-locals.
-    // The body chunk emits LoadGlobal("captured"), which fails at VM runtime.
-    // This test documents the known M8E limitation: simulate bodies cannot capture
-    // block-local outer variables.
+    // M8F: simulate bodies now parent their iter_env to the current_env (not global_env),
+    // so block-local outer variables are captured correctly.
+    // This was a known M8E limitation; it is fixed in M8F.
     let src = r#"let dur: seconds = 1
 let dt: seconds = 1
 {
@@ -5801,15 +5822,10 @@ let dt: seconds = 1
   }
 }"#;
     let result = vm_run(src);
-    assert!(
-        result.is_err(),
-        "block-local capture must produce a VM RuntimeError (known M8E limitation)"
-    );
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("captured"),
-        "error must name the variable, got: {}",
-        msg
+    assert_eq!(
+        result.unwrap(),
+        vec!["42"],
+        "block-local capture must succeed after M8F fix"
     );
 }
 
@@ -5929,4 +5945,161 @@ fn disassemble_multiple_simulate_bodies() {
         2,
         "each simulate body section must have 'params: time'"
     );
+}
+
+// ── M8F: closure / free-variable capture tests ───────────────────────────────
+
+#[test]
+fn vm_closure_function_reads_global_free_variable() {
+    // A function declared at top level can read a global defined before it.
+    let out = vm_run("let x = 99\nfn get() -> Number { return x }\nprint(get())").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_closure_nested_reads_enclosing_local() {
+    // A nested function captures its enclosing function's local variable.
+    let src = r#"fn outer() -> Number {
+  let val = 7
+  fn inner() -> Number {
+    return val
+  }
+  return inner()
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_closure_mutates_captured_mutable() {
+    // Nested function mutates a mutable variable from its enclosing scope.
+    let src = r#"fn outer() -> Number {
+  let mut x = 1
+  fn inc() -> Number {
+    x = x + 1
+    return x
+  }
+  inc()
+  return inc()
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_closure_inner_shadows_outer_variable() {
+    // A local in the inner function shadows the outer function's variable.
+    let src = r#"fn outer() -> Number {
+  let x = 10
+  fn inner() -> Number {
+    let x = 20
+    return x
+  }
+  return inner()
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_closure_params_shadow_captured_variables() {
+    // A parameter with the same name as an outer variable shadows it.
+    let src = r#"fn outer() -> Number {
+  let x = 5
+  fn add(x: Number) -> Number {
+    return x + 1
+  }
+  return add(100)
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["101"]);
+}
+
+#[test]
+fn vm_closure_returned_function_keeps_env_alive() {
+    // A returned function value carries its captured environment.
+    // Because Kimin doesn't yet support first-class return of functions,
+    // test via a top-level function calling a nested helper twice.
+    let src = r#"fn make_adder() -> Number {
+  let base = 10
+  fn adder(n: Number) -> Number {
+    return base + n
+  }
+  return adder(5)
+}
+print(make_adder())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+// ── M8F: simulate body block/function-local capture tests ────────────────────
+
+#[test]
+fn vm_simulate_captures_block_local_read() {
+    // Simulate body reads a variable defined in an enclosing block scope.
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+{
+  let offset = 10
+  simulate dur step dt {
+    print(offset)
+  }
+}"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10", "10", "10"]);
+}
+
+#[test]
+fn vm_simulate_captures_block_local_mutable_write() {
+    // Simulate body writes to a mutable variable in an enclosing block scope;
+    // the change persists across iterations and after the simulate.
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+{
+  let mut acc = 0
+  simulate dur step dt {
+    acc = acc + 1
+  }
+  print(acc)
+}"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_simulate_captures_function_local_mutable() {
+    // Simulate inside a function body can write to the function's mutable local.
+    let src = r#"fn count() -> Number {
+  let mut total = 0
+  let dur: seconds = 4
+  let dt: seconds = 1
+  simulate dur step dt {
+    total = total + 1
+  }
+  return total
+}
+print(count())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn vm_simulate_body_local_stays_local() {
+    // A let inside the simulate body is not visible after the loop; the outer
+    // scope retains its own value.
+    let src = r#"let mut x = 0
+let dur: seconds = 2
+let dt: seconds = 1
+simulate dur step dt {
+  let x = 99
+  print(x)
+}
+print(x)"#;
+    // The body's `let x = 99` is local to each iteration; outer x stays 0.
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99", "99", "0"]);
 }

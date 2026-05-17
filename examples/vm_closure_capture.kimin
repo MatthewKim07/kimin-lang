@@ -1,0 +1,13 @@
+fn outer() -> Number {
+  let mut x = 1
+
+  fn inc() -> Number {
+    x = x + 1
+    return x
+  }
+
+  inc()
+  return inc()
+}
+
+print(outer())
