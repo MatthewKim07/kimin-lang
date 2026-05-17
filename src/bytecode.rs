@@ -55,9 +55,10 @@ pub enum Instruction {
     // Functions
     /// Push a reference to a named function from the function table.
     LoadFunction(String),
-    /// Call a named function with the given number of arguments already on the stack.
+    /// Stack-based call. Before this instruction:
+    ///   stack: [..., callee_value, arg1, ..., argN]
+    /// Pops N args, pops callee, invokes callee(args). Pushes return value.
     Call {
-        name: String,
         arg_count: usize,
     },
 

@@ -96,7 +96,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::BeginScope => "BEGIN_SCOPE".to_string(),
         Instruction::EndScope => "END_SCOPE".to_string(),
         Instruction::LoadFunction(n) => format!("LOAD_FUNCTION {}", n),
-        Instruction::Call { name, arg_count } => format!("CALL {} {}", name, arg_count),
+        Instruction::Call { arg_count } => format!("CALL {}", arg_count),
         Instruction::Return => "RETURN".to_string(),
         Instruction::Halt => "HALT".to_string(),
         Instruction::DefineState {
