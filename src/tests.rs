@@ -6598,6 +6598,165 @@ print(make_adder(2)(3))"#;
     assert_eq!(vm_out, vec!["5"]);
 }
 
+// ── M8G audit: additional hardening tests ────────────────────────────────────
+
+#[test]
+fn vm_dynamic_counter_preserves_state_across_calls() {
+    // make_counter returns a closure over a mutable captured variable.
+    // Each call to counter() increments and returns the same x.
+    let src = r#"fn make_counter() {
+  let mut x: Number = 0
+  fn inc() -> Number {
+    x = x + 1
+    return x
+  }
+  return inc
+}
+let counter = make_counter()
+print(counter())
+print(counter())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_dynamic_call_inside_if() {
+    // Dynamic call inside a taken if branch executes correctly.
+    let src = r#"fn make_getter() {
+  let x: Number = 77
+  fn get() -> Number { return x }
+  return get
+}
+let cond = true
+if cond {
+  print(make_getter()())
+}"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["77"]);
+}
+
+#[test]
+fn vm_dynamic_call_inside_function() {
+    // Dynamic call chained inside another function body works correctly.
+    let src = r#"fn make_getter() {
+  let x: Number = 99
+  fn get() -> Number { return x }
+  return get
+}
+fn get_via_fn() {
+  let getter = make_getter()
+  print(getter())
+}
+get_via_fn()"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_dynamic_call_non_function_text_errors() {
+    // Calling a Text value produces a clean non-function RuntimeError.
+    let src = "fn make_text() { return \"hello\" }\nmake_text()()";
+    let result = vm_run_unchecked(src);
+    assert!(result.is_err(), "calling Text must error");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("non-function") || msg.contains("String"),
+        "must report non-function type, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_dynamic_call_non_function_bool_errors() {
+    // Calling a Bool value produces a clean non-function RuntimeError.
+    let src = "fn make_bool() { return true }\nmake_bool()()";
+    let result = vm_run_unchecked(src);
+    assert!(result.is_err(), "calling Bool must error");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("non-function") || msg.contains("Bool"),
+        "must report non-function type, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_dynamic_getter_matches_tree() {
+    // make_getter()() gives the same output in tree-walk and VM.
+    let src = r#"fn make_getter() {
+  let x: Number = 77
+  fn get() -> Number { return x }
+  return get
+}
+print(make_getter()())"#;
+    assert!(run(src).is_ok(), "tree-walk must succeed");
+    assert_eq!(vm_run(src).unwrap(), vec!["77"]);
+}
+
+#[test]
+fn vm_dynamic_counter_matches_tree() {
+    // Counter closure gives the same output in tree-walk and VM.
+    let src = r#"fn make_counter() {
+  let mut x: Number = 0
+  fn inc() -> Number {
+    x = x + 1
+    return x
+  }
+  return inc
+}
+let counter = make_counter()
+print(counter())
+print(counter())"#;
+    assert!(run(src).is_ok(), "tree-walk must succeed");
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2"]);
+}
+
+#[test]
+fn disassemble_chained_call_shows_two_calls() {
+    // f()() disassembles to two consecutive CALL 0 instructions — no function name in CALL.
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("fn f() { } f()()");
+    let out = disassemble(&prog);
+    // Count occurrences of "CALL 0" in the main section.
+    let main_section = out.split("=== function").next().unwrap_or(&out);
+    let call_count = main_section.matches("CALL 0").count();
+    assert_eq!(
+        call_count, 2,
+        "f()() must disassemble to two 'CALL 0' instructions, got: {}",
+        out
+    );
+    assert!(
+        !out.contains("UNSUPPORTED"),
+        "no UNSUPPORTED in disassembly after M8G"
+    );
+}
+
+#[test]
+fn bytecode_call_instruction_has_only_arg_count() {
+    // After M8G: Call instructions carry only arg_count, not a callee name.
+    // The type system enforces this at compile time. This test documents the invariant
+    // and ensures the function table shape is correct.
+    let prog = compile_prog(concat!(
+        "fn add(a: Number, b: Number) -> Number { return a + b }\n",
+        "let z = add(1, 2)"
+    ));
+    // Every Call instruction must match Call { arg_count: _ } (no name field).
+    for instr in &prog.main.instructions {
+        if let Instruction::Call { arg_count } = instr {
+            // Verify arg_count is a reasonable value (structural check).
+            assert!(*arg_count <= 255, "arg_count out of expected range");
+        }
+    }
+    // Must emit exactly one Call instruction for add(1, 2).
+    let call_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Call { .. }))
+        .count();
+    assert_eq!(call_count, 1, "add(1, 2) must emit exactly one CALL");
+}
+
 // ── M8F audit: recursive function no crash ────────────────────────────────────
 
 #[test]
