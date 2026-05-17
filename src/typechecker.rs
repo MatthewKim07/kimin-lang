@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ast::{
-    BinaryOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation, UnaryOp,
+    BinaryOp, CompoundAssignOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation,
+    UnaryOp,
 };
 use crate::error::TypeError;
 use crate::token::Span;
@@ -538,6 +539,65 @@ impl TypeChecker {
                             name,
                             var_ty.name(),
                             val_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::CompoundAssign {
+                name,
+                op,
+                value,
+                span,
+            } => {
+                let (var_ty, var_mutable) = self
+                    .env
+                    .get(name)
+                    .map(|vi| (vi.ty.clone(), vi.mutable))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                if matches!(var_ty, Type::State(_)) {
+                    return Err(TypeError {
+                        msg: "state variables must be changed with transition, not compound assignment".into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                if !var_mutable {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let rhs_ty = self.check_expr(value, *span)?;
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+                let result_ty = self.check_binary(&binary_op, var_ty.clone(), rhs_ty, *span)?;
+                let compatible = result_ty.is_unknown()
+                    || var_ty.is_unknown()
+                    || result_ty == var_ty
+                    || (matches!(&var_ty, Type::NumberWithUnit(_)) && result_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "variable '{}' has type {} but compound assignment result has type {}",
+                            name,
+                            var_ty.name(),
+                            result_ty.name()
                         ),
                         line: span.line,
                         col: span.col,

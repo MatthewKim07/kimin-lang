@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, CompoundAssignOp, Expr, Stmt, UnaryOp};
 use crate::env::{Env, EnvRef};
 use crate::error::RuntimeError;
 use crate::value::{FunctionValue, Value};
@@ -58,6 +58,28 @@ impl Interpreter {
             Stmt::Assign { name, value, .. } => {
                 let v = self.eval_expr(value)?;
                 let found = self.env.borrow_mut().assign_existing(name, v);
+                if !found {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", name),
+                    });
+                }
+                Ok(ExecFlow::Continue)
+            }
+            Stmt::CompoundAssign {
+                name, op, value, ..
+            } => {
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+                let rhs = self.eval_expr(value)?;
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+                let result = eval_binary(&binary_op, current, rhs)?;
+                let found = self.env.borrow_mut().assign_existing(name, result);
                 if !found {
                     return Err(RuntimeError {
                         msg: format!("undefined variable '{}'", name),
