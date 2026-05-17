@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 8E
+# Kimin Language Specification — Milestone 8G
 
-This document describes the syntax and semantics implemented through Milestone 8E.
+This document describes the syntax and semantics implemented through Milestone 8G.
 
 ---
 
@@ -771,26 +771,56 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR and VM (Milestones 8A–8D)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–8G)
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8C + M8D)
+### What the bytecode VM executes (M8A–8G)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
-- Variable access and mutation (globals and block-scoped locals)
+- Variable access and mutation (globals and block-scoped locals via env-chain)
 - Control flow: `if`/`else`, blocks with lexical scope
 - Named function declarations and calls (including recursion)
+- **Closures and free-variable capture** (M8F): `Value::BytecodeFunction { name, env }` carries its definition-site environment; functions close over enclosing locals and parameters
+- **Dynamic/computed calls** (M8G): `make_getter()()` and `make_adder(2)(3)` both work; callee expression evaluated before arguments; any function-valued expression can be called
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
-- **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place (locals first, then globals)
+- **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk
+- **Simulate blocks** — see below
 
 ### What remains as `UNSUPPORTED` in the VM
 
-- Computed/dynamic callees (`get_fn()(args)`) — emit `UNSUPPORTED(dynamic call)`
-- Closures / free-variable capture — function bodies emit `LOAD_GLOBAL` provisionally; not correct for all closure patterns
+No major language features remain unsupported. The only known limitation is:
+- **Rc reference cycles** from recursive closures (a function that captures itself) — memory leak at runtime; programs run-and-exit so no crash occurs.
 
-### Simulate block VM execution (M8E)
+### Closure and environment model (M8F)
+
+The VM uses an `Env` chain (same type as the tree-walk interpreter). Every scope operation creates or removes child `EnvRef` nodes:
+
+- `BeginScope` → `Env::new_child(current_env)` 
+- `EndScope` → `current_env = parent_ref()`
+- `LoadFunction name` → pushes `Value::BytecodeFunction { name, env: Rc::clone(&current_env) }` — captures the definition-site env
+- `Call { arg_count }` → creates `Env::new_child(captured_env)` as the call frame (lexical scoping, not dynamic)
+- `Simulate { body_idx }` → creates `Env::new_child(current_env)` per iteration
+
+All variable loads (`LoadGlobal`, `LoadLocal`) walk the chain from `current_env`. All stores (`StoreGlobal`, `StoreLocal`) call `assign_existing` which walks the chain to find and update the binding. `DefineGlobal` always binds in the root global env; `DefineLocal` binds in `current_env`.
+
+### Dynamic call model (M8G)
+
+All function calls use stack-based dispatch. The compiler emits:
+
+1. Callee expression — pushes a `Value::BytecodeFunction` onto the stack
+2. Arguments left-to-right — each pushes a value
+3. `CALL arg_count` — pops N args (restores original order), pops callee, invokes
+
+This handles all callee shapes uniformly:
+- Named call: `add(1, 2)` → `LOAD_GLOBAL add, CONSTANT 1, CONSTANT 2, CALL 2`
+- Returned closure: `make_getter()()` → `LOAD_GLOBAL make_getter, CALL 0, CALL 0`
+- Curried call: `make_adder(2)(3)` → `LOAD_GLOBAL make_adder, CONSTANT 2, CALL 1, CONSTANT 3, CALL 1`
+
+Non-function callees produce `RuntimeError: attempted to call non-function value of type ...`. Wrong arity produces `RuntimeError: function '...' expects N argument(s), got M`.
+
+### Simulate block VM execution (M8E + M8F)
 
 `simulate duration step dt { body }` lowers to:
 
@@ -803,20 +833,19 @@ At runtime, the VM:
 - Pops `step` then `duration` from the stack.
 - Validates: `step > 0`, `duration >= 0`.
 - Loops `floor(duration / step)` times:
-  - Pushes a fresh local scope with `time = i * step`.
+  - Creates `Env::new_child(current_env)` — body can read/write block-local outer variables.
+  - Defines `time = i * step` in the child env.
   - Executes the body chunk (with `is_fn` passed through for `return` propagation).
-  - Pops the scope.
-- Outer globals (mutable variables, state machines) persist across iterations.
-- Body-local `let` bindings are fresh per iteration (scoped to the iteration frame).
-
-**Known limitation:** Simulate bodies can only access top-level (global) outer variables. Variables from enclosing block-scope locals are not accessible inside simulate bodies in the VM.
+- Outer mutable variables and state machines persist across iterations via env-chain assignment.
+- Body-local `let` bindings are fresh per iteration.
 
 ### Bytecode IR structures
 
 ```
 BytecodeProgram {
-  main: Chunk,                    // top-level instructions
-  functions: Vec<FunctionChunk>,  // one per fn decl, in source order
+  main: Chunk,                          // top-level instructions
+  functions: Vec<FunctionChunk>,        // one per fn decl, in source order
+  simulate_bodies: Vec<SimulateChunk>,  // one per simulate block, in source order
 }
 
 FunctionChunk {
@@ -825,14 +854,20 @@ FunctionChunk {
   arity: usize,
   chunk: Chunk,
 }
+
+SimulateChunk {
+  name: String,   // e.g. "simulate#0"
+  chunk: Chunk,
+}
 ```
 
 ### Instructions
 
 | Instruction | Meaning |
 |-------------|---------|
-| `LOAD_FUNCTION name` | Push reference to named function from function table |
-| `CALL name arg_count` | Call named function; `arg_count` arguments already on stack |
+| `LOAD_FUNCTION name` | Push `Value::BytecodeFunction { name, env: current_env }` — captures definition-site env |
+| `CALL arg_count` | Pop N args and callee from stack; invoke callee(args); push return value |
 | `DEFINE_STATE name variants=[...] transitions=[...]` | Register state machine metadata in VM registry; no stack effect |
 | `LOAD_STATE state.variant` | Validate and push `Value::StateValue { state_name, variant_name }` |
-| `TRANSITION var -> target` | Read var, validate transition edge, update var in-place |
+| `TRANSITION var -> target` | Read var, validate transition edge, update var in-place via env-chain |
+| `SIMULATE body_idx` | Pop step and duration; loop body_idx chunk floor(dur/step) times |
