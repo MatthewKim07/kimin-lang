@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
+use crate::env::{Env, EnvRef};
 use crate::error::{KiminError, RuntimeError};
 use crate::value::Value;
 
@@ -9,18 +11,22 @@ use crate::value::Value;
 #[derive(Debug, Clone)]
 struct RuntimeStateMachine {
     variants: HashSet<String>,
-    /// Declared allowed transitions as (from, to) pairs.
     transitions: HashSet<(String, String)>,
 }
 
 /// Minimal stack-based bytecode VM for Kimin.
 ///
-/// Executes `BytecodeProgram` produced by `BytecodeCompiler`. The tree-walk
-/// interpreter (`Interpreter`) remains the source of truth for `kimin run`.
-/// This VM is reachable via `kimin vm <file>`.
+/// Uses an `Env` chain (same type as the tree-walk interpreter) so that nested
+/// functions and simulate bodies can correctly capture their lexical environments.
+/// Globals are stored in a root `EnvRef`; each block / function call / simulate
+/// iteration creates a child env.
+///
+/// The tree-walk interpreter (`Interpreter`) remains the source of truth for
+/// `kimin run`. This VM is reachable via `kimin vm <file>`.
 pub struct Vm {
     program: BytecodeProgram,
-    globals: HashMap<String, Value>,
+    /// Root environment holding top-level (global) variables and functions.
+    global_env: EnvRef,
     /// State machine metadata registered by DefineState instructions.
     states: HashMap<String, RuntimeStateMachine>,
     output: Vec<String>,
@@ -30,7 +36,7 @@ impl Vm {
     pub fn new(program: BytecodeProgram) -> Self {
         Vm {
             program,
-            globals: HashMap::new(),
+            global_env: Env::new_global(),
             states: HashMap::new(),
             output: Vec::new(),
         }
@@ -39,8 +45,7 @@ impl Vm {
     pub fn run(&mut self) -> Result<(), KiminError> {
         let main = self.program.main.clone();
         let mut stack: Vec<Value> = Vec::new();
-        let mut locals: Vec<HashMap<String, Value>> = Vec::new();
-        self.execute_chunk(&main, &mut stack, &mut locals, false)?;
+        self.execute_chunk(&main, &mut stack, Rc::clone(&self.global_env), false)?;
         Ok(())
     }
 
@@ -49,14 +54,22 @@ impl Vm {
         self.output
     }
 
+    /// Execute `chunk` using `env` as the starting lexical environment.
+    ///
+    /// `env` is taken by value so that `BeginScope`/`EndScope` can cheaply
+    /// rebind `current_env` to a child or parent without touching the caller's Rc.
+    /// The caller's Rc reference count is incremented by one for the duration of
+    /// the call and decremented when `current_env` is reassigned or dropped.
     fn execute_chunk(
         &mut self,
         chunk: &Chunk,
         stack: &mut Vec<Value>,
-        locals: &mut Vec<HashMap<String, Value>>,
+        env: EnvRef,
         is_fn: bool,
     ) -> Result<Option<Value>, KiminError> {
+        let mut current_env = env;
         let mut ip = 0;
+
         while ip < chunk.instructions.len() {
             let instr = chunk.instructions[ip].clone();
             ip += 1;
@@ -172,83 +185,123 @@ impl Vm {
                     }
                 }
 
+                // ── Variable operations ───────────────────────────────────────────
+                //
+                // After M8F all loads and stores use the env chain so that free
+                // variables from enclosing scopes are found regardless of whether
+                // the compiler classified them as Local or Global.
+                //
+                // DefineGlobal: always binds in the root (global) env.
+                // DefineLocal:  binds in the innermost (current) env.
+                // LoadGlobal / LoadLocal: both walk the chain from current_env.
+                // StoreGlobal / StoreLocal: both walk the chain via assign_existing.
                 Instruction::DefineGlobal(name) => {
                     let val = pop(stack)?;
-                    self.globals.insert(name, val);
+                    self.global_env.borrow_mut().define(name, val);
                 }
                 Instruction::LoadGlobal(name) => {
-                    let val = self
-                        .globals
+                    let val = current_env
+                        .borrow()
                         .get(&name)
-                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?
-                        .clone();
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
                     stack.push(val);
                 }
                 Instruction::StoreGlobal(name) => {
                     let val = pop(stack)?;
-                    if !self.globals.contains_key(&name) {
+                    if !current_env.borrow_mut().assign_existing(&name, val) {
                         return Err(runtime_err(&format!("undefined variable '{}'", name)));
                     }
-                    self.globals.insert(name, val);
                 }
 
                 Instruction::DefineLocal(name) => {
                     let val = pop(stack)?;
-                    match locals.last_mut() {
-                        Some(frame) => {
-                            frame.insert(name, val);
-                        }
-                        None => return Err(runtime_err("DefineLocal outside any scope")),
-                    }
+                    current_env.borrow_mut().define(name, val);
                 }
                 Instruction::LoadLocal(name) => {
-                    let val = load_local(locals, &name)?;
+                    let val = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
                     stack.push(val);
                 }
                 Instruction::StoreLocal(name) => {
                     let val = pop(stack)?;
-                    store_local(locals, &name, val)?;
+                    if !current_env.borrow_mut().assign_existing(&name, val) {
+                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    }
                 }
 
+                // ── Scope management ─────────────────────────────────────────────
                 Instruction::BeginScope => {
-                    locals.push(HashMap::new());
+                    current_env = Env::new_child(Rc::clone(&current_env));
                 }
                 Instruction::EndScope => {
-                    locals.pop();
+                    let parent = current_env
+                        .borrow()
+                        .parent_ref()
+                        .ok_or_else(|| runtime_err("EndScope with no enclosing scope"))?;
+                    current_env = parent;
                 }
 
+                // ── Control flow ─────────────────────────────────────────────────
                 Instruction::Jump(target) => {
                     ip = target;
                 }
                 Instruction::JumpIfFalse(target) => {
-                    // Pop the condition — peek-without-pop leaks the condition onto the stack.
                     let val = pop(stack)?;
                     if !is_truthy(&val) {
                         ip = target;
                     }
                 }
 
+                // ── Functions ────────────────────────────────────────────────────
+
+                // Capture the current lexical environment into the function value.
                 Instruction::LoadFunction(name) => {
-                    stack.push(Value::BytecodeFunction(name));
+                    stack.push(Value::BytecodeFunction {
+                        name,
+                        env: Rc::clone(&current_env),
+                    });
                 }
 
+                // Named call: resolve the function value via the env chain, then
+                // call it using its captured environment as parent (lexical scope).
                 Instruction::Call { name, arg_count } => {
-                    let mut args: Vec<Value> = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(pop(stack)?);
-                    }
+                    let mut args: Vec<Value> = (0..arg_count)
+                        .map(|_| pop(stack))
+                        .collect::<Result<Vec<_>, _>>()?;
                     args.reverse();
 
-                    // Clone chunk data out of self.program before recursive call
-                    // to avoid holding an immutable borrow across the &mut self call.
-                    let (fn_chunk, fn_params, fn_arity) = {
-                        let fc = self
-                            .program
-                            .functions
-                            .iter()
-                            .find(|f| f.name == name)
-                            .ok_or_else(|| runtime_err(&format!("unknown function '{}'", name)))?;
-                        (fc.chunk.clone(), fc.params.clone(), fc.arity)
+                    // Resolve the function value through the current env chain.
+                    let fn_val = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("unknown function '{}'", name)))?;
+
+                    let (fn_chunk, fn_params, fn_arity, captured_env) = match fn_val {
+                        Value::BytecodeFunction {
+                            name: fn_name,
+                            env: captured_env,
+                        } => {
+                            // Clone chunk data out of self.program before the
+                            // recursive execute_chunk call to release the borrow.
+                            let (chunk, params, arity) = {
+                                let fc = self
+                                    .program
+                                    .functions
+                                    .iter()
+                                    .find(|f| f.name == fn_name)
+                                    .ok_or_else(|| {
+                                        runtime_err(&format!(
+                                            "unknown function chunk '{}'",
+                                            fn_name
+                                        ))
+                                    })?;
+                                (fc.chunk.clone(), fc.params.clone(), fc.arity)
+                            };
+                            (chunk, params, arity, captured_env)
+                        }
+                        _ => return Err(runtime_err(&format!("'{}' is not a function", name))),
                     };
 
                     if args.len() != fn_arity {
@@ -260,14 +313,15 @@ impl Vm {
                         )));
                     }
 
-                    let mut fn_frame: HashMap<String, Value> = HashMap::new();
+                    // Fresh call env parented to the function's captured env
+                    // (lexical scoping — NOT to the call-site env).
+                    let call_env = Env::new_child(captured_env);
                     for (param, val) in fn_params.iter().zip(args) {
-                        fn_frame.insert(param.clone(), val);
+                        call_env.borrow_mut().define(param.clone(), val);
                     }
-                    let mut fn_locals: Vec<HashMap<String, Value>> = vec![fn_frame];
-                    let mut fn_stack: Vec<Value> = Vec::new();
 
-                    let ret = self.execute_chunk(&fn_chunk, &mut fn_stack, &mut fn_locals, true)?;
+                    let mut fn_stack: Vec<Value> = Vec::new();
+                    let ret = self.execute_chunk(&fn_chunk, &mut fn_stack, call_env, true)?;
                     stack.push(ret.unwrap_or(Value::Nil));
                 }
 
@@ -280,13 +334,14 @@ impl Vm {
                         };
                         return Ok(Some(val));
                     }
-                    // Return at top level is a no-op (implicit return from main)
+                    // Return at top level is a no-op (main program ends at Halt).
                 }
 
                 Instruction::Halt => {
                     return Ok(None);
                 }
 
+                // ── State machines ───────────────────────────────────────────────
                 Instruction::DefineState {
                     name,
                     variants,
@@ -323,13 +378,12 @@ impl Vm {
                 }
 
                 Instruction::Transition { variable, target } => {
-                    // Read current value — extract owned data so borrow ends before mutation.
+                    // Read current value — end the borrow before calling borrow_mut.
                     let (state_name, current_variant) = {
-                        let current =
-                            get_var(&variable, locals, &self.globals).ok_or_else(|| {
-                                runtime_err(&format!("undefined state variable '{}'", variable))
-                            })?;
-                        match current {
+                        let val = current_env.borrow().get(&variable).ok_or_else(|| {
+                            runtime_err(&format!("undefined state variable '{}'", variable))
+                        })?;
+                        match val {
                             Value::StateValue {
                                 state_name,
                                 variant_name,
@@ -343,7 +397,7 @@ impl Vm {
                         }
                     };
 
-                    // Validate metadata — extract bools to release the immutable borrow.
+                    // Validate the transition edge (extract bools to release the borrow).
                     let (has_variant, valid_edge) = match self.states.get(&state_name) {
                         None => {
                             return Err(runtime_err(&format!(
@@ -375,9 +429,15 @@ impl Vm {
                         state_name,
                         variant_name: target,
                     };
-                    assign_var(&variable, new_val, locals, &mut self.globals)?;
+                    if !current_env.borrow_mut().assign_existing(&variable, new_val) {
+                        return Err(runtime_err(&format!(
+                            "undefined state variable '{}'",
+                            variable
+                        )));
+                    }
                 }
 
+                // ── Simulate ─────────────────────────────────────────────────────
                 Instruction::Simulate { body_idx } => {
                     let step = match pop(stack)? {
                         Value::Number(n) => n,
@@ -394,8 +454,7 @@ impl Vm {
                         return Err(runtime_err("simulate duration cannot be negative"));
                     }
 
-                    // Clone body chunk to release the immutable borrow on self.program
-                    // before the recursive execute_chunk call.
+                    // Clone body chunk to release the borrow on self.program.
                     let body_chunk = self
                         .program
                         .simulate_bodies
@@ -408,19 +467,17 @@ impl Vm {
 
                     let iterations = (duration / step).floor() as usize;
                     for i in 0..iterations {
-                        let current_time = i as f64 * step;
-                        // Fresh scope per iteration: outer globals persist, locals are reset.
-                        locals.push(HashMap::new());
-                        locals
-                            .last_mut()
-                            .unwrap()
-                            .insert("time".to_string(), Value::Number(current_time));
+                        // Each iteration env is a child of the CURRENT env so the
+                        // body can read/write block-local and function-local outer
+                        // variables (fixes the M8E block-local capture limitation).
+                        let iter_env = Env::new_child(Rc::clone(&current_env));
+                        iter_env
+                            .borrow_mut()
+                            .define("time".to_string(), Value::Number(i as f64 * step));
 
                         let mut iter_stack: Vec<Value> = Vec::new();
                         let ret =
-                            self.execute_chunk(&body_chunk, &mut iter_stack, locals, is_fn)?;
-
-                        locals.pop();
+                            self.execute_chunk(&body_chunk, &mut iter_stack, iter_env, is_fn)?;
 
                         // Propagate a return that originated inside a function.
                         if ret.is_some() {
@@ -445,29 +502,6 @@ fn pop(stack: &mut Vec<Value>) -> Result<Value, KiminError> {
     stack.pop().ok_or_else(|| runtime_err("stack underflow"))
 }
 
-fn load_local(locals: &[HashMap<String, Value>], name: &str) -> Result<Value, KiminError> {
-    for frame in locals.iter().rev() {
-        if let Some(v) = frame.get(name) {
-            return Ok(v.clone());
-        }
-    }
-    Err(runtime_err(&format!("undefined local variable '{}'", name)))
-}
-
-fn store_local(
-    locals: &mut [HashMap<String, Value>],
-    name: &str,
-    val: Value,
-) -> Result<(), KiminError> {
-    for frame in locals.iter_mut().rev() {
-        if frame.contains_key(name) {
-            frame.insert(name.to_string(), val);
-            return Ok(());
-        }
-    }
-    Err(runtime_err(&format!("undefined local variable '{}'", name)))
-}
-
 fn const_to_val(c: &Constant) -> Value {
     match c {
         Constant::Number(n) => Value::Number(*n),
@@ -489,38 +523,4 @@ fn runtime_err(msg: &str) -> KiminError {
     KiminError::Runtime(RuntimeError {
         msg: msg.to_string(),
     })
-}
-
-/// Look up a variable: check locals (innermost first), then globals.
-fn get_var(
-    name: &str,
-    locals: &[HashMap<String, Value>],
-    globals: &HashMap<String, Value>,
-) -> Option<Value> {
-    for frame in locals.iter().rev() {
-        if let Some(v) = frame.get(name) {
-            return Some(v.clone());
-        }
-    }
-    globals.get(name).cloned()
-}
-
-/// Update a variable in-place: nearest local first, then global.
-fn assign_var(
-    name: &str,
-    value: Value,
-    locals: &mut [HashMap<String, Value>],
-    globals: &mut HashMap<String, Value>,
-) -> Result<(), KiminError> {
-    for frame in locals.iter_mut().rev() {
-        if frame.contains_key(name) {
-            frame.insert(name.to_string(), value);
-            return Ok(());
-        }
-    }
-    if globals.contains_key(name) {
-        globals.insert(name.to_string(), value);
-        return Ok(());
-    }
-    Err(runtime_err(&format!("undefined state variable '{}'", name)))
 }
