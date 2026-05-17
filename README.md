@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 8G** (complete): dynamic/computed function call execution in the bytecode VM. Built on top of Milestones 8A–8F.
+This repository contains **Milestone 9A** (complete): compound assignment operators (`+=`, `-=`, `*=`, `/=`). Built on top of Milestones 8A–8G.
 
 ---
 
@@ -117,7 +117,7 @@ This repository contains **Milestone 8G** (complete): dynamic/computed function 
   - `let mut x: Number = 0` declares a mutable variable
   - `x = x + 1` reassigns it — type must be preserved; Number promotes to unit at assignment site
   - State variables must use `transition` — `door = Door.open` is a `TypeError`
-  - Assignment is a statement, not an expression; no `+=` or compound operators
+  - Assignment is a statement, not an expression
 - **`simulate` + mutation** — mutable outer variables update across iterations:
   ```
   let mut position: meters = 0
@@ -216,6 +216,18 @@ This repository contains **Milestone 8G** (complete): dynamic/computed function 
   - `kimin vm examples/vm_dynamic_calls.kimin` → `77`
   - `kimin vm examples/vm_dynamic_adder.kimin` → `5`
   - Tree-walk interpreter unchanged; `kimin run` unaffected
+
+### Milestone 9A
+- **Compound assignment operators** (`+=`, `-=`, `*=`, `/=`): unit-safe in-place mutation for `let mut` variables
+  - New tokens: `PlusEqual`, `MinusEqual`, `StarEqual`, `SlashEqual`
+  - New AST node: `Stmt::CompoundAssign { name, op: CompoundAssignOp, value, span }`
+  - Type checker enforces unit rules: `meters += meters` → ok; `meters += Number` → `TypeError`; `meters *= Number` → ok (scaling)
+  - State variables → `TypeError: state variables must be changed with transition, not compound assignment`
+  - Immutable variables → `TypeError: cannot assign to immutable variable`
+  - Tree-walk interpreter: load current value → eval rhs → binary op → `assign_existing`
+  - Bytecode compiler desugars to `Load/op/Store` — no new VM instructions needed
+  - Both `kimin run` and `kimin vm` support compound assignment
+  - Works inside `simulate` bodies, blocks, and functions
 
 ---
 
@@ -477,7 +489,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-627 tests pass as of Milestone 8G (including M8G audit hardening).
+668 tests pass as of Milestone 9A.
 
 ---
 
@@ -500,7 +512,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (627 tests)
+  tests.rs        Unit tests (668 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -539,6 +551,10 @@ examples/
   vm_closure_capture.kimin
   vm_dynamic_calls.kimin
   vm_dynamic_adder.kimin
+  compound_assignment.kimin
+  compound_assignment_units.kimin
+  simulate_compound_assignment.kimin
+  compound_assignment_errors.kimin
 ```
 
 ---
@@ -560,7 +576,7 @@ examples/
 - No `5 meters` expression-literal syntax — units can only appear as type annotations
 - No unit conversion between time units — `minutes` and `seconds` are distinct, non-interchangeable types
 - `simulate` body type-checked once; known-variant tracking after transitions inside the body does not carry across iterations statically
-- No compound assignment operators (`+=`, `-=`, `*=`, `/=`)
+- Compound assignment unit rules: `d += 10` where `d: meters` → `TypeError`; right-hand side must match the variable's unit type for `+=`/`-=`
 - No mutable function parameters — parameters are always immutable
 - No general loops (`while`, `for`) — only `simulate` blocks
 - Bytecode VM: `Rc` reference cycles on recursive closures (a function stored in its own captured env) — memory leak; programs run-and-exit so no crash

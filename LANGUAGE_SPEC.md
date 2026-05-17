@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 8G
+# Kimin Language Specification — Milestone 9A
 
-This document describes the syntax and semantics implemented through Milestone 8G.
+This document describes the syntax and semantics implemented through Milestone 9A.
 
 ---
 
@@ -74,7 +74,11 @@ let  mut  if  else  print  fn  return  true  false  state  transition  simulate 
 | `<=`  | Less than or equal |
 | `>`   | Greater than |
 | `>=`  | Greater than or equal |
-| `=`   | Assignment (in `let`) |
+| `=`   | Assignment (in `let` and `x = expr`) |
+| `+=`  | Compound add-assign |
+| `-=`  | Compound subtract-assign |
+| `*=`  | Compound multiply-assign |
+| `/=`  | Compound divide-assign |
 | `:`   | Type annotation separator |
 | `->`  | Return type annotation |
 | `(`   | Open group |
@@ -478,7 +482,6 @@ d = 20   // ok — Number promotes to meters
 - The type of `expr` must equal the declared type of `x`, or be `Number` when `x` has a unit type.
 - Assignment to a state-typed variable is a `TypeError` — use `transition`.
 - Assignment is a statement only; it does not produce a value.
-- No compound assignment operators (`+=`, `-=`, etc.).
 
 **Error examples:**
 ```kimin
@@ -515,6 +518,71 @@ simulate duration step dt {
 }
 // 2 / 4 / 6
 ```
+
+---
+
+### 4.10 Compound Assignment Operators
+
+Compound assignment provides shorthand for read-modify-write on `let mut` variables:
+
+```kimin
+let mut x: Number = 10
+x += 5    // x is now 15
+x -= 3    // x is now 12
+x *= 2    // x is now 24
+x /= 4    // x is now 6
+```
+
+**Syntax:**
+
+```
+compound_assign_stmt = IDENT ("+=" | "-=" | "*=" | "/=") expr
+```
+
+**Static rules:**
+
+- `x` must be declared with `let mut` — assigning to an immutable variable is a `TypeError`.
+- `x` must not be a state-typed variable — use `transition` instead.
+- The type of the expression `x op rhs` is computed as if `x` were the left operand and `rhs` were the right operand of the corresponding binary operator:
+  - `x += rhs`: applies `+` rules — `meters += meters` is valid; `meters += Number` is a `TypeError`
+  - `x -= rhs`: applies `-` rules — same unit required
+  - `x *= rhs`: applies `*` rules — `meters *= Number` is valid (scalar scaling)
+  - `x /= rhs`: applies `/` rules — `meters /= Number` is valid (scalar division)
+- The result type must be compatible with `x`'s declared type (same as the assignment compatibility rule).
+
+**Error examples:**
+```kimin
+let x = 10
+x += 1   // TypeError: cannot assign to immutable variable 'x'
+
+let mut d: meters = 0
+d += 10  // TypeError: operator '+' expected same-unit + same-unit, got meters + Number
+
+state Door { open closed transition open -> closed }
+let mut door: Door = Door.open
+door += 1  // TypeError: state variables must be changed with transition, not compound assignment
+```
+
+**Simulate interaction:**
+
+Compound assignment works inside `simulate` bodies and updates the outer mutable variable:
+
+```kimin
+let mut position: meters = 0
+let velocity: meters = 10
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  position += velocity
+  print(position)
+}
+// 10 / 20 / 30
+```
+
+**Bytecode lowering:**
+
+The bytecode compiler desugars `x += rhs` into `LoadGlobal/Local x` + `compile(rhs)` + `Add` + `StoreGlobal/Local x`. No new VM instructions are needed.
 
 ---
 
@@ -728,7 +796,7 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 ```
 program         = stmt* EOF
 stmt            = state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
-                | print_stmt | if_stmt | block | expr_stmt
+                | compound_assign_stmt | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
 inner_transition = "transition" IDENT "->" IDENT
@@ -737,7 +805,8 @@ simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
 return_stmt     = "return" expr?
 let_stmt        = "let" "mut"? IDENT (":" type_ann)? "=" expr
-assign_stmt     = IDENT "=" expr    (only when IDENT followed by single "=", not "==")
+assign_stmt          = IDENT "=" expr    (only when IDENT followed by single "=", not "==")
+compound_assign_stmt = IDENT ("+=" | "-=" | "*=" | "/=") expr
 print_stmt      = "print" "(" expr ")"
 if_stmt         = "if" expr block ("else" block)?
 block           = "{" stmt* "}"
@@ -771,11 +840,11 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR and VM (Milestones 8A–8G)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–9A)
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–8G)
+### What the bytecode VM executes (M8A–9A)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -783,6 +852,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - Named function declarations and calls (including recursion)
 - **Closures and free-variable capture** (M8F): `Value::BytecodeFunction { name, env }` carries its definition-site environment; functions close over enclosing locals and parameters
 - **Dynamic/computed calls** (M8G): `make_getter()()` and `make_adder(2)(3)` both work; callee expression evaluated before arguments; any function-valued expression can be called
+- **Compound assignment** (M9A): `x += expr`, `x -= expr`, `x *= expr`, `x /= expr` — desugared to `Load/op/Store` sequence; no new instructions
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk
