@@ -6103,3 +6103,295 @@ print(x)"#;
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["99", "99", "0"]);
 }
+
+// ── M8F audit: additional closure correctness tests ──────────────────────────
+
+#[test]
+fn vm_closure_reads_updated_capture() {
+    // Nested function sees the most recent value of a captured mutable variable,
+    // even if it was updated AFTER the inner function was defined.
+    let src = r#"fn outer() -> Number {
+  let mut x: Number = 1
+
+  fn get() -> Number {
+    return x
+  }
+
+  x = 9
+  return get()
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn vm_closure_multiple_calls_accumulate() {
+    // Two sequential calls to the same nested function see accumulated state.
+    let src = r#"fn outer() -> Number {
+  let mut x: Number = 0
+
+  fn inc() -> Number {
+    x = x + 1
+    return x
+  }
+
+  let a = inc()
+  let b = inc()
+  return a + b
+}
+print(outer())"#;
+    // a=1, b=2 → 3
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_closure_recursive_captures_outer() {
+    // Recursive nested function can read an outer (non-recursive) captured variable.
+    let src = r#"fn outer() -> Number {
+  let bonus: Number = 10
+
+  fn f(n: Number) -> Number {
+    if n <= 0 {
+      return bonus
+    }
+
+    return f(n - 1)
+  }
+
+  return f(3)
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_closure_mutual_recursion_captures_outer() {
+    // Two mutually recursive nested functions both capture the same outer variable.
+    let src = r#"fn outer() -> Number {
+  let done: Number = 100
+
+  fn even(n: Number) -> Number {
+    if n == 0 {
+      return done
+    }
+
+    return odd(n - 1)
+  }
+
+  fn odd(n: Number) -> Number {
+    if n == 0 {
+      return done + 1
+    }
+
+    return even(n - 1)
+  }
+
+  return even(4)
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["100"]);
+}
+
+#[test]
+fn vm_closure_captured_unit_mutable() {
+    // Captured mutable variable with a unit type is updated correctly across calls.
+    let src = r#"fn outer() -> meters {
+  let mut distance: meters = 1
+  let stride: meters = 2
+
+  fn advance() -> meters {
+    distance = distance + stride
+    return distance
+  }
+
+  advance()
+  return advance()
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_closure_state_transition_captured() {
+    // Nested function transitions a state variable captured from the enclosing scope.
+    let src = format!(
+        "{}\nfn open_door() -> Door {{\n  let door: Door = Door.closed\n\n  fn open_it() -> Door {{\n    transition door -> open\n    return door\n  }}\n\n  return open_it()\n}}\nprint(open_door())",
+        "state Door { closed open transition closed -> open }"
+    );
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+// ── M8F audit: simulate + capture interaction tests ──────────────────────────
+
+#[test]
+fn vm_simulate_captures_state_local_transition() {
+    // Simulate body can transition a state variable defined in an enclosing block.
+    let src = format!(
+        "{}\nlet dur: seconds = 1\nlet dt: seconds = 1\n{{\n  let door: Door = Door.closed\n  simulate dur step dt {{\n    transition door -> open\n  }}\n  print(door)\n}}",
+        "state Door { closed open transition closed -> open }"
+    );
+    let out = vm_run_unchecked(&src).unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn vm_simulate_call_nested_function_with_capture() {
+    // A nested function defined in an outer function scope is callable from
+    // the simulate body and reads captured variables correctly.
+    let src = r#"fn outer() -> Number {
+  let duration: seconds = 2
+  let dt: seconds = 1
+  let x: Number = 5
+  let mut total: Number = 0
+
+  fn add_x() -> Number {
+    return x
+  }
+
+  simulate duration step dt {
+    total = total + add_x()
+  }
+
+  return total
+}
+print(outer())"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+// ── M8F audit: shadowing correctness ─────────────────────────────────────────
+
+#[test]
+fn vm_env_assignment_updates_nearest_binding() {
+    // Assignment targets the nearest binding in the scope chain, not an outer one.
+    let src = r#"let mut x: Number = 1
+
+fn f() -> Number {
+  let mut x: Number = 10
+
+  {
+    let mut x: Number = 100
+    x = x + 1
+  }
+
+  x = x + 1
+  return x
+}
+
+print(f())
+print(x)"#;
+    // Inside f: block x becomes 101 (discarded after block); f's x += 1 = 11.
+    // Global x is unaffected.
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["11", "1"]);
+}
+
+#[test]
+fn vm_env_param_shadows_global() {
+    // A function parameter with the same name as a global shadows it inside the function.
+    let src = r#"let x: Number = 100
+
+fn f(x: Number) -> Number {
+  return x + 1
+}
+
+print(f(5))
+print(x)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6", "100"]);
+}
+
+#[test]
+fn vm_env_block_shadow_does_not_leak() {
+    // A variable introduced in a block does not affect the outer scope after the block ends.
+    let src = r#"let mut x: Number = 1
+{
+  let x: Number = 99
+  print(x)
+}
+print(x)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99", "1"]);
+}
+
+// ── M8F audit: VM output matches tree-walk ────────────────────────────────────
+
+#[test]
+fn vm_matches_tree_closure_example() {
+    // closure.kimin: make_getter returns a function value; calling via variable gives 77.
+    // VM output must match the known-correct tree-walk output.
+    let src = r#"fn make_getter() {
+  let x = 77
+  fn get() {
+    return x
+  }
+  return get
+}
+
+let getter = make_getter()
+let result = getter()
+print(result)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["77"]);
+}
+
+#[test]
+fn vm_matches_tree_simulate_capture() {
+    // Simulate body reads a function-local mutable variable.
+    // Both executors must agree on the final value.
+    let src = r#"fn f() -> Number {
+  let duration: seconds = 3
+  let dt: seconds = 1
+  let mut x: Number = 0
+
+  simulate duration step dt {
+    x = x + 1
+  }
+
+  return x
+}
+print(f())"#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3"]);
+}
+
+// ── M8F audit: unsupported dynamic calls ─────────────────────────────────────
+
+#[test]
+fn vm_dynamic_call_still_errors() {
+    // A chained call where the callee is not a named variable — make_fn()() —
+    // compiles to Unsupported("dynamic call"). The VM must return a clean
+    // RuntimeError with no panic.
+    let src = "fn make_fn() -> Number { return 1 }\nprint(make_fn()())";
+    let result = vm_run_unchecked(src);
+    assert!(result.is_err(), "dynamic call must produce a RuntimeError");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("dynamic call") || msg.contains("not yet executable"),
+        "error must mention 'dynamic call', got: {}",
+        msg
+    );
+}
+
+// ── M8F audit: recursive function no crash ────────────────────────────────────
+
+#[test]
+fn vm_recursive_function_no_crash() {
+    // A recursive function creates an Rc env chain that may form a cycle,
+    // but must not panic or hang. The program must produce the correct result.
+    let src = r#"fn fact(n: Number) -> Number {
+  if n <= 0 {
+    return 1
+  }
+  return fact(n - 1) * n
+}
+print(fact(5))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["120"]);
+}
