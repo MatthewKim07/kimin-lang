@@ -42,18 +42,42 @@ impl Lexer {
         let c = self.advance();
 
         let kind = match c {
-            '+' => TokenKind::Plus,
+            '+' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::PlusEqual
+                } else {
+                    TokenKind::Plus
+                }
+            }
             ':' => TokenKind::Colon,
             '-' => {
                 if self.peek() == Some('>') {
                     self.advance();
                     TokenKind::Arrow
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::MinusEqual
                 } else {
                     TokenKind::Minus
                 }
             }
-            '*' => TokenKind::Star,
-            '/' => TokenKind::Slash,
+            '*' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::StarEqual
+                } else {
+                    TokenKind::Star
+                }
+            }
+            '/' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::SlashEqual
+                } else {
+                    TokenKind::Slash
+                }
+            }
             '(' => TokenKind::LParen,
             ')' => TokenKind::RParen,
             '{' => TokenKind::LBrace,

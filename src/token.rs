@@ -26,6 +26,12 @@ pub enum TokenKind {
     Star,
     Slash,
 
+    // Compound assignment operators
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+
     // Comparison and logical operators
     Bang,
     BangEq,
