@@ -167,4 +167,10 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// A while loop: `while <condition> { ... }`
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
 }

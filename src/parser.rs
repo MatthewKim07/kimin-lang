@@ -9,9 +9,10 @@ use crate::token::{Span, Token, TokenKind};
 ///
 /// Grammar (Milestone 7A):
 ///   program         → stmt* EOF
-///   stmt            → state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt
+///   stmt            → state_decl | transition_stmt | simulate_stmt | while_stmt | fn_decl | return_stmt
 ///                   | let_stmt | assign_stmt | print_stmt | if_stmt | block | expr_stmt
 ///   simulate_stmt   → "simulate" expr "step" expr "{" stmt* "}"
+///   while_stmt      → "while" expr "{" stmt* "}"
 ///   state_decl      → "state" IDENT "{" (variant_decl | transition_decl)* "}"
 ///   variant_decl    → IDENT
 ///   transition_decl → "transition" IDENT "->" IDENT
@@ -64,6 +65,8 @@ impl Parser {
             self.parse_transition_stmt()
         } else if matches!(self.current_kind(), TokenKind::Simulate) {
             self.parse_simulate_stmt()
+        } else if matches!(self.current_kind(), TokenKind::While) {
+            self.parse_while()
         } else if matches!(self.current_kind(), TokenKind::Fn) {
             self.parse_fn_decl()
         } else if matches!(self.current_kind(), TokenKind::Return) {
@@ -180,6 +183,23 @@ impl Parser {
         Ok(Stmt::Transition {
             variable,
             target,
+            span,
+        })
+    }
+
+    fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `while`
+
+        if !self.can_start_expr() {
+            return Err(self.error("expected condition expression after 'while'"));
+        }
+        let condition = self.parse_expr()?;
+        let body = self.parse_fn_body()?;
+
+        Ok(Stmt::While {
+            condition,
+            body,
             span,
         })
     }

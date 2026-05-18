@@ -206,6 +206,7 @@ impl Lexer {
             "simulate" => TokenKind::Simulate,
             "step" => TokenKind::Step,
             "mut" => TokenKind::Mut,
+            "while" => TokenKind::While,
             _ => TokenKind::Ident(s),
         }
     }

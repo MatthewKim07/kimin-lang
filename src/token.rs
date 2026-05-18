@@ -19,6 +19,7 @@ pub enum TokenKind {
     Simulate,
     Step,
     Mut,
+    While,
 
     // Arithmetic operators
     Plus,
