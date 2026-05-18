@@ -277,6 +277,28 @@ impl BytecodeCompiler {
                 });
             }
 
+            Stmt::While {
+                condition, body, ..
+            } => {
+                // loop_start: condition → JumpIfFalse(loop_end) → BeginScope → body → EndScope → Jump(loop_start) → loop_end
+                let loop_start = self.chunk.instructions.len();
+                self.compile_expr(condition)?;
+                let jump_if_false_idx = self.chunk.emit(Instruction::JumpIfFalse(0));
+
+                self.chunk.emit(Instruction::BeginScope);
+                self.locals_stack.push(HashSet::new());
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+                self.locals_stack.pop();
+                self.chunk.emit(Instruction::EndScope);
+
+                self.chunk.emit(Instruction::Jump(loop_start));
+
+                let loop_end = self.chunk.instructions.len();
+                self.chunk.instructions[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
