@@ -250,6 +250,10 @@ pub struct TypeChecker {
     current_fn_return_type: Option<Type>,
     /// Registry of declared state machines. Populated by state declaration pre-pass.
     states: HashMap<String, StateMachineType>,
+    /// Number of while loops currently enclosing the statement being checked.
+    /// `break`/`continue` require this to be > 0.
+    /// Reset to 0 on entry to a function or simulate body.
+    loop_depth: usize,
 }
 
 impl TypeChecker {
@@ -258,6 +262,7 @@ impl TypeChecker {
             env: TypeEnv::new(),
             current_fn_return_type: None,
             states: HashMap::new(),
+            loop_depth: 0,
         }
     }
 
@@ -664,6 +669,10 @@ impl TypeChecker {
                     None => Type::Unknown,
                 });
 
+                // Functions cannot inherit outer break/continue context.
+                let saved_loop_depth = self.loop_depth;
+                self.loop_depth = 0;
+
                 self.env.push_scope();
                 for param in params {
                     let param_ty = self.resolve_annotation(&param.ty, param.span)?;
@@ -672,6 +681,7 @@ impl TypeChecker {
                 let result = self.check_stmt_list(body);
                 self.env.pop_scope();
 
+                self.loop_depth = saved_loop_depth;
                 self.current_fn_return_type = saved_ret;
                 result
             }
@@ -724,10 +734,34 @@ impl TypeChecker {
                         col: span.col,
                     });
                 }
+                self.loop_depth += 1;
                 self.env.push_scope();
                 let result = self.check_stmt_list(body);
                 self.env.pop_scope();
+                self.loop_depth -= 1;
                 result
+            }
+
+            Stmt::Break { span } => {
+                if self.loop_depth == 0 {
+                    return Err(TypeError {
+                        msg: "'break' used outside of a while loop".into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::Continue { span } => {
+                if self.loop_depth == 0 {
+                    return Err(TypeError {
+                        msg: "'continue' used outside of a while loop".into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
             }
 
             Stmt::Simulate {
@@ -768,10 +802,16 @@ impl TypeChecker {
                     });
                 }
 
+                // Simulate bodies cannot inherit outer break/continue context.
+                let saved_loop_depth = self.loop_depth;
+                self.loop_depth = 0;
+
                 self.env.push_scope();
                 self.env.define("time".to_string(), time_ty);
                 let result = self.check_stmt_list(body);
                 self.env.pop_scope();
+
+                self.loop_depth = saved_loop_depth;
                 result
             }
         }

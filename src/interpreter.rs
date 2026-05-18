@@ -5,11 +5,17 @@ use crate::env::{Env, EnvRef};
 use crate::error::RuntimeError;
 use crate::value::{FunctionValue, Value};
 
-/// Internal control-flow signal used to propagate `return` through nested statements.
-/// This is not a runtime error — function calls catch Return; top-level run() turns it into an error.
+/// Internal control-flow signal used to propagate `return`, `break`, and `continue`
+/// through nested statements.
+/// - Normal:   keep executing statements (was previously named `Continue`)
+/// - Return:   propagate return value out to the enclosing function call
+/// - Break:    exit the nearest enclosing while loop
+/// - Continue: skip remainder of current while-body iteration
 enum ExecFlow {
-    Continue,
+    Normal,
     Return(Value),
+    Break,
+    Continue,
 }
 
 pub struct Interpreter {
@@ -26,9 +32,15 @@ impl Interpreter {
     /// Execute a program (top-level statement list). A Return reaching here is a runtime error.
     pub fn run(&mut self, stmts: &[Stmt]) -> Result<(), RuntimeError> {
         match self.exec_stmts(stmts)? {
-            ExecFlow::Continue => Ok(()),
+            ExecFlow::Normal => Ok(()),
             ExecFlow::Return(_) => Err(RuntimeError {
                 msg: "cannot return outside of a function".into(),
+            }),
+            ExecFlow::Break => Err(RuntimeError {
+                msg: "'break' used outside of a while loop".into(),
+            }),
+            ExecFlow::Continue => Err(RuntimeError {
+                msg: "'continue' used outside of a while loop".into(),
             }),
         }
     }
@@ -37,15 +49,15 @@ impl Interpreter {
         self.env.borrow().get(name)
     }
 
-    /// Run a list of statements, propagating any Return upward immediately.
+    /// Run a list of statements, propagating Return/Break/Continue upward immediately.
     fn exec_stmts(&mut self, stmts: &[Stmt]) -> Result<ExecFlow, RuntimeError> {
         for stmt in stmts {
             match self.exec_stmt(stmt)? {
-                ExecFlow::Continue => {}
-                flow @ ExecFlow::Return(_) => return Ok(flow),
+                ExecFlow::Normal => {}
+                flow => return Ok(flow),
             }
         }
-        Ok(ExecFlow::Continue)
+        Ok(ExecFlow::Normal)
     }
 
     fn exec_stmt(&mut self, stmt: &Stmt) -> Result<ExecFlow, RuntimeError> {
@@ -53,7 +65,7 @@ impl Interpreter {
             Stmt::Let { name, value, .. } => {
                 let v = self.eval_expr(value)?;
                 self.env.borrow_mut().define(name.clone(), v);
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
             Stmt::Assign { name, value, .. } => {
                 let v = self.eval_expr(value)?;
@@ -63,7 +75,7 @@ impl Interpreter {
                         msg: format!("undefined variable '{}'", name),
                     });
                 }
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
             Stmt::CompoundAssign {
                 name, op, value, ..
@@ -85,23 +97,23 @@ impl Interpreter {
                         msg: format!("undefined variable '{}'", name),
                     });
                 }
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
             Stmt::Print { value } => {
                 let v = self.eval_expr(value)?;
                 println!("{}", v);
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
             Stmt::Expr(expr) => {
                 self.eval_expr(expr)?;
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
             Stmt::Block(stmts) => {
                 let outer = Rc::clone(&self.env);
                 self.env = Env::new_child(Rc::clone(&self.env));
                 let result = self.exec_stmts(stmts);
                 self.env = outer; // restore even if execution errored
-                result
+                result // propagates Normal, Return, Break, Continue
             }
             Stmt::If {
                 cond,
@@ -110,11 +122,11 @@ impl Interpreter {
             } => {
                 let cond_val = self.eval_expr(cond)?;
                 if is_truthy(&cond_val) {
-                    self.exec_stmt(then_block)
+                    self.exec_stmt(then_block) // propagates all flows including Break/Continue
                 } else if let Some(else_b) = else_block {
                     self.exec_stmt(else_b)
                 } else {
-                    Ok(ExecFlow::Continue)
+                    Ok(ExecFlow::Normal)
                 }
             }
             Stmt::FnDecl {
@@ -134,7 +146,7 @@ impl Interpreter {
                 self.env
                     .borrow_mut()
                     .define(name.clone(), Value::Function(func));
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
             Stmt::Return { value, .. } => {
                 let v = match value {
@@ -146,7 +158,7 @@ impl Interpreter {
 
             Stmt::StateDecl { .. } => {
                 // State machine declarations are purely static — no runtime work.
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
 
             Stmt::While {
@@ -173,12 +185,18 @@ impl Interpreter {
                     let result = self.exec_stmts(body);
                     self.env = outer;
                     match result? {
-                        ExecFlow::Continue => {}
+                        ExecFlow::Normal => {}
+                        ExecFlow::Break => break,
+                        ExecFlow::Continue => continue,
                         flow @ ExecFlow::Return(_) => return Ok(flow),
                     }
                 }
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
+
+            Stmt::Break { .. } => Ok(ExecFlow::Break),
+
+            Stmt::Continue { .. } => Ok(ExecFlow::Continue),
 
             Stmt::Simulate {
                 duration,
@@ -234,11 +252,14 @@ impl Interpreter {
                     let result = self.exec_stmts(body);
                     self.env = outer;
                     match result? {
-                        ExecFlow::Continue => {}
+                        ExecFlow::Normal => {}
                         flow @ ExecFlow::Return(_) => return Ok(flow),
+                        // Break/Continue should not escape simulate (typechecker prevents it),
+                        // but propagate Return-like so they don't silently disappear.
+                        ExecFlow::Break | ExecFlow::Continue => {}
                     }
                 }
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
 
             Stmt::Transition {
@@ -273,7 +294,7 @@ impl Interpreter {
                         msg: format!("undefined variable '{}'", variable),
                     });
                 }
-                Ok(ExecFlow::Continue)
+                Ok(ExecFlow::Normal)
             }
         }
     }
@@ -367,8 +388,14 @@ impl Interpreter {
         self.env = outer; // restore even if body errored
 
         match result? {
-            ExecFlow::Continue => Ok(Value::Nil),
+            ExecFlow::Normal => Ok(Value::Nil),
             ExecFlow::Return(v) => Ok(v),
+            ExecFlow::Break | ExecFlow::Continue => {
+                // Typechecker prevents break/continue from escaping function bodies.
+                Err(RuntimeError {
+                    msg: "break/continue escaped function boundary (compiler bug)".into(),
+                })
+            }
         }
     }
 }
