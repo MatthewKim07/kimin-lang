@@ -7141,3 +7141,469 @@ fn vm_compound_assign_matches_tree_walk() {
     assert_eq!(tree_out, Some(Value::Number(20.0)));
     assert_eq!(vm_out, vec!["20"]);
 }
+
+// ── Milestone 9A audit: hardening tests ───────────────────────────────────────
+
+// --- lexer: operator disambiguation after adding compound-assign tokens ---
+
+#[test]
+fn lex_slash_comment_still_works() {
+    // // must still be parsed as a line comment, not /= or two slashes
+    let kinds = tokenize("// this is a comment");
+    assert_eq!(kinds, vec![TokenKind::Eof]);
+}
+
+#[test]
+fn lex_division_still_works() {
+    // / without = must still be Slash, not SlashEqual
+    let kinds = tokenize("x / y");
+    assert_eq!(kinds[1], TokenKind::Slash);
+}
+
+#[test]
+fn lex_plus_still_works_without_equal() {
+    let kinds = tokenize("x + y");
+    assert_eq!(kinds[1], TokenKind::Plus);
+}
+
+#[test]
+fn lex_minus_still_works_without_equal() {
+    let kinds = tokenize("x - y");
+    assert_eq!(kinds[1], TokenKind::Minus);
+}
+
+#[test]
+fn lex_star_still_works_without_equal() {
+    let kinds = tokenize("x * y");
+    assert_eq!(kinds[1], TokenKind::Star);
+}
+
+#[test]
+fn lex_arrow_still_works() {
+    // -> must still be Arrow; the - branch must check > before =
+    let kinds = tokenize("->");
+    assert_eq!(kinds[0], TokenKind::Arrow);
+    assert_eq!(kinds[1], TokenKind::Eof);
+}
+
+// --- parser: disambiguation and error cases ---
+
+#[test]
+fn parse_compound_assign_missing_rhs_error() {
+    // x += with no expression after is a parse error
+    let src = "let mut x = 0\nx +=";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_regular_assignment_unaffected() {
+    // x = expr must still parse as Stmt::Assign, not CompoundAssign
+    let src = "let mut x = 0\nx = 5";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::Assign { .. }));
+}
+
+#[test]
+fn parse_equality_unaffected_from_compound() {
+    // x == y must not be confused with compound assign; parses as expression
+    let src = "let x = 5\nif x == 5 { print(x) }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 2);
+}
+
+#[test]
+fn parse_compound_assign_self_referential() {
+    // x += x is valid syntax — variable appears on both sides
+    let src = "let mut x = 5\nx += x";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[1],
+        crate::ast::Stmt::CompoundAssign {
+            op: crate::ast::CompoundAssignOp::Add,
+            ..
+        }
+    ));
+}
+
+// --- typechecker: broader coverage ---
+
+#[test]
+fn type_compound_assign_text_concat_ok() {
+    // Text + Text → Text; s += suffix must typecheck
+    assert!(check("let mut s = \"hello\"\ns += \" world\"").is_ok());
+}
+
+#[test]
+fn type_compound_assign_position_velocity_dt_ok() {
+    // Same-unit +=: pos: meters, vel: meters → pos += vel ok
+    let src = "let mut pos: meters = 0\nlet vel: meters = 5\npos += vel";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_compound_assign_inside_simulate_ok() {
+    let src = r#"let mut pos: meters = 0
+let vel: meters = 10
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    pos += vel
+}"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_compound_assign_inside_closure_ok() {
+    // Compound assign on a function-local mut variable must typecheck
+    let src = r#"fn bump(n: Number) -> Number {
+  let mut r = n
+  r += 1
+  return r
+}
+let x = bump(5)"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_compound_assign_captured_mutable_ok() {
+    // A function body may compound-assign an outer-scope mut global
+    let src = r#"let mut total = 0
+fn add_five() -> Number {
+  total += 5
+  return total
+}
+let r = add_five()"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_compound_assign_immutable_capture_error() {
+    // Compound assign to an outer-scope immutable variable must error
+    let src = r#"let x = 10
+fn bump() -> Number {
+  x += 1
+  return x
+}
+bump()"#;
+    let err = check(src).unwrap_err();
+    assert!(err.to_string().contains("immutable"));
+}
+
+// --- interpreter: edge cases ---
+
+#[test]
+fn interp_compound_rhs_evaluated_before_store() {
+    // x += x: RHS must snapshot current x before storing
+    // x=5 → x += x → x should be 10, not 15
+    let interp = run("let mut x = 5\nx += x").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn interp_compound_closure_capture() {
+    // Compound assign in a function body updates the captured global via env chain
+    let src = r#"let mut total = 0
+fn add_five() -> Number {
+  total += 5
+  return total
+}
+add_five()
+add_five()"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("total"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn interp_compound_body_local_simulate_fresh() {
+    // Simulate body local mut is fresh each iteration; outer mut accumulates
+    let src = r#"let mut total = 0
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    let mut local = 0
+    local += 1
+    total += local
+}"#;
+    let interp = run(src).unwrap();
+    // local resets each iteration → 1 per iteration; total = 3
+    assert_eq!(interp.get_var("total"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_compound_text_concat() {
+    let interp = run("let mut s = \"hello\"\ns += \" world\"").unwrap();
+    assert_eq!(
+        interp.get_var("s"),
+        Some(Value::Str("hello world".to_string()))
+    );
+}
+
+// --- bytecode: instruction order and function/simulate body lowering ---
+
+#[test]
+fn bytecode_compound_add_instruction_order() {
+    // x += 5: LoadGlobal(x) must precede Add, which must precede StoreGlobal(x)
+    let prog = compile_prog("let mut x = 0\nx += 5");
+    let instrs = &prog.main.instructions;
+    let load_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::LoadGlobal(n) if n == "x"))
+        .expect("missing LoadGlobal x");
+    let add_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Add))
+        .expect("missing Add");
+    let store_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::StoreGlobal(n) if n == "x"))
+        .expect("missing StoreGlobal x");
+    assert!(load_pos < add_pos, "LoadGlobal x must come before Add");
+    assert!(add_pos < store_pos, "Add must come before StoreGlobal x");
+}
+
+#[test]
+fn bytecode_compound_in_function_body() {
+    // Compound assign inside a function body lowers to LoadLocal/StoreLocal
+    let src = r#"fn bump(n: Number) -> Number {
+  let mut r = n
+  r += 1
+  return r
+}
+let x = bump(10)"#;
+    let prog = compile_prog(src);
+    let fn_chunk = prog
+        .functions
+        .iter()
+        .find(|f| f.name == "bump")
+        .expect("bump not found");
+    let instrs = &fn_chunk.chunk.instructions;
+    assert!(
+        instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::LoadLocal(n) if n == "r")),
+        "missing LoadLocal r"
+    );
+    assert!(
+        instrs.iter().any(|i| matches!(i, Instruction::Add)),
+        "missing Add"
+    );
+    assert!(
+        instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::StoreLocal(n) if n == "r")),
+        "missing StoreLocal r"
+    );
+}
+
+#[test]
+fn bytecode_compound_in_simulate_body() {
+    // Compound assign inside simulate body compiles into the simulate chunk
+    let src = r#"let mut pos: meters = 0
+let vel: meters = 10
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    pos += vel
+}"#;
+    let prog = compile_prog(src);
+    assert!(
+        !prog.simulate_bodies.is_empty(),
+        "simulate body must be compiled"
+    );
+    let sim_instrs = &prog.simulate_bodies[0].chunk.instructions;
+    assert!(
+        sim_instrs.iter().any(|i| matches!(i, Instruction::Add)),
+        "missing Add in simulate body"
+    );
+    assert!(
+        sim_instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::StoreGlobal(n) if n == "pos")),
+        "missing StoreGlobal pos in simulate body"
+    );
+}
+
+// --- VM: execution correctness ---
+
+#[test]
+fn vm_compound_function_local() {
+    let src = r#"fn bump(n: Number) -> Number {
+  let mut r = n
+  r += 1
+  return r
+}
+print(bump(10))"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn vm_compound_closure_capture() {
+    // Compound assign through env chain updates the global in the VM
+    let src = r#"let mut total = 0
+fn add_five() -> Number {
+  total += 5
+  return total
+}
+add_five()
+add_five()
+print(total)"#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_compound_dynamic_counter() {
+    // Multiple top-level compound assigns accumulate correctly
+    let src = "let mut c = 0\nc += 1\nc += 1\nc += 1\nprint(c)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_compound_text_concat() {
+    let out = vm_run("let mut s = \"hello\"\ns += \" world\"\nprint(s)").unwrap();
+    assert_eq!(out, vec!["hello world"]);
+}
+
+#[test]
+fn vm_compound_units_run_and_vm() {
+    // VM must execute compound assign on unit-typed variable and match tree-walk var value
+    let src = "let mut d: meters = 0\nlet inc: meters = 10\nd += inc";
+    // Tree-walk: check variable value
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("d"), Some(Value::Number(10.0)));
+    // VM: check print output
+    let vm_out = vm_run("let mut d: meters = 0\nlet inc: meters = 10\nd += inc\nprint(d)").unwrap();
+    assert_eq!(vm_out, vec!["10"]);
+}
+
+// --- unit system: minus and compound unit ---
+
+#[test]
+fn compound_assignment_unit_minus_same_unit_ok() {
+    // d -= inc where both are meters → ok (same as + rule)
+    let src = "let mut d: meters = 20\nlet inc: meters = 5\nd -= inc";
+    assert!(check(src).is_ok());
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("d"), Some(Value::Number(15.0)));
+}
+
+#[test]
+fn compound_assignment_velocity_dt_compound_unit_ok() {
+    // vel: meters, scale: Number → vel *= scale is ok (scaling rule)
+    // pos: meters += vel → ok (same-unit add)
+    let src = r#"let mut pos: meters = 0
+let mut vel: meters = 10
+vel *= 2
+pos += vel"#;
+    assert!(check(src).is_ok());
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("pos"), Some(Value::Number(20.0)));
+    assert_eq!(interp.get_var("vel"), Some(Value::Number(20.0)));
+}
+
+// --- state: compound assign does not interfere with state machinery ---
+
+#[test]
+fn transition_still_works_after_compound_assignment_feature() {
+    let src = r#"state Door { open closed transition open -> closed }
+let mut door: Door = Door.open
+let mut x = 0
+x += 5
+transition door -> closed"#;
+    assert!(check(src).is_ok());
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn compound_assign_state_as_rhs_errors() {
+    // Number += State value is always a TypeError
+    let src = r#"state Door { open closed transition open -> closed }
+let door: Door = Door.open
+let mut x = 0
+x += door"#;
+    let err = check(src).unwrap_err();
+    assert!(err.to_string().contains("operator '+'") || err.to_string().contains("State"));
+}
+
+// --- simulate: body isolation and state coexistence ---
+
+#[test]
+fn simulate_compound_body_local_fresh() {
+    // A body-local mut reset to 0 each iteration; only outer accumulator persists
+    let src = r#"let mut acc = 0
+let dur: seconds = 4
+let dt: seconds = 1
+simulate dur step dt {
+    let mut scratch = 10
+    scratch -= 5
+    acc += scratch
+}"#;
+    // scratch = 10-5=5 each iter, 4 iters → acc=20
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("acc"), Some(Value::Number(20.0)));
+    let vm_out = vm_run(
+        r#"let mut acc = 0
+let dur: seconds = 4
+let dt: seconds = 1
+simulate dur step dt {
+    let mut scratch = 10
+    scratch -= 5
+    acc += scratch
+}
+print(acc)"#,
+    )
+    .unwrap();
+    assert_eq!(vm_out, vec!["20"]);
+}
+
+#[test]
+fn simulate_compound_with_state_transition() {
+    // Compound assign and state transition may coexist in the same simulate body
+    let src = r#"state Light { off on transition off -> on }
+let mut light: Light = Light.off
+let mut ticks = 0
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    ticks += 1
+}
+transition light -> on"#;
+    assert!(check(src).is_ok());
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("ticks"), Some(Value::Number(3.0)));
+}
+
+// --- output matching: tree-walk and VM agree ---
+
+#[test]
+fn vm_matches_tree_compound_assignment_units() {
+    let src = r#"let mut d: meters = 0
+let inc: meters = 25
+d += inc
+d -= inc
+d += inc
+d *= 2
+print(d)"#;
+    // 0+25=25, 25-25=0, 0+25=25, 25*2=50
+    assert_eq!(vm_run(src).unwrap(), vec!["50"]);
+}
+
+#[test]
+fn vm_matches_tree_simulate_compound_assignment() {
+    let src = r#"let mut pos: meters = 0
+let vel: meters = 10
+let dur: seconds = 3
+let dt: seconds = 1
+simulate dur step dt {
+    pos += vel
+}
+print(pos)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["30"]);
+}
