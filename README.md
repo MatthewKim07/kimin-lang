@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 9B** (complete): while loops. Built on top of Milestones 8A–8G and 9A.
+This repository contains **Milestone 9C** (complete): break and continue. Built on top of Milestones 8A–8G, 9A, and 9B.
 
 ---
 
@@ -238,7 +238,7 @@ This repository contains **Milestone 9B** (complete): while loops. Built on top 
   - `TokenKind::While` keyword; `whiley` still lexes as an identifier
   - Bytecode lowering uses existing jump instructions: condition → `JUMP_IF_FALSE(loop_end)` → `BEGIN_SCOPE` → body → `END_SCOPE` → `JUMP(loop_start)` — no new VM instructions
   - Both `kimin run` and `kimin vm` support while loops
-  - No `break`, `continue`, or `for` loops yet
+  - `break` and `continue` are supported (see Milestone 9C)
 
 ```kimin
 let mut x: Number = 0
@@ -248,6 +248,29 @@ while x < 5 {
   x += 1
 }
 // prints 0 1 2 3 4
+```
+
+### Milestone 9C
+- **`break`**: exits the nearest enclosing while loop immediately
+- **`continue`**: skips the rest of the current while-body iteration and re-evaluates the condition
+  - Both are only valid inside a `while` loop; using either outside a while loop → `TypeError`
+  - `break`/`continue` do not cross function or simulate boundaries (resetting loop context on entry)
+  - Nested loops: `break`/`continue` always target the **nearest** enclosing while
+  - `return` inside a while loop still exits the enclosing function (takes precedence over loop control)
+  - No labeled break/continue; no break values; no `for` loops
+  - Bytecode: both desugar to `EndScope` instructions (to unwind nested block scopes) followed by a `Jump` — no new VM instructions required
+  - Both `kimin run` and `kimin vm` support break/continue
+
+```kimin
+let mut x: Number = 0
+
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+    print(x)
+}
+// prints 1 2 4 5 6 7
 ```
 
 ---
@@ -510,7 +533,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-784 tests pass as of Milestone 9B audit hardening.
+842 tests pass as of Milestone 9C.
 
 ---
 
@@ -533,7 +556,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (784 tests)
+  tests.rs        Unit tests (842 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -600,7 +623,7 @@ examples/
 - Compound assignment unit rules: `d += 10` where `d: meters` → `TypeError`; right-hand side must match the variable's unit type for `+=`/`-=`
 - No mutable function parameters — parameters are always immutable
 - No `for` loops or range-based iteration — only `while` and `simulate`
-- No `break` or `continue` in while loops
+- No labeled `break`/`continue`; `break` and `continue` always target the nearest enclosing while loop
 - Bytecode VM: `Rc` reference cycles on recursive closures (a function stored in its own captured env) — memory leak; programs run-and-exit so no crash
 - State transitions inside function bodies (in the VM) modify the function's local parameter copy, not the caller's variable — matches tree-walk semantics
 

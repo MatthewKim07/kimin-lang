@@ -56,7 +56,7 @@ foo  bar_baz  _x  score1
 ### 1.5 Keywords
 
 ```
-let  mut  if  else  while  print  fn  return  true  false  state  transition  simulate  step
+let  mut  if  else  while  break  continue  print  fn  return  true  false  state  transition  simulate  step
 ```
 
 ### 1.6 Operators and Delimiters
@@ -495,7 +495,54 @@ No new VM instructions are required — `Jump` and `JumpIfFalse` already handle 
 
 ---
 
-### 4.10 Mutable Variables and Assignment
+### 4.10 Break and Continue
+
+`break` and `continue` are statement-only forms that control while-loop iteration.
+
+```kimin
+while <Bool-expr> {
+  ...
+  break     // exits the nearest enclosing while loop
+  continue  // skips the rest of the body and re-evaluates the condition
+  ...
+}
+```
+
+Example:
+
+```kimin
+let mut x: Number = 0
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+    print(x)
+}
+// prints: 1 2 4 5 6 7
+```
+
+Static rules:
+- `break` is valid only inside a `while` loop body. Using `break` outside any while → `TypeError`.
+- `continue` is valid only inside a `while` loop body. Using `continue` outside any while → `TypeError`.
+- Both `break` and `continue` target the **nearest** enclosing while loop. There are no labels.
+- `break`/`continue` do not cross function boundaries: a function body resets the loop context, so `break` inside a function but outside any while in that function is a `TypeError`, even if the function is called from inside a while.
+- `break`/`continue` do not cross simulate boundaries: `break` directly inside a simulate body (not inside an inner while) is a `TypeError`, even if the simulate is inside an outer while.
+- Neither `break` nor `continue` takes a value or expression.
+
+Runtime rules:
+- `break`: exits the nearest while loop and resumes execution after the loop.
+- `continue`: skips the remaining statements in the current loop body and immediately re-evaluates the while condition for the next iteration.
+- `return` inside a while body still propagates out to the enclosing function, regardless of any `break`/`continue` in the same body.
+
+Bytecode lowering:
+- Both `break` and `continue` emit `EndScope` instructions to unwind all scopes opened inside the current loop body (including any nested if/block scopes), then emit a `Jump` instruction.
+- `break` jumps to the instruction after the loop's `EndScope`+`Jump` (the loop exit point).
+- `continue` jumps back to the start of the condition evaluation (before `JumpIfFalse`).
+- No new VM instructions are required.
+
+---
+
+### 4.11 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
 
@@ -567,7 +614,7 @@ simulate duration step dt {
 
 ---
 
-### 4.11 Compound Assignment Operators
+### 4.12 Compound Assignment Operators
 
 Compound assignment provides shorthand for read-modify-write on `let mut` variables:
 
@@ -841,7 +888,7 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 
 ```
 program         = stmt* EOF
-stmt            = state_decl | transition_stmt | simulate_stmt | while_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
+stmt            = state_decl | transition_stmt | simulate_stmt | while_stmt | break_stmt | continue_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
                 | compound_assign_stmt | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
@@ -849,6 +896,8 @@ inner_transition = "transition" IDENT "->" IDENT
 transition_stmt = "transition" IDENT "->" IDENT
 simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 while_stmt      = "while" expr "{" stmt* "}"
+break_stmt      = "break"
+continue_stmt   = "continue"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
 return_stmt     = "return" expr?
 let_stmt        = "let" "mut"? IDENT (":" type_ann)? "=" expr
