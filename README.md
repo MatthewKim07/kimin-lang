@@ -510,7 +510,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-747 tests pass as of Milestone 9B.
+784 tests pass as of Milestone 9B audit hardening.
 
 ---
 
@@ -533,7 +533,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (747 tests)
+  tests.rs        Unit tests (784 tests)
 examples/
   hello.kimin
   arithmetic.kimin

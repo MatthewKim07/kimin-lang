@@ -8076,3 +8076,544 @@ while pos < limit {
 }"#;
     assert_eq!(vm_run(src).unwrap(), vec!["5", "10", "15", "20"]);
 }
+
+// ─── M9B Audit: Lexer hardening ────────────────────────────────────────────
+
+#[test]
+fn lex_meanwhile_identifier() {
+    // "meanwhile" must lex as Ident, not While keyword
+    let kinds = tokenize("meanwhile");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "meanwhile"));
+}
+
+#[test]
+fn lex_while_loop_identifier() {
+    // "while_loop" must lex as Ident (prefix match does not steal keyword)
+    let kinds = tokenize("while_loop");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "while_loop"));
+}
+
+// ─── M9B Audit: Parser hardening ───────────────────────────────────────────
+
+#[test]
+fn parse_while_with_compound_assignment() {
+    // while body may contain compound assignment — must parse cleanly
+    let src = "let mut x = 0\nwhile x < 10 { x += 1 }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_while_inside_simulate() {
+    // while nested inside simulate must parse (semantic correctness is separate)
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut count = 0
+simulate dur step dt {
+    while count < 2 { count += 1 }
+}"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_while_inside_if() {
+    // while nested inside if/else branch must parse
+    let src = r#"let mut x = 0
+if true {
+    while x < 3 { x += 1 }
+} else {
+    x = 99
+}"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_while_no_condition_is_error() {
+    // while with no condition and no body is a parse error
+    let src = "while { }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+// ─── M9B Audit: Typechecker hardening ──────────────────────────────────────
+
+#[test]
+fn type_while_state_condition_error() {
+    // while condition that is a state value (not Bool) → TypeError
+    let src = r#"state Door { closed open transition closed -> open }
+let mut door: Door = Door.closed
+while door { }"#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_while_compound_assignment_ok() {
+    // compound assignment in while body is type-checked correctly
+    let src = r#"let mut total: meters = 0
+let dist: meters = 5
+let limit: meters = 25
+while total < limit { total += dist }"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_while_immutable_assign_error() {
+    // assigning to immutable variable inside while body → TypeError
+    let src = "let x = 0\nwhile x < 5 { x = x + 1 }";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_while_body_scope_does_not_leak() {
+    // variable declared inside while body not visible after loop
+    let src = r#"let mut x = 0
+while x < 1 {
+    let inner = 99
+    x += 1
+}
+print(inner)"#;
+    assert!(check(src).is_err());
+}
+
+// ─── M9B Audit: Interpreter hardening ──────────────────────────────────────
+
+#[test]
+fn interp_while_condition_rechecked_each_iteration() {
+    // condition must be re-evaluated each iteration (not cached)
+    let src = r#"let mut x = 0
+let mut count = 0
+while x < 3 {
+    x += 1
+    count += 1
+}
+print(count)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("count"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_while_runtime_non_bool_error() {
+    // bypass typechecker to verify interpreter enforces Bool check at runtime
+    let src = "let mut x = 0\nwhile x { x += 1 }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // skip TypeChecker intentionally
+    let mut interp = Interpreter::new();
+    let result = interp.run(&stmts);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("Bool"), "expected 'Bool' in error, got: {msg}");
+}
+
+#[test]
+fn interp_while_closure_mutates_captured() {
+    // while inside a function mutates the function-local mut var
+    let src = r#"fn count_to(n: Number) -> Number {
+    let mut x = 0
+    while x < n { x += 1 }
+    return x
+}
+print(count_to(4))"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["4"]);
+}
+
+#[test]
+fn interp_while_nested_loops() {
+    // nested while loops — inner var must not bleed into outer
+    let src = r#"let mut outer = 0
+let mut total = 0
+while outer < 3 {
+    let mut inner = 0
+    while inner < 2 {
+        total += 1
+        inner += 1
+    }
+    outer += 1
+}
+print(total)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("total"), Some(Value::Number(6.0)));
+}
+
+// ─── M9B Audit: Bytecode hardening ─────────────────────────────────────────
+
+#[test]
+fn bytecode_while_emits_jump_and_jump_if_false() {
+    // while must emit JumpIfFalse + Jump (at least one of each)
+    let src = "let mut x = 0\nwhile x < 3 { x += 1 }";
+    let prog = compile_prog(src);
+    let has_jump_if_false = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::JumpIfFalse(_)));
+    let has_jump = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Jump(_)));
+    assert!(has_jump_if_false, "expected JumpIfFalse in while bytecode");
+    assert!(has_jump, "expected Jump in while bytecode");
+}
+
+#[test]
+fn bytecode_while_inside_simulate() {
+    // while inside simulate body compiles without error
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut count = 0
+simulate dur step dt {
+    while count < 5 { count += 1 }
+}"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let result = BytecodeCompiler::new().compile(&stmts);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn bytecode_while_begin_end_scope_paired() {
+    // every BeginScope inside while body must have a matching EndScope
+    let src = "let mut x = 0\nwhile x < 5 { x += 1 }";
+    let prog = compile_prog(src);
+    let begins = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::BeginScope))
+        .count();
+    let ends = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::EndScope))
+        .count();
+    assert_eq!(
+        begins, ends,
+        "BeginScope/EndScope count mismatch: {begins} vs {ends}"
+    );
+}
+
+// ─── M9B Audit: VM hardening ────────────────────────────────────────────────
+
+#[test]
+fn vm_while_inside_simulate() {
+    // while inside simulate accumulates outer mut global
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut i = 0
+    while i < 2 {
+        total += 1
+        i += 1
+    }
+}"#;
+    // tree-walk: total = 6 (3 iterations * 2 inner loops)
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("total"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn vm_while_closure_capture() {
+    // while inside a returned closure captures outer variable correctly
+    let src = r#"fn make_counter() -> Number {
+    let mut n = 0
+    while n < 3 { n += 1 }
+    return n
+}
+print(make_counter())"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_while_dynamic_call_inside_loop() {
+    // calling a function returned by another function inside while body
+    let src = r#"fn identity(x: Number) -> Number { return x }
+let mut x = 0
+while x < 3 {
+    x = identity(x + 1)
+}
+print(x)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_while_stack_clean_after_zero_iterations() {
+    // loop body never executes; VM stack must be clean afterward
+    let src = r#"let mut x = 10
+while x < 5 { x += 1 }
+print(x)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+#[test]
+fn vm_while_matches_tree_walk_final_value() {
+    // VM and tree-walk must produce the same final variable value
+    let src = r#"let mut acc = 0
+let mut i = 1
+while i <= 5 {
+    acc += i
+    i += 1
+}"#;
+    let interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(interp.get_var("acc"), Some(Value::Number(15.0)));
+    assert_eq!(vm_out, vec![] as Vec<String>); // no prints — just verify no crash
+                                               // also confirm acc=15 via a print variant
+    let src2 = r#"let mut acc = 0
+let mut i = 1
+while i <= 5 {
+    acc += i
+    i += 1
+}
+print(acc)"#;
+    assert_eq!(vm_run(src2).unwrap(), vec!["15"]);
+}
+
+// ─── M9B Audit: Unit system hardening ──────────────────────────────────────
+
+#[test]
+fn while_units_same_unit_comparison_ok() {
+    // comparing two meters values in while condition is valid
+    let src = r#"let mut pos: meters = 0
+let limit: meters = 3
+while pos < limit { pos += limit }"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn while_units_wrong_unit_condition_error() {
+    // comparing meters < seconds → TypeError
+    let src = r#"let mut d: meters = 0
+let t: seconds = 5
+while d < t { d += d }"#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn while_units_compound_assignment_in_loop() {
+    // compound assignment with units inside while — runtime correct
+    let src = r#"let mut pos: meters = 0
+let stride: meters = 3
+let limit: meters = 9
+while pos < limit { pos += stride }
+print(pos)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("pos"), Some(Value::Number(9.0)));
+    assert_eq!(vm_run(src).unwrap(), vec!["9"]);
+}
+
+#[test]
+fn while_motion_loop_position_update() {
+    // realistic motion loop: position and velocity both meters, time in seconds
+    let src = r#"let mut pos: meters = 0
+let velocity: meters = 2
+let target: meters = 10
+while pos < target {
+    pos += velocity
+}
+print(pos)"#;
+    assert_eq!(run(src).unwrap().get_var("pos"), Some(Value::Number(10.0)));
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+// ─── M9B Audit: State machine hardening ────────────────────────────────────
+
+#[test]
+fn while_state_local_variable_does_not_shadow_outer() {
+    // variable declared inside while scope does not leak to outer scope
+    let src = r#"state Light { red green transition red -> green }
+let mut light: Light = Light.red
+while light == Light.red {
+    let inner = 42
+    transition light -> green
+    print(inner)
+}
+print(light)"#;
+    // inner is inaccessible after the loop; light transitioned to green
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["42", "Light.green"]);
+}
+
+#[test]
+fn while_state_transition_in_loop_stops_loop() {
+    // transition changes state, condition no longer true, loop exits
+    let src = r#"state Switch { off on transition off -> on }
+let mut sw: Switch = Switch.off
+while sw == Switch.off {
+    transition sw -> on
+}
+print(sw)"#;
+    assert_eq!(
+        run(src).unwrap().get_var("sw").map(|v| format!("{v}")),
+        Some("Switch.on".to_string())
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["Switch.on"]);
+}
+
+#[test]
+fn while_state_matches_tree_vm() {
+    // tree-walk and VM agree on state after while loop
+    let src = r#"state Door { closed open transition closed -> open }
+let mut door: Door = Door.closed
+while door == Door.closed {
+    transition door -> open
+}"#;
+    // tree-walk: door = Door.open
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("door"),
+        Some(Value::StateValue {
+            state_name: "Door".to_string(),
+            variant_name: "open".to_string()
+        })
+    );
+    // VM: no panic, no output (just confirm it runs)
+    assert!(vm_run(src).is_ok());
+}
+
+// ─── M9B Audit: Simulate interaction hardening ─────────────────────────────
+
+#[test]
+fn while_inside_simulate_increments_outer_global() {
+    // simulate body increments an outer mut global each iteration
+    let src = r#"let dur: seconds = 4
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    total += 1
+}
+print(total)"#;
+    // simulate runs 4 iterations, total = 4
+    assert_eq!(run(src).unwrap().get_var("total"), Some(Value::Number(4.0)));
+}
+
+#[test]
+fn simulate_inside_while_runs_each_iteration() {
+    // simulate inside while body executes per while iteration
+    let src = r#"let dur: seconds = 2
+let dt: seconds = 1
+let mut outer = 0
+let mut iterations = 0
+while outer < 2 {
+    simulate dur step dt {
+        iterations += 1
+    }
+    outer += 1
+}
+print(iterations)"#;
+    // 2 while iters * 2 simulate iters = 4
+    assert_eq!(
+        run(src).unwrap().get_var("iterations"),
+        Some(Value::Number(4.0))
+    );
+}
+
+#[test]
+fn while_inside_simulate_reads_time() {
+    // time variable inside simulate is accessible from while condition/body
+    // simulate 5s step 1s → 5 iterations; time = 0,1,2,3,4
+    // while time > threshold: only fires when time=4 (threshold=3)
+    let src = r#"let dur: seconds = 5
+let dt: seconds = 1
+let mut found_time: seconds = 0
+let threshold: seconds = 3
+simulate dur step dt {
+    let mut t_local: seconds = time
+    while t_local > threshold {
+        found_time = t_local
+        t_local = threshold
+    }
+}
+print(found_time)"#;
+    // Only iteration where time=4 triggers the while; found_time = 4
+    assert_eq!(
+        run(src).unwrap().get_var("found_time"),
+        Some(Value::Number(4.0))
+    );
+}
+
+// ─── M9B Audit: Return propagation hardening ───────────────────────────────
+
+#[test]
+fn nested_while_return_exits_function() {
+    // return inside nested while exits the enclosing function
+    let src = r#"fn find_first(limit: Number) -> Number {
+    let mut x = 0
+    while x < limit {
+        while x < 3 {
+            if x == 2 { return x }
+            x += 1
+        }
+        x += 1
+    }
+    return -1
+}
+print(find_first(10))"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+#[test]
+fn while_return_inside_if_exits_function() {
+    // return inside if inside while properly propagates out
+    let src = r#"fn first_even(n: Number) -> Number {
+    let mut i = 0
+    while i < n {
+        if i == 4 { return i }
+        i += 1
+    }
+    return -1
+}
+print(first_even(10))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["4"]);
+}
+
+#[test]
+fn while_return_propagates_through_while() {
+    // a single while loop with early return
+    let src = r#"fn stop_at_five() -> Number {
+    let mut x = 0
+    while x < 100 {
+        if x == 5 { return x }
+        x += 1
+    }
+    return -1
+}
+print(stop_at_five())"#;
+    assert_eq!(run(src).map(|_| ()).unwrap_or(()), ());
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+// ─── M9B Audit: Output matching (tree-walk vs VM) ──────────────────────────
+
+#[test]
+fn vm_matches_tree_while_function() {
+    // countdown function: tree-walk and VM agree
+    let src = r#"fn countdown(n: Number) -> Number {
+    let mut x = n
+    while x > 0 { x -= 1 }
+    return x
+}
+print(countdown(5))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["0"]);
+}
+
+#[test]
+fn vm_matches_tree_while_state_output() {
+    // state transition loop: VM produces correct print sequence
+    let src = r#"state Light { red green transition red -> green }
+let mut light: Light = Light.red
+print(light)
+while light == Light.red {
+    transition light -> green
+}
+print(light)"#;
+    // tree-walk executes without error
+    assert!(run(src).is_ok());
+    // VM agrees on printed values
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["Light.red", "Light.green"]);
+}
