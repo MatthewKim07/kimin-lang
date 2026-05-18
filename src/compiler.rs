@@ -6,6 +6,18 @@ use crate::bytecode::{
 };
 use crate::error::CompileError;
 
+/// Tracks context for the nearest enclosing while loop during bytecode compilation.
+/// Used to patch break/continue Jump placeholders and to compute scope-unwind depth.
+struct LoopContext {
+    /// Indices of placeholder Jump instructions emitted by `break` statements.
+    break_jumps: Vec<usize>,
+    /// Indices of placeholder Jump instructions emitted by `continue` statements.
+    continue_jumps: Vec<usize>,
+    /// `locals_stack.len()` at the point BEFORE the while body's BeginScope was emitted.
+    /// Used to compute how many EndScope instructions to emit before a break/continue jump.
+    scope_depth_before_body: usize,
+}
+
 pub struct BytecodeCompiler {
     chunk: Chunk,
     /// Names defined at global scope (depth 0). Used to correctly classify variable
@@ -19,6 +31,8 @@ pub struct BytecodeCompiler {
     functions: Vec<FunctionChunk>,
     /// Simulate body chunks collected during compilation, in source order.
     simulate_bodies: Vec<SimulateChunk>,
+    /// Stack of enclosing while-loop contexts, used to patch break/continue jumps.
+    loop_stack: Vec<LoopContext>,
 }
 
 impl BytecodeCompiler {
@@ -29,6 +43,7 @@ impl BytecodeCompiler {
             locals_stack: Vec::new(),
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -42,6 +57,7 @@ impl BytecodeCompiler {
             locals_stack: vec![param_scope],
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -58,6 +74,7 @@ impl BytecodeCompiler {
             locals_stack: vec![time_scope],
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -280,16 +297,36 @@ impl BytecodeCompiler {
             Stmt::While {
                 condition, body, ..
             } => {
-                // loop_start: condition → JumpIfFalse(loop_end) → BeginScope → body → EndScope → Jump(loop_start) → loop_end
+                // Layout:
+                //   @loop_start: <condition>
+                //                JumpIfFalse @loop_end
+                //                BeginScope
+                //                <body>           ← break emits EndScope(s)+Jump(@loop_end)
+                //                                 ← continue emits EndScope(s)+Jump(@loop_start)
+                //                EndScope
+                //                Jump @loop_start
+                //   @loop_end:
                 let loop_start = self.chunk.instructions.len();
                 self.compile_expr(condition)?;
                 let jump_if_false_idx = self.chunk.emit(Instruction::JumpIfFalse(0));
 
+                // Record scope depth BEFORE body BeginScope so break/continue know
+                // how many EndScope instructions to emit to fully unwind to loop boundary.
+                let scope_depth_before_body = self.locals_stack.len();
                 self.chunk.emit(Instruction::BeginScope);
                 self.locals_stack.push(HashSet::new());
+
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    scope_depth_before_body,
+                });
+
                 for s in body {
                     self.compile_stmt(s)?;
                 }
+
+                let ctx = self.loop_stack.pop().expect("loop_stack underflow");
                 self.locals_stack.pop();
                 self.chunk.emit(Instruction::EndScope);
 
@@ -297,6 +334,59 @@ impl BytecodeCompiler {
 
                 let loop_end = self.chunk.instructions.len();
                 self.chunk.instructions[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
+
+                // Patch all break jumps to point to loop_end (past the EndScope+Jump).
+                for idx in ctx.break_jumps {
+                    self.chunk.instructions[idx] = Instruction::Jump(loop_end);
+                }
+                // Patch all continue jumps to point to loop_start (re-evaluate condition).
+                for idx in ctx.continue_jumps {
+                    self.chunk.instructions[idx] = Instruction::Jump(loop_start);
+                }
+            }
+
+            Stmt::Break { .. } => {
+                // Emit EndScope for every scope opened inside (and including) the while body.
+                // Then emit a Jump placeholder that will be patched to loop_end.
+                let scope_depth_before_body = {
+                    let ctx = self
+                        .loop_stack
+                        .last()
+                        .expect("break outside loop (should have been caught by typechecker)");
+                    ctx.scope_depth_before_body
+                };
+                let scopes_to_close = self.locals_stack.len() - scope_depth_before_body;
+                for _ in 0..scopes_to_close {
+                    self.chunk.emit(Instruction::EndScope);
+                }
+                let jump_idx = self.chunk.emit(Instruction::Jump(0)); // patched later
+                self.loop_stack
+                    .last_mut()
+                    .expect("loop_stack empty")
+                    .break_jumps
+                    .push(jump_idx);
+            }
+
+            Stmt::Continue { .. } => {
+                // Emit EndScope for every scope opened inside (and including) the while body.
+                // Then emit a Jump placeholder that will be patched to loop_start.
+                let scope_depth_before_body = {
+                    let ctx = self
+                        .loop_stack
+                        .last()
+                        .expect("continue outside loop (should have been caught by typechecker)");
+                    ctx.scope_depth_before_body
+                };
+                let scopes_to_close = self.locals_stack.len() - scope_depth_before_body;
+                for _ in 0..scopes_to_close {
+                    self.chunk.emit(Instruction::EndScope);
+                }
+                let jump_idx = self.chunk.emit(Instruction::Jump(0)); // patched later
+                self.loop_stack
+                    .last_mut()
+                    .expect("loop_stack empty")
+                    .continue_jumps
+                    .push(jump_idx);
             }
 
             Stmt::Simulate {
