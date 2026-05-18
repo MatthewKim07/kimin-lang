@@ -2,7 +2,7 @@
 
 An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
 
-This repository contains **Milestone 9A** (complete): compound assignment operators (`+=`, `-=`, `*=`, `/=`). Built on top of Milestones 8A–8G.
+This repository contains **Milestone 9B** (complete): while loops. Built on top of Milestones 8A–8G and 9A.
 
 ---
 
@@ -228,6 +228,27 @@ This repository contains **Milestone 9A** (complete): compound assignment operat
   - Bytecode compiler desugars to `Load/op/Store` — no new VM instructions needed
   - Both `kimin run` and `kimin vm` support compound assignment
   - Works inside `simulate` bodies, blocks, and functions
+
+### Milestone 9B
+- **While loops** (`while <condition> { <body> }`): general-purpose conditional loop
+  - Condition must have type `Bool`; any other type → `TypeError: while condition must be Bool, got …`
+  - Body has a fresh lexical scope per iteration; body-local `let` bindings do not leak
+  - Mutations to outer `let mut` variables persist across iterations
+  - `return` inside a while body propagates out of the enclosing function
+  - `TokenKind::While` keyword; `whiley` still lexes as an identifier
+  - Bytecode lowering uses existing jump instructions: condition → `JUMP_IF_FALSE(loop_end)` → `BEGIN_SCOPE` → body → `END_SCOPE` → `JUMP(loop_start)` — no new VM instructions
+  - Both `kimin run` and `kimin vm` support while loops
+  - No `break`, `continue`, or `for` loops yet
+
+```kimin
+let mut x: Number = 0
+
+while x < 5 {
+  print(x)
+  x += 1
+}
+// prints 0 1 2 3 4
+```
 
 ---
 
@@ -489,7 +510,7 @@ LexError at line 3, column 7: unexpected character '@'
 cargo test
 ```
 
-704 tests pass as of Milestone 9A (post-audit hardening).
+747 tests pass as of Milestone 9B.
 
 ---
 
@@ -512,7 +533,7 @@ src/
   bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
   compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
   disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (704 tests)
+  tests.rs        Unit tests (747 tests)
 examples/
   hello.kimin
   arithmetic.kimin
@@ -578,7 +599,8 @@ examples/
 - `simulate` body type-checked once; known-variant tracking after transitions inside the body does not carry across iterations statically
 - Compound assignment unit rules: `d += 10` where `d: meters` → `TypeError`; right-hand side must match the variable's unit type for `+=`/`-=`
 - No mutable function parameters — parameters are always immutable
-- No general loops (`while`, `for`) — only `simulate` blocks
+- No `for` loops or range-based iteration — only `while` and `simulate`
+- No `break` or `continue` in while loops
 - Bytecode VM: `Rc` reference cycles on recursive closures (a function stored in its own captured env) — memory leak; programs run-and-exit so no crash
 - State transitions inside function bodies (in the VM) modify the function's local parameter copy, not the caller's variable — matches tree-walk semantics
 
