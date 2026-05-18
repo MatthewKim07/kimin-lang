@@ -1,0 +1,23 @@
+// Valid: break and continue inside a while loop.
+let mut x: Number = 0
+
+while x < 2 {
+    x += 1
+    continue
+}
+
+print(x)
+
+// Uncomment to test break outside loop (TypeError):
+// break
+
+// Uncomment to test continue outside loop (TypeError):
+// continue
+
+// Uncomment to test break inside function but outside while (TypeError):
+// fn bad_break() { break }
+
+// Uncomment to test continue inside simulate directly (TypeError):
+// let dur: seconds = 2
+// let dt: seconds = 1
+// simulate dur step dt { continue }

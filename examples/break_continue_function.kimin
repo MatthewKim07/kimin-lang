@@ -1,0 +1,15 @@
+fn first_over(limit: Number) -> Number {
+    let mut x: Number = 0
+
+    while true {
+        x += 1
+
+        if x > limit {
+            break
+        }
+    }
+
+    return x
+}
+
+print(first_over(5))

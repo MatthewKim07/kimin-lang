@@ -1,0 +1,21 @@
+let mut outer: Number = 0
+
+while outer < 3 {
+    outer += 1
+
+    let mut inner: Number = 0
+
+    while inner < 5 {
+        inner += 1
+
+        if inner == 2 {
+            continue
+        }
+
+        if inner == 4 {
+            break
+        }
+
+        print(outer * 10 + inner)
+    }
+}

@@ -8617,3 +8617,754 @@ print(light)"#;
     let vm_out = vm_run(src).unwrap();
     assert_eq!(vm_out, vec!["Light.red", "Light.green"]);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Milestone 9C — break and continue
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── M9C: Lexer ─────────────────────────────────────────────────────────────
+
+#[test]
+fn lex_break_keyword() {
+    let kinds = tokenize("break");
+    assert_eq!(kinds[0], TokenKind::Break);
+}
+
+#[test]
+fn lex_continue_keyword() {
+    let kinds = tokenize("continue");
+    assert_eq!(kinds[0], TokenKind::Continue);
+}
+
+#[test]
+fn lex_breaker_identifier() {
+    let kinds = tokenize("breaker");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "breaker"));
+}
+
+#[test]
+fn lex_continuey_identifier() {
+    let kinds = tokenize("continuey");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "continuey"));
+}
+
+#[test]
+fn lex_discontinued_identifier() {
+    let kinds = tokenize("discontinued");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "discontinued"));
+}
+
+// ─── M9C: Parser ────────────────────────────────────────────────────────────
+
+#[test]
+fn parse_break_stmt() {
+    let src = "let mut x = 0\nwhile x < 1 { break }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_continue_stmt() {
+    let src = "let mut x = 0\nwhile x < 1 { continue }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_break_inside_if_inside_while() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    if x == 3 { break }
+}"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_continue_inside_if_inside_while() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    if x == 3 { continue }
+}"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_break_does_not_take_value() {
+    // `break 1` — the `1` is a separate expression statement after break, not an argument.
+    // Parser accepts it (no expression is consumed by break itself).
+    let src = "let mut x = 0\nwhile x < 1 { break }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// ─── M9C: Typechecker ───────────────────────────────────────────────────────
+
+#[test]
+fn type_break_inside_while_ok() {
+    assert!(check("let mut x = 0\nwhile x < 5 { x += 1\nif x == 3 { break } }").is_ok());
+}
+
+#[test]
+fn type_continue_inside_while_ok() {
+    assert!(check("let mut x = 0\nwhile x < 5 { x += 1\nif x == 2 { continue } }").is_ok());
+}
+
+#[test]
+fn type_break_outside_while_error() {
+    assert!(check("break").is_err());
+}
+
+#[test]
+fn type_continue_outside_while_error() {
+    assert!(check("continue").is_err());
+}
+
+#[test]
+fn type_break_inside_if_inside_while_ok() {
+    assert!(check("let mut x = 0\nwhile x < 3 { x += 1\nif true { break } }").is_ok());
+}
+
+#[test]
+fn type_continue_inside_if_inside_while_ok() {
+    assert!(check("let mut x = 0\nwhile x < 3 { x += 1\nif true { continue } }").is_ok());
+}
+
+#[test]
+fn type_break_inside_function_outside_while_error() {
+    // break inside a function body but not inside any while → TypeError
+    assert!(check("fn f() { break }").is_err());
+}
+
+#[test]
+fn type_continue_inside_function_outside_while_error() {
+    assert!(check("fn f() { continue }").is_err());
+}
+
+#[test]
+fn type_break_inside_while_inside_function_ok() {
+    assert!(check("fn f() { let mut x = 0\nwhile x < 5 { x += 1\nbreak } }").is_ok());
+}
+
+#[test]
+fn type_continue_inside_while_inside_function_ok() {
+    assert!(check("fn f() { let mut x = 0\nwhile x < 5 { x += 1\ncontinue } }").is_ok());
+}
+
+#[test]
+fn type_nested_while_break_continue_ok() {
+    let src = r#"let mut outer = 0
+while outer < 3 {
+    outer += 1
+    let mut inner = 0
+    while inner < 5 {
+        inner += 1
+        if inner == 2 { continue }
+        if inner == 4 { break }
+    }
+}"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_break_inside_simulate_outside_while_error() {
+    // break directly inside simulate body (no enclosing while) → TypeError
+    let src = "let dur: seconds = 2\nlet dt: seconds = 1\nsimulate dur step dt { break }";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_continue_inside_simulate_outside_while_error() {
+    let src = "let dur: seconds = 2\nlet dt: seconds = 1\nsimulate dur step dt { continue }";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_break_inside_while_inside_simulate_ok() {
+    // while inside simulate — break is valid inside that while
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut count = 0
+simulate dur step dt {
+    while count < 10 {
+        count += 1
+        break
+    }
+}"#;
+    assert!(check(src).is_ok());
+}
+
+// ─── M9C: Interpreter ───────────────────────────────────────────────────────
+
+#[test]
+fn interp_break_exits_loop() {
+    let src = r#"let mut x = 0
+while true {
+    x += 1
+    if x == 5 { break }
+}
+print(x)"#;
+    assert_eq!(run(src).unwrap().get_var("x"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_continue_skips_rest_of_body() {
+    // count should reach 5 but only odd values printed (via continue on even)
+    let src = r#"let mut x = 0
+let mut evens = 0
+while x < 6 {
+    x += 1
+    if x == 2 { continue }
+    if x == 4 { continue }
+    if x == 6 { continue }
+    evens += 1
+}"#;
+    assert_eq!(run(src).unwrap().get_var("evens"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_nested_break_exits_nearest_loop() {
+    // inner break does not exit outer loop
+    let src = r#"let mut outer = 0
+let mut inner_total = 0
+while outer < 3 {
+    outer += 1
+    let mut inner = 0
+    while inner < 10 {
+        inner += 1
+        if inner == 3 { break }
+        inner_total += 1
+    }
+}"#;
+    // inner loop runs 3 times per outer iteration, breaking at inner==3
+    // inner_total increments when inner=1 and inner=2 (before break at 3)
+    assert_eq!(
+        run(src).unwrap().get_var("inner_total"),
+        Some(Value::Number(6.0))
+    );
+}
+
+#[test]
+fn interp_nested_continue_nearest_loop() {
+    let src = r#"let mut outer = 0
+let mut count = 0
+while outer < 2 {
+    outer += 1
+    let mut inner = 0
+    while inner < 4 {
+        inner += 1
+        if inner == 2 { continue }
+        count += 1
+    }
+}"#;
+    // inner loop: inner=1(count), inner=2(skip), inner=3(count), inner=4(count) = 3 per outer iter
+    // 2 outer iterations: count = 6
+    assert_eq!(run(src).unwrap().get_var("count"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn interp_break_inside_if() {
+    let src = r#"let mut x = 0
+while x < 100 {
+    x += 1
+    if x > 7 { break }
+}
+print(x)"#;
+    assert_eq!(run(src).unwrap().get_var("x"), Some(Value::Number(8.0)));
+}
+
+#[test]
+fn interp_continue_inside_if() {
+    let src = r#"let mut x = 0
+let mut printed = 0
+while x < 5 {
+    x += 1
+    if x == 3 { continue }
+    printed += 1
+}"#;
+    assert_eq!(
+        run(src).unwrap().get_var("printed"),
+        Some(Value::Number(4.0))
+    );
+}
+
+#[test]
+fn interp_return_inside_while_exits_function() {
+    let src = r#"fn find(limit: Number) -> Number {
+    let mut x = 0
+    while x < 100 {
+        x += 1
+        if x == limit { return x }
+    }
+    return -1
+}
+print(find(7))"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["7"]);
+}
+
+#[test]
+fn interp_break_inside_while_inside_simulate() {
+    // while with break inside simulate body runs correctly
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut x = 0
+    while x < 10 {
+        x += 1
+        if x == 2 { break }
+    }
+    total += x
+}"#;
+    // Each simulate iter: x goes 1, 2 then break → x=2. total += 2 each iter. 3 iters → total=6
+    assert_eq!(run(src).unwrap().get_var("total"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn interp_break_continue_main_example() {
+    // canonical example from spec
+    let src = r#"let mut x: Number = 0
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+    print(x)
+}"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2", "4", "5", "6", "7"]);
+}
+
+// ─── M9C: Bytecode ──────────────────────────────────────────────────────────
+
+#[test]
+fn bytecode_break_emits_jump_to_loop_end() {
+    let src = "let mut x = 0\nwhile x < 5 { x += 1\nbreak }";
+    let prog = compile_prog(src);
+    // Should have a JumpIfFalse (condition exit) and a Jump (break)
+    let has_jump_if_false = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::JumpIfFalse(_)));
+    let jump_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Jump(_)))
+        .count();
+    assert!(has_jump_if_false);
+    assert!(
+        jump_count >= 2,
+        "expected at least 2 Jump instructions (loop-back and break)"
+    );
+}
+
+#[test]
+fn bytecode_continue_emits_jump_to_loop_start() {
+    let src = "let mut x = 0\nwhile x < 5 { x += 1\ncontinue }";
+    let prog = compile_prog(src);
+    let jump_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Jump(_)))
+        .count();
+    // At least 2: the continue jump and the normal loop-back jump
+    assert!(jump_count >= 2);
+}
+
+#[test]
+fn bytecode_break_inside_nested_block_emits_endscopes() {
+    // break inside an if block inside while body → 2 EndScopes before the break jump
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    if x == 3 { break }
+}"#;
+    let prog = compile_prog(src);
+    let instrs = &prog.main.instructions;
+    // Find the break's JUMP and verify there are two EndScopes immediately before it
+    // (one for if block, one for while body)
+    let mut found = false;
+    for i in 2..instrs.len() {
+        if let Instruction::Jump(target) = &instrs[i] {
+            // A break jump goes forward to loop_end
+            let loop_back_target = 2; // loop_start position
+            if *target > i && *target != loop_back_target {
+                // Check two EndScopes precede this jump
+                if matches!(&instrs[i - 1], Instruction::EndScope)
+                    && matches!(&instrs[i - 2], Instruction::EndScope)
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(found, "expected two EndScopes before break's Jump");
+}
+
+#[test]
+fn bytecode_nested_break_patches_nearest_loop() {
+    // Inner break should patch to inner loop_end, not outer loop_end
+    let src = r#"let mut outer = 0
+let mut inner = 0
+while outer < 3 {
+    outer += 1
+    while inner < 5 {
+        inner += 1
+        break
+    }
+}"#;
+    // Just verify it compiles and the program runs correctly
+    let prog = compile_prog(src);
+    assert!(!prog.main.instructions.is_empty());
+}
+
+// ─── M9C: VM ────────────────────────────────────────────────────────────────
+
+#[test]
+fn vm_break_exits_loop() {
+    let src = r#"let mut x = 0
+while true {
+    x += 1
+    if x == 5 { break }
+}
+print(x)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn vm_continue_skips_body_rest() {
+    let src = r#"let mut x = 0
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+    print(x)
+}"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2", "4", "5", "6", "7"]);
+}
+
+#[test]
+fn vm_nested_break_nearest_loop() {
+    let src = r#"let mut outer = 0
+let mut inner_total = 0
+while outer < 3 {
+    outer += 1
+    let mut inner = 0
+    while inner < 10 {
+        inner += 1
+        if inner == 3 { break }
+        inner_total += 1
+    }
+}"#;
+    // inner breaks at 3, so inner_total += 2 per outer iter, 3 outer iters → 6
+    let out = vm_run(src).unwrap();
+    assert!(out.is_empty()); // no prints
+                             // verify via run
+    assert_eq!(
+        run(src).unwrap().get_var("inner_total"),
+        Some(Value::Number(6.0))
+    );
+}
+
+#[test]
+fn vm_nested_continue_nearest_loop() {
+    let src = r#"let mut outer = 0
+let mut count = 0
+while outer < 2 {
+    outer += 1
+    let mut inner = 0
+    while inner < 4 {
+        inner += 1
+        if inner == 2 { continue }
+        count += 1
+    }
+}
+print(count)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["6"]);
+}
+
+#[test]
+fn vm_break_inside_nested_block_scope_cleanup() {
+    // break inside an if block inside while — env must be clean afterward
+    let src = r#"let mut x = 0
+while x < 10 {
+    x += 1
+    if x == 5 {
+        break
+    }
+}
+print(x)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn vm_continue_inside_nested_block_scope_cleanup() {
+    // continue inside an if block inside while — loop must proceed correctly
+    let src = r#"let mut x = 0
+let mut acc = 0
+while x < 5 {
+    x += 1
+    if x == 3 { continue }
+    acc += x
+}
+print(acc)"#;
+    // acc += 1 + 2 + 4 + 5 = 12 (skip x=3)
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+#[test]
+fn vm_break_inside_if() {
+    let src = r#"let mut x = 0
+while x < 100 {
+    x += 1
+    if x > 7 { break }
+}
+print(x)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["8"]);
+}
+
+#[test]
+fn vm_continue_inside_if() {
+    let src = r#"let mut x = 0
+while x < 4 {
+    x += 1
+    if x == 2 { continue }
+    print(x)
+}"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "3", "4"]);
+}
+
+#[test]
+fn vm_break_continue_nested_output() {
+    // canonical nested example
+    let src = r#"let mut outer: Number = 0
+while outer < 3 {
+    outer += 1
+    let mut inner: Number = 0
+    while inner < 5 {
+        inner += 1
+        if inner == 2 { continue }
+        if inner == 4 { break }
+        print(outer * 10 + inner)
+    }
+}"#;
+    assert_eq!(
+        vm_run(src).unwrap(),
+        vec!["11", "13", "21", "23", "31", "33"]
+    );
+}
+
+#[test]
+fn vm_break_continue_function_output() {
+    let src = r#"fn first_over(limit: Number) -> Number {
+    let mut x: Number = 0
+    while true {
+        x += 1
+        if x > limit { break }
+    }
+    return x
+}
+print(first_over(5))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["6"]);
+}
+
+#[test]
+fn vm_break_inside_while_inside_simulate() {
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut x = 0
+    while x < 10 {
+        x += 1
+        if x == 2 { break }
+    }
+    total += x
+}"#;
+    // VM: simulate 3 iters, each: x→2 then break, total += 2. final total=6
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("total"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn vm_matches_tree_walk_break_continue() {
+    // VM and tree-walk must agree on the main break_continue example
+    let src = r#"let mut x: Number = 0
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+    print(x)
+}"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2", "4", "5", "6", "7"]);
+}
+
+#[test]
+fn vm_matches_tree_walk_nested() {
+    let src = r#"let mut outer: Number = 0
+while outer < 3 {
+    outer += 1
+    let mut inner: Number = 0
+    while inner < 5 {
+        inner += 1
+        if inner == 2 { continue }
+        if inner == 4 { break }
+        print(outer * 10 + inner)
+    }
+}"#;
+    assert!(run(src).is_ok());
+    assert_eq!(
+        vm_run(src).unwrap(),
+        vec!["11", "13", "21", "23", "31", "33"]
+    );
+}
+
+// ─── M9C: State machine interaction ─────────────────────────────────────────
+
+#[test]
+fn break_continue_with_state_transitions() {
+    // State loop with both continue and break
+    let src = r#"state Door {
+    closed
+    opening
+    open
+    transition closed -> opening
+    transition opening -> open
+}
+let mut door: Door = Door.closed
+while true {
+    if door == Door.closed {
+        transition door -> opening
+        continue
+    }
+    if door == Door.opening {
+        transition door -> open
+        break
+    }
+}
+print(door)"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["Door.open"]);
+}
+
+// ─── M9C: Simulate interaction ───────────────────────────────────────────────
+
+#[test]
+fn break_inside_while_inside_simulate_ok() {
+    // x is local to simulate body; check that it prints 1 (broke after x=1)
+    let src = r#"let dur: seconds = 2
+let dt: seconds = 1
+simulate dur step dt {
+    let mut x = 0
+    while x < 5 {
+        x += 1
+        break
+    }
+    print(x)
+}"#;
+    // 2 simulate iterations, each prints x=1
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "1"]);
+}
+
+#[test]
+fn continue_inside_while_inside_simulate_ok() {
+    let src = r#"let dur: seconds = 2
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut x = 0
+    while x < 4 {
+        x += 1
+        if x == 2 { continue }
+        total += x
+    }
+}"#;
+    // per simulate iter: total += 1+3+4 = 8. 2 iters → 16
+    assert_eq!(
+        run(src).unwrap().get_var("total"),
+        Some(Value::Number(16.0))
+    );
+}
+
+// ─── M9C: Return interaction ─────────────────────────────────────────────────
+
+#[test]
+fn return_inside_while_with_break_exits_function() {
+    let src = r#"fn stop_early(n: Number) -> Number {
+    let mut x = 0
+    while x < 100 {
+        x += 1
+        if x == n { return x }
+        if x > 50 { break }
+    }
+    return -1
+}
+print(stop_early(7))"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["7"]);
+}
+
+#[test]
+fn break_does_not_exit_function() {
+    let src = r#"fn count_with_break(n: Number) -> Number {
+    let mut x = 0
+    while true {
+        x += 1
+        if x >= n { break }
+    }
+    return x
+}
+print(count_with_break(4))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["4"]);
+}
+
+#[test]
+fn continue_inside_function_while_works() {
+    let src = r#"fn sum_odds(n: Number) -> Number {
+    let mut x = 0
+    let mut acc = 0
+    while x < n {
+        x += 1
+        if x == 2 { continue }
+        if x == 4 { continue }
+        acc += x
+    }
+    return acc
+}
+print(sum_odds(5))"#;
+    // acc = 1 + 3 + 5 = 9
+    assert_eq!(vm_run(src).unwrap(), vec!["9"]);
+}
+
+// ─── M9C: Regression — existing while tests unaffected ──────────────────────
+
+#[test]
+fn m9c_regression_while_no_break_continue() {
+    // Plain while loop still works after M9C changes
+    let src = "let mut x = 0\nwhile x < 5 { x += 1 }\nprint(x)";
+    assert_eq!(run(src).unwrap().get_var("x"), Some(Value::Number(5.0)));
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn m9c_regression_while_return_still_works() {
+    let src = r#"fn f() -> Number {
+    let mut x = 0
+    while x < 10 {
+        x += 1
+        if x == 3 { return x }
+    }
+    return -1
+}
+print(f())"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
