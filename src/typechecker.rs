@@ -711,6 +711,25 @@ impl TypeChecker {
                 Ok(())
             }
 
+            Stmt::While {
+                condition,
+                body,
+                span,
+            } => {
+                let cond_ty = self.check_expr(condition, *span)?;
+                if !cond_ty.is_unknown() && cond_ty != Type::Bool {
+                    return Err(TypeError {
+                        msg: format!("while condition must be Bool, got {}", cond_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                self.env.push_scope();
+                let result = self.check_stmt_list(body);
+                self.env.pop_scope();
+                result
+            }
+
             Stmt::Simulate {
                 duration,
                 step,

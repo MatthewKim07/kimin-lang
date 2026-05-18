@@ -149,6 +149,37 @@ impl Interpreter {
                 Ok(ExecFlow::Continue)
             }
 
+            Stmt::While {
+                condition, body, ..
+            } => {
+                loop {
+                    let cond_val = self.eval_expr(condition)?;
+                    let keep_going = match cond_val {
+                        Value::Bool(b) => b,
+                        other => {
+                            return Err(RuntimeError {
+                                msg: format!(
+                                    "while condition must be Bool, got {}",
+                                    other.type_name()
+                                ),
+                            })
+                        }
+                    };
+                    if !keep_going {
+                        break;
+                    }
+                    let outer = Rc::clone(&self.env);
+                    self.env = Env::new_child(Rc::clone(&self.env));
+                    let result = self.exec_stmts(body);
+                    self.env = outer;
+                    match result? {
+                        ExecFlow::Continue => {}
+                        flow @ ExecFlow::Return(_) => return Ok(flow),
+                    }
+                }
+                Ok(ExecFlow::Continue)
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
