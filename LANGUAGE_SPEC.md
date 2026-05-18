@@ -56,7 +56,7 @@ foo  bar_baz  _x  score1
 ### 1.5 Keywords
 
 ```
-let  mut  if  else  print  fn  return  true  false  state  transition  simulate  step
+let  mut  if  else  while  print  fn  return  true  false  state  transition  simulate  step
 ```
 
 ### 1.6 Operators and Delimiters
@@ -449,7 +449,53 @@ Runtime rules:
 
 ---
 
-### 4.9 Mutable Variables and Assignment
+### 4.9 While Loop
+
+```kimin
+while <Bool-expr> {
+  <stmts>
+}
+```
+
+Repeats the body as long as the condition evaluates to `true`. The condition is re-evaluated before every iteration.
+
+```kimin
+let mut x = 0
+while x < 5 {
+    print(x)
+    x += 1
+}
+// prints 0, 1, 2, 3, 4
+```
+
+Static rules:
+- The condition must have type `Bool`. Any other type (including unit types and state types) is a `TypeError`.
+- Variables declared inside the body are scoped to each iteration and do not leak to the enclosing scope.
+- The body may contain any statement including `if`, nested `while`, `simulate`, function calls, and compound assignment.
+- Immutability rules apply inside while bodies: assigning to an immutable variable is a `TypeError`.
+
+Runtime rules:
+- If the condition evaluates to a non-`Bool` value, a `RuntimeError` is raised.
+- Each iteration runs the body inside a fresh child scope; mutations to outer `let mut` bindings persist across iterations.
+- `return` inside a while body propagates out to the enclosing function.
+- State `transition` statements inside the body affect the outer state variable and persist across iterations.
+
+Bytecode:
+```
+@loop_start: <condition>
+             JUMP_IF_FALSE @loop_end
+             BEGIN_SCOPE
+             <body>
+             END_SCOPE
+             JUMP @loop_start
+@loop_end:
+```
+
+No new VM instructions are required — `Jump` and `JumpIfFalse` already handle the loop structure.
+
+---
+
+### 4.10 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
 
@@ -521,7 +567,7 @@ simulate duration step dt {
 
 ---
 
-### 4.10 Compound Assignment Operators
+### 4.11 Compound Assignment Operators
 
 Compound assignment provides shorthand for read-modify-write on `let mut` variables:
 
@@ -795,13 +841,14 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 
 ```
 program         = stmt* EOF
-stmt            = state_decl | transition_stmt | simulate_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
+stmt            = state_decl | transition_stmt | simulate_stmt | while_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
                 | compound_assign_stmt | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
 inner_transition = "transition" IDENT "->" IDENT
 transition_stmt = "transition" IDENT "->" IDENT
 simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
+while_stmt      = "while" expr "{" stmt* "}"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
 return_stmt     = "return" expr?
 let_stmt        = "let" "mut"? IDENT (":" type_ann)? "=" expr
