@@ -9,8 +9,8 @@ use crate::token::{Span, Token, TokenKind};
 ///
 /// Grammar (Milestone 7A):
 ///   program         → stmt* EOF
-///   stmt            → state_decl | transition_stmt | simulate_stmt | while_stmt | fn_decl | return_stmt
-///                   | let_stmt | assign_stmt | print_stmt | if_stmt | block | expr_stmt
+///   stmt            → state_decl | transition_stmt | simulate_stmt | while_stmt | break_stmt | continue_stmt
+///                   | fn_decl | return_stmt | let_stmt | assign_stmt | print_stmt | if_stmt | block | expr_stmt
 ///   simulate_stmt   → "simulate" expr "step" expr "{" stmt* "}"
 ///   while_stmt      → "while" expr "{" stmt* "}"
 ///   state_decl      → "state" IDENT "{" (variant_decl | transition_decl)* "}"
@@ -67,6 +67,10 @@ impl Parser {
             self.parse_simulate_stmt()
         } else if matches!(self.current_kind(), TokenKind::While) {
             self.parse_while()
+        } else if matches!(self.current_kind(), TokenKind::Break) {
+            self.parse_break()
+        } else if matches!(self.current_kind(), TokenKind::Continue) {
+            self.parse_continue()
         } else if matches!(self.current_kind(), TokenKind::Fn) {
             self.parse_fn_decl()
         } else if matches!(self.current_kind(), TokenKind::Return) {
@@ -202,6 +206,18 @@ impl Parser {
             body,
             span,
         })
+    }
+
+    fn parse_break(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `break`
+        Ok(Stmt::Break { span })
+    }
+
+    fn parse_continue(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `continue`
+        Ok(Stmt::Continue { span })
     }
 
     fn parse_simulate_stmt(&mut self) -> Result<Stmt, ParseError> {

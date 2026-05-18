@@ -173,4 +173,12 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// Exit the nearest enclosing while loop.
+    Break {
+        span: Span,
+    },
+    /// Skip the rest of the current while-body iteration; re-evaluate the condition.
+    Continue {
+        span: Span,
+    },
 }
