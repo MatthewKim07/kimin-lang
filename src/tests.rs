@@ -7607,3 +7607,472 @@ simulate dur step dt {
 print(pos)"#;
     assert_eq!(vm_run(src).unwrap(), vec!["30"]);
 }
+
+// ── Milestone 9B: while loops ─────────────────────────────────────────────────
+
+// --- lexer ---
+
+#[test]
+fn lex_while_keyword() {
+    let kinds = tokenize("while");
+    assert_eq!(kinds[0], TokenKind::While);
+}
+
+#[test]
+fn lex_whiley_is_identifier() {
+    // `whiley` must NOT lex as While + y; it is a single identifier
+    let kinds = tokenize("whiley");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "whiley"));
+}
+
+// --- parser ---
+
+#[test]
+fn parse_while_simple() {
+    let src = "let mut x = 0\nwhile x < 5 { x += 1 }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 2);
+    assert!(matches!(&stmts[1], crate::ast::Stmt::While { .. }));
+}
+
+#[test]
+fn parse_while_body_stmts() {
+    let src = "let mut x = 0\nwhile x < 3 { print(x)\nx += 1 }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::While { body, .. } = &stmts[1] {
+        assert_eq!(body.len(), 2);
+    } else {
+        panic!("expected While");
+    }
+}
+
+#[test]
+fn parse_nested_while() {
+    let src = "let mut i = 0\nwhile i < 3 { let mut j = 0\nwhile j < 2 { j += 1 }\ni += 1 }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::While { body, .. } = &stmts[1] {
+        // body contains let j, inner while, i += 1
+        assert!(body
+            .iter()
+            .any(|s| matches!(s, crate::ast::Stmt::While { .. })));
+    } else {
+        panic!("expected outer While");
+    }
+}
+
+#[test]
+fn parse_while_inside_function() {
+    let src = r#"fn f() -> Number {
+  let mut x = 0
+  while x < 3 { x += 1 }
+  return x
+}
+f()"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_while_missing_condition_error() {
+    // `while { x += 1 }` — `{` cannot start an expression
+    let src = "let mut x = 0\nwhile { x += 1 }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_while_missing_body_error() {
+    // `while x < 5` with no `{` is a parse error
+    let src = "let mut x = 0\nwhile x < 5";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+// --- typechecker ---
+
+#[test]
+fn type_while_bool_condition_ok() {
+    assert!(check("let mut x = 0\nwhile x < 5 { x += 1 }").is_ok());
+}
+
+#[test]
+fn type_while_bool_literal_ok() {
+    assert!(check("while false { }").is_ok());
+}
+
+#[test]
+fn type_while_number_condition_type_error() {
+    let err = check("let mut x = 0\nwhile x { x += 1 }").unwrap_err();
+    assert!(err.to_string().contains("Bool"), "error was: {}", err);
+}
+
+#[test]
+fn type_while_text_condition_type_error() {
+    let err = check("let mut s = \"hi\"\nwhile s { }").unwrap_err();
+    assert!(err.to_string().contains("Bool"), "error was: {}", err);
+}
+
+#[test]
+fn type_while_comparison_condition_ok() {
+    assert!(check("let mut x = 0\nwhile x != 5 { x += 1 }").is_ok());
+}
+
+#[test]
+fn type_while_body_mutates_outer_mutable_ok() {
+    assert!(check("let mut x = 0\nwhile x < 3 { x += 1 }").is_ok());
+}
+
+#[test]
+fn type_while_body_immutable_assignment_type_error() {
+    let err = check("let x = 0\nwhile x < 3 { x += 1 }").unwrap_err();
+    assert!(err.to_string().contains("immutable"), "error was: {}", err);
+}
+
+#[test]
+fn type_while_local_does_not_leak() {
+    // `inner` declared inside while body is not visible after the loop
+    let err =
+        check("let mut x = 0\nwhile x < 1 { let inner = 99\nx += 1 }\nprint(inner)").unwrap_err();
+    assert!(
+        err.to_string().contains("undefined variable 'inner'"),
+        "error was: {}",
+        err
+    );
+}
+
+#[test]
+fn type_while_inside_function_return_ok() {
+    let src = r#"fn f() -> Number {
+  let mut x = 0
+  while x < 3 { x += 1 }
+  return x
+}
+let r = f()"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_while_with_state_transition_ok() {
+    let src = r#"state Door { closed open transition closed -> open }
+let mut door: Door = Door.closed
+while door == Door.closed { transition door -> open }"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_while_nested_ok() {
+    let src = "let mut i = 0\nwhile i < 3 { let mut j = 0\nwhile j < 2 { j += 1 }\ni += 1 }";
+    assert!(check(src).is_ok());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_while_count_loop() {
+    let interp = run("let mut x = 0\nwhile x < 5 { x += 1 }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_while_zero_iterations() {
+    let interp = run("let mut x = 10\nwhile x < 5 { x += 1 }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn interp_while_compound_assignment() {
+    // Position accumulates each iteration
+    let src = "let mut pos = 0\nlet vel = 3\nlet mut i = 0\nwhile i < 4 { pos += vel\ni += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("pos"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn interp_while_body_local_fresh_per_iteration() {
+    // Each iteration's local is reset; only outer accumulator persists
+    let src = r#"let mut acc = 0
+let mut i = 0
+while i < 3 {
+    let mut scratch = 10
+    scratch -= 3
+    acc += scratch
+    i += 1
+}"#;
+    let interp = run(src).unwrap();
+    // scratch = 7 each iter; acc = 7*3 = 21
+    assert_eq!(interp.get_var("acc"), Some(Value::Number(21.0)));
+}
+
+#[test]
+fn interp_while_updates_outer_mutable() {
+    let interp = run("let mut x = 0\nwhile x < 3 { x += 1 }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_while_inside_function() {
+    let src = r#"fn countdown(n: Number) -> Number {
+  let mut x = n
+  while x > 0 {
+    x -= 1
+  }
+  return x
+}
+let r = countdown(5)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_while_return_exits_function() {
+    // Return inside while body should exit the enclosing function immediately
+    let src = r#"fn find_first(limit: Number) -> Number {
+  let mut x = 0
+  while x < limit {
+    if x == 3 { return x }
+    x += 1
+  }
+  return x
+}
+let r = find_first(10)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_while_nested() {
+    let src = r#"let mut total = 0
+let mut i = 0
+while i < 3 {
+    let mut j = 0
+    while j < 4 {
+        total += 1
+        j += 1
+    }
+    i += 1
+}"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("total"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn interp_while_state_transition_loop() {
+    let src = r#"state Light { off on transition off -> on }
+let mut light: Light = Light.off
+let mut ticks = 0
+while light == Light.off {
+    ticks += 1
+    transition light -> on
+}
+print(ticks)"#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("ticks"), Some(Value::Number(1.0)));
+}
+
+// --- bytecode ---
+
+#[test]
+fn bytecode_while_emits_jump_if_false_and_back_jump() {
+    let prog = compile_prog("let mut x = 0\nwhile x < 5 { x += 1 }");
+    let instrs = &prog.main.instructions;
+    // Must have JumpIfFalse
+    assert!(
+        instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::JumpIfFalse(_))),
+        "missing JumpIfFalse"
+    );
+    // Must have a Jump (not JumpIfFalse) for the back-edge
+    assert!(
+        instrs.iter().any(|i| matches!(i, Instruction::Jump(_))),
+        "missing back Jump"
+    );
+}
+
+#[test]
+fn bytecode_while_condition_before_jump_if_false() {
+    // LESS or other comparison must appear before JumpIfFalse
+    let prog = compile_prog("let mut x = 0\nwhile x < 5 { x += 1 }");
+    let instrs = &prog.main.instructions;
+    let less_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Less))
+        .unwrap();
+    let jif_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::JumpIfFalse(_)))
+        .unwrap();
+    assert!(less_pos < jif_pos, "LESS must precede JumpIfFalse");
+}
+
+#[test]
+fn bytecode_while_body_is_scoped() {
+    let prog = compile_prog("let mut x = 0\nwhile x < 5 { x += 1 }");
+    let instrs = &prog.main.instructions;
+    assert!(
+        instrs.iter().any(|i| matches!(i, Instruction::BeginScope)),
+        "missing BeginScope"
+    );
+    assert!(
+        instrs.iter().any(|i| matches!(i, Instruction::EndScope)),
+        "missing EndScope"
+    );
+}
+
+#[test]
+fn bytecode_while_compound_assignment_inside_loop() {
+    // Compound assign inside while body emits Load/Add/Store inside the loop body
+    let prog = compile_prog("let mut x = 0\nwhile x < 5 { x += 1 }");
+    let instrs = &prog.main.instructions;
+    assert!(
+        instrs.iter().any(|i| matches!(i, Instruction::Add)),
+        "missing Add in loop body"
+    );
+    assert!(
+        instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::StoreGlobal(n) if n == "x")),
+        "missing StoreGlobal x"
+    );
+}
+
+#[test]
+fn bytecode_nested_while_jump_targets() {
+    // Nested while must emit two JumpIfFalse instructions
+    let src = "let mut i = 0\nwhile i < 3 { let mut j = 0\nwhile j < 2 { j += 1 }\ni += 1 }";
+    let prog = compile_prog(src);
+    let instrs = &prog.main.instructions;
+    let jif_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::JumpIfFalse(_)))
+        .count();
+    assert_eq!(
+        jif_count, 2,
+        "nested while must emit 2 JumpIfFalse instructions"
+    );
+}
+
+#[test]
+fn bytecode_while_inside_function() {
+    let src = r#"fn f() -> Number {
+  let mut x = 0
+  while x < 3 { x += 1 }
+  return x
+}
+f()"#;
+    let prog = compile_prog(src);
+    let fn_chunk = prog
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("function f not found");
+    let instrs = &fn_chunk.chunk.instructions;
+    assert!(
+        instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::JumpIfFalse(_))),
+        "while in function must emit JumpIfFalse"
+    );
+    assert!(
+        instrs.iter().any(|i| matches!(i, Instruction::Jump(_))),
+        "while in function must emit back Jump"
+    );
+}
+
+// --- VM ---
+
+#[test]
+fn vm_while_count_loop() {
+    let out = vm_run("let mut x = 0\nwhile x < 5 { print(x)\nx += 1 }").unwrap();
+    assert_eq!(out, vec!["0", "1", "2", "3", "4"]);
+}
+
+#[test]
+fn vm_while_zero_iterations() {
+    let out = vm_run("let mut x = 10\nwhile x < 5 { x += 1 }\nprint(x)").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_while_compound_assignment() {
+    let src = "let mut x = 0\nwhile x < 4 { x += 1 }\nprint(x)";
+    assert_eq!(vm_run(src).unwrap(), vec!["4"]);
+}
+
+#[test]
+fn vm_while_nested() {
+    let src = r#"let mut total = 0
+let mut i = 0
+while i < 3 {
+    let mut j = 0
+    while j < 4 {
+        total += 1
+        j += 1
+    }
+    i += 1
+}
+print(total)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+#[test]
+fn vm_while_inside_function() {
+    let src = r#"fn countdown(n: Number) -> Number {
+  let mut x = n
+  while x > 0 { x -= 1 }
+  return x
+}
+print(countdown(5))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["0"]);
+}
+
+#[test]
+fn vm_while_return_inside_exits_function() {
+    let src = r#"fn find(limit: Number) -> Number {
+  let mut x = 0
+  while x < limit {
+    if x == 3 { return x }
+    x += 1
+  }
+  return x
+}
+print(find(10))"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_while_state_transition() {
+    let src = r#"state Door { closed open transition closed -> open }
+let mut door: Door = Door.closed
+while door == Door.closed {
+    print(door)
+    transition door -> open
+}
+print(door)"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["Door.closed", "Door.open"]);
+}
+
+#[test]
+fn vm_while_matches_tree_walk() {
+    // Both executors must agree on the final value and print output
+    let src = "let mut x = 0\nwhile x < 5 { print(x)\nx += 1 }";
+    let tree_interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(tree_interp.get_var("x"), Some(Value::Number(5.0)));
+    assert_eq!(vm_out, vec!["0", "1", "2", "3", "4"]);
+}
+
+#[test]
+fn vm_while_units_match_tree_walk() {
+    let src = r#"let mut pos: meters = 0
+let stride: meters = 5
+let limit: meters = 20
+while pos < limit {
+    pos += stride
+    print(pos)
+}"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "10", "15", "20"]);
+}

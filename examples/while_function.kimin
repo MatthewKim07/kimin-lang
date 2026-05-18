@@ -1,0 +1,11 @@
+fn countdown(n: Number) -> Number {
+  let mut x: Number = n
+
+  while x > 0 {
+    x -= 1
+  }
+
+  return x
+}
+
+print(countdown(5))

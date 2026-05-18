@@ -1,0 +1,8 @@
+let mut position: meters = 0
+let stride: meters = 5
+let limit: meters = 20
+
+while position < limit {
+  position += stride
+  print(position)
+}

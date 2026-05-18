@@ -1,0 +1,15 @@
+state Door {
+  closed
+  open
+
+  transition closed -> open
+}
+
+let mut door: Door = Door.closed
+
+while door == Door.closed {
+  print(door)
+  transition door -> open
+}
+
+print(door)

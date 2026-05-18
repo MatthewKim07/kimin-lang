@@ -1,0 +1,20 @@
+// Runnable example demonstrating valid while loop usage.
+
+let mut x: Number = 0
+
+while x < 2 {
+  x += 1
+}
+
+print(x)
+
+// Uncomment to test non-Bool condition (TypeError):
+// while x {
+//   x += 1
+// }
+
+// Uncomment to test immutable variable mutation (TypeError):
+// let y: Number = 0
+// while y < 2 {
+//   y += 1
+// }
