@@ -1,4 +1,4 @@
-# Kimin Language Specification — Milestone 9A
+# Kimin Language Specification — Milestone 9C
 
 This document describes the syntax and semantics implemented through Milestone 9A.
 
@@ -936,11 +936,11 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR and VM (Milestones 8A–9A)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–9C)
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–9A)
+### What the bytecode VM executes (M8A–9C)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -949,6 +949,8 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **Closures and free-variable capture** (M8F): `Value::BytecodeFunction { name, env }` carries its definition-site environment; functions close over enclosing locals and parameters
 - **Dynamic/computed calls** (M8G): `make_getter()()` and `make_adder(2)(3)` both work; callee expression evaluated before arguments; any function-valued expression can be called
 - **Compound assignment** (M9A): `x += expr`, `x -= expr`, `x *= expr`, `x /= expr` — desugared to `Load/op/Store` sequence; no new instructions
+- **While loops** (M9B): `while <Bool-expr> { ... }` — lowered to `JumpIfFalse`/`Jump`/`BeginScope`/`EndScope`; no new VM instructions
+- **Break and continue** (M9C): both desugar to `EndScope × N + Jump`; jump targets patched by `LoopContext`; no new VM instructions
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk

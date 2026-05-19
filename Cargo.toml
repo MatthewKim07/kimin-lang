@@ -2,7 +2,7 @@
 name = "kimin"
 version = "0.1.0"
 edition = "2021"
-description = "The Kimin programming language - Milestone 1"
+description = "The Kimin programming language — an experimental systems and engineering language"
 
 [[bin]]
 name = "kimin"

@@ -1,12 +1,533 @@
-# Kimin
+<div align="center">
 
-An experimental programming language designed by Matthew Kim. Kimin is being built as a modern systems/engineering language where **units, time, state, and constraints** will eventually become first-class language features.
+# ⚡ Kimin
 
-This repository contains **Milestone 9C** (complete): break and continue. Built on top of Milestones 8A–8G, 9A, and 9B.
+**An experimental systems and engineering language built from scratch in Rust**
+
+*Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
+
+![Tests](https://img.shields.io/badge/tests-879_passing-4caf50?style=flat-square)
+![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
+![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-9C-informational?style=flat-square)
+
+</div>
 
 ---
 
-## Features
+Kimin is a programming language where **physical units, state machines, and simulation loops are part of the core type system** — not handled by libraries or naming conventions.
+
+```
+// Units are part of the type — enforced at compile time
+let distance: meters = 100
+let time: seconds = 10
+let speed = distance / time   // type inferred: meters/seconds
+
+// State machines are first-class language constructs
+state Door {
+  closed  opening  open
+  transition closed -> opening
+  transition opening -> open
+}
+let door: Door = Door.closed
+transition door -> opening   // type checker validates the edge
+
+// Deterministic simulation loop — no real-time delay
+let mut position: meters = 0
+let velocity: meters = 2
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  position = position + velocity * dt
+  print(position)   // 2 / 4 / 6
+}
+```
+
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **879 tests passing**.
+
+---
+
+## 🏗 Architecture
+
+```
+  source.kimin
+       │
+       ▼
+  ┌─────────┐
+  │  Lexer  │─── LexError (line, col)
+  └────┬────┘
+       │  token stream
+       ▼
+  ┌──────────┐
+  │  Parser  │─── ParseError (line, col)
+  └────┬─────┘
+       │  AST
+       ▼
+  ┌─────────────┐
+  │ TypeChecker │─── TypeError (line, col)
+  └──────┬──────┘
+         │  typed AST
+    ┌────┴──────────────────────┐
+    ▼                           ▼
+Tree-walk Interpreter     Bytecode Compiler
+  (primary path)               │
+  kimin run                    ├── Disassembler  (kimin bytecode)
+  kimin check                  │
+  kimin repl                   └── Stack-based VM (kimin vm)
+```
+
+The tree-walk interpreter is the primary execution path and source of truth for language semantics. The bytecode backend is a complete parallel implementation covering the full feature set — both produce identical output.
+
+---
+
+## ✅ Features
+
+### Core language
+
+- Numbers (`42`, `3.14` — stored as `f64`), strings, booleans, nil
+- Variables with optional type annotations: `let x: Number = 10`
+- Arithmetic with correct precedence (`+`, `-`, `*`, `/`), comparisons, unary operators
+- Blocks with lexical scope, `if`/`else`
+- `print(expr)` statement, line comments (`// ...`), string concatenation
+
+### Functions and closures
+
+```
+fn add(a: Number, b: Number) -> Number {
+  return a + b
+}
+```
+
+- Named functions with required typed parameters; optional return type annotation
+- `return expr` / bare `return` (yields nil); implicit nil if no `return` reached
+- Recursion, mutual recursion
+- True lexical closures — functions capture their definition-site environment
+- Nested functions, returned closures, free-variable capture
+
+### Static type checker
+
+- Runs as a separate pass: lex → parse → **type-check** → execute
+- Three-pass scan: (1) register state machines, (2) register function signatures, (3) check everything
+- Gradual typing via `Unknown` for unannotated return types — unannotated code stays valid
+- All type errors include line and column
+- Catches before execution: wrong argument types, arity mismatches, type annotation violations, undefined variables, `if` condition not `Bool`, return type mismatches, immutability violations
+
+### Unit-aware types
+
+Unit types are **static-only** — the runtime sees plain `f64`; zero overhead at execution.
+
+| Expression | Result |
+|---|---|
+| `meters + meters` | `meters` |
+| `meters + seconds` | **TypeError** |
+| `Number * meters` | `meters` (scaling) |
+| `meters / meters` | `Number` (dimensionless ratio) |
+| `meters / seconds` | `meters/seconds` (compound, inferred) |
+| `meters * meters` | `meters^2` |
+| `(meters/seconds) * seconds` | `meters` (compound simplification) |
+| `Number / seconds` | `1/seconds` (reciprocal) |
+
+Supported units and aliases:
+
+| Unit | Aliases |
+|---|---|
+| `meters` | `m` |
+| `seconds` | `s` |
+| `milliseconds` | `ms` |
+| `minutes` | `min` |
+| `hours` | `h` |
+| `kilograms` | `kg` |
+| `amperes` | `A`, `amps` |
+| `kelvin` | `K` |
+| `moles` | `mol` |
+| `candela` | `cd` |
+| `radians` | `rad` |
+| `degrees` | `deg` |
+| `volts` | `V` |
+| `watts` | `W` |
+| `joules` | `J` |
+| `newtons` | `N` |
+
+Compound unit types are inferred, not annotated. `let v: meters/seconds = ...` is a ParseError — the type comes from the expression.
+
+### State machines
+
+```
+state TrafficLight {
+  red  yellow  green
+  transition red -> green
+  transition green -> yellow
+  transition yellow -> red
+}
+
+let light: TrafficLight = TrafficLight.red
+transition light -> green    // ok — red -> green declared
+transition light -> red      // TypeError: no green -> red transition declared
+```
+
+- State variant expressions: `Door.closed`, `TrafficLight.red`
+- `transition` is the only mutation form for state-typed variables
+- Static checking: validates that the transition edge is declared; rejects undeclared edges
+- **Known-variant tracking**: the type checker records the statically known current variant and validates each subsequent transition against it
+- Functions can accept and return state types
+
+### Mutable variables and compound assignment
+
+```
+let mut counter: Number = 0
+counter += 1    // 1
+counter *= 3    // 3
+
+let mut dist: meters = 0
+let step: meters = 5
+dist += step    // ok — same unit
+// dist += 10   // TypeError — Number ≠ meters
+```
+
+- Immutable by default (`let`); `let mut` opts in to reassignment
+- Full assignment: `x = expr`
+- Compound assignment: `x += expr`, `x -= expr`, `x *= expr`, `x /= expr`
+- Unit type rules apply to compound assignment — same rules as the corresponding binary operator
+- State variables use `transition`, never assignment
+
+### Simulation blocks
+
+```
+let mut position: meters = 0
+let velocity: meters = 2
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  position = position + velocity * dt
+  print(position)   // 2 / 4 / 6
+}
+```
+
+- `floor(duration / step)` deterministic iterations — no real-time waiting
+- `time` variable injected into body (type matches duration unit)
+- Duration and step must share the same time unit; plain `Number` → TypeError
+- Time units: `seconds`/`s`, `milliseconds`/`ms`, `minutes`/`min`, `hours`/`h`
+- Outer mutable variables and state transitions persist across iterations
+
+### While loops and loop control
+
+```
+let mut x: Number = 0
+
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+    print(x)
+}
+// 1 2 4 5 6 7
+```
+
+- Condition must be `Bool`; any other type → TypeError
+- `break`: exits the nearest enclosing while loop
+- `continue`: skips the rest of the body and re-evaluates the condition
+- Both target the **nearest** enclosing while only; no labels
+- Neither crosses function or simulate boundaries (loop context resets on entry)
+
+### Bytecode backend
+
+```sh
+kimin bytecode examples/bytecode_demo.kimin   # print IR disassembly
+kimin vm       examples/while.kimin           # execute via stack-based VM
+```
+
+- Flat bytecode IR with constant pool and jump patching
+- Function chunks (`FunctionChunk`), simulate body chunks (`SimulateChunk`)
+- Env-chain scope model (same as tree-walk interpreter) — closures via `Value::BytecodeFunction { name, env }`
+- Dynamic/computed calls: callee expression compiled onto stack → `CALL arg_count`
+- `while` loops lower to `JumpIfFalse`/`Jump`/`BeginScope`/`EndScope` — no new VM instructions
+- `break`/`continue` lower to `EndScope × N + Jump` with `LoopContext` patch tracking
+- Full parity with tree-walk output for all example files
+
+---
+
+## 🚀 Getting Started
+
+Requires [Rust](https://rustup.rs/) (edition 2021).
+
+```sh
+git clone https://github.com/MatthewKim07/kimin-lang.git
+cd kimin-lang
+cargo build --release
+```
+
+Binary at `target/release/kimin`.
+
+### CLI commands
+
+| Command | Description |
+|---|---|
+| `kimin run <file>` | Run a `.kimin` file (tree-walk interpreter) |
+| `kimin check <file>` | Type-check only — no execution |
+| `kimin repl` | Interactive REPL with persistent type checker |
+| `kimin bytecode <file>` | Print bytecode IR disassembly |
+| `kimin vm <file>` | Execute via stack-based bytecode VM |
+
+```sh
+cargo run -- run examples/simulate_motion.kimin
+cargo run -- run examples/states.kimin
+cargo run -- check examples/typed_functions.kimin
+cargo run -- bytecode examples/bytecode_demo.kimin
+cargo run -- vm examples/vm_closure_capture.kimin
+cargo run -- repl
+```
+
+---
+
+## 📋 Examples
+
+<details>
+<summary><strong>Unit arithmetic and compound unit inference</strong></summary>
+
+```
+let distance: meters = 10
+let time: seconds = 2
+let speed = distance / time   // type: meters/seconds (inferred)
+let back = speed * time       // type: meters (compound simplification)
+print(speed)   // 5
+print(back)    // 10
+```
+
+</details>
+
+<details>
+<summary><strong>State machines with transitions</strong></summary>
+
+```
+state Door {
+  closed
+  opening
+  open
+
+  transition closed -> opening
+  transition opening -> open
+}
+
+let door: Door = Door.closed
+print(door)              // Door.closed
+
+transition door -> opening
+print(door)              // Door.opening
+
+transition door -> open
+print(door)              // Door.open
+```
+
+</details>
+
+<details>
+<summary><strong>Simulation — motion with velocity</strong></summary>
+
+```
+let mut position: meters = 0
+
+let dist_per_step: meters = 2
+let unit_time: seconds = 1
+let velocity = dist_per_step / unit_time   // meters/seconds
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  position = position + velocity * dt
+  print(position)   // 2 / 4 / 6
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Closures</strong></summary>
+
+```
+fn make_getter() {
+  let x = 77
+  fn get() { return x }
+  return get
+}
+
+let getter = make_getter()
+print(getter())   // 77 — captured env survives after make_getter returns
+```
+
+</details>
+
+<details>
+<summary><strong>Typed functions with unit parameters</strong></summary>
+
+```
+fn add_distance(a: meters, b: meters) -> meters {
+  return a + b
+}
+
+fn scale(distance: meters, factor: Number) -> meters {
+  return distance * factor
+}
+
+fn ratio(a: meters, b: meters) -> Number {
+  return a / b
+}
+
+print(add_distance(10, 5))   // 15
+print(scale(3, 4))           // 12
+print(ratio(10, 2))          // 5
+```
+
+</details>
+
+<details>
+<summary><strong>Recursion</strong></summary>
+
+```
+fn fact(n: Number) -> Number {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+
+print(fact(5))   // 120
+```
+
+</details>
+
+---
+
+## 🐛 Error Messages
+
+Kimin catches most errors statically before execution:
+
+```
+TypeError at line 3, col 5:  cannot add meters and seconds
+TypeError at line 2, col 5:  variable 'v' declared as meters but initializer has type meters/seconds
+TypeError at line 7, col 1:  invalid transition for Door: closed -> closed
+TypeError at line 6, col 18: unknown variant 'locked' for state machine 'Door'
+TypeError at line 1, col 1:  function 'add' expected 2 arguments but got 1
+TypeError at line 2, col 5:  cannot assign to immutable variable 'x'
+TypeError at line 4, col 1:  'break' used outside of a while loop
+TypeError:                   while condition must be Bool, got Number
+ParseError at line 2, col 5: expected expression
+LexError  at line 3, col 7:  unexpected character '@'
+```
+
+---
+
+## ⚠️ Known Limitations
+
+| Limitation | Notes |
+|---|---|
+| No anonymous functions | No lambda syntax |
+| No `for` loops | Iteration via `while` and `simulate` only |
+| No labeled `break`/`continue` | Targets nearest enclosing while only |
+| No mutable function parameters | Parameters are always immutable |
+| No compound unit annotations | `let v: meters/seconds = x` is a ParseError — inference only |
+| No derived unit aliases | `kg*m/s²` does not reduce to `newtons`; no named derived units |
+| No unit conversion | No SI prefixes; `meters` and `feet` are unrelated types |
+| No time unit conversion | `minutes` and `seconds` are distinct non-interchangeable types |
+| State transitions in functions | `transition` inside a function body modifies the local copy, not the caller's variable |
+| `RuntimeError` has no source location | Runtime errors report message only — no line/col yet |
+| Bytecode VM: recursive closure cycles | A function stored in its own captured env creates an `Rc` cycle → memory leak; harmless for run-and-exit programs |
+| No multiline REPL input | Multi-line constructs (functions, while) must fit on one input line in the REPL |
+| No package system | No module imports or namespacing |
+
+---
+
+## 🗺️ Roadmap
+
+| Milestone | Focus | |
+|---|---|---|
+| 1 | Lexer, parser, AST, tree-walk interpreter, REPL | ✅ |
+| 2A | Named functions, parameters, return, recursion | ✅ |
+| 2B | Closures and lexical scoping | ✅ |
+| 3 | Static type checker | ✅ |
+| 4 | Unit-aware types | ✅ |
+| 4B | Compound unit inference | ✅ |
+| 5 | State machines | ✅ |
+| 6A | `simulate` blocks | ✅ |
+| 6B | Extended time units | ✅ |
+| 7A | `let mut` and type-safe assignment | ✅ |
+| 8A | Flat bytecode IR (`kimin bytecode`) | ✅ |
+| 8B | Function chunks and named call lowering | ✅ |
+| 8C | Stack-based bytecode VM (`kimin vm`) | ✅ |
+| 8D | State machine execution in VM | ✅ |
+| 8E | `simulate` block execution in VM | ✅ |
+| 8F | Closure and free-variable capture in VM | ✅ |
+| 8G | Dynamic/computed call execution in VM | ✅ |
+| 9A | Compound assignment operators (`+=`, `-=`, `*=`, `/=`) | ✅ |
+| 9B | While loops | ✅ |
+| 9C | `break` and `continue` | ✅ |
+
+---
+
+## 🧪 Tests
+
+```sh
+cargo test
+# 879 passed, 0 failed
+```
+
+Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
+
+---
+
+## 📁 Source
+
+```
+src/
+  main.rs         CLI (clap) — run / check / repl / bytecode / vm
+  token.rs        Token types and Span
+  lexer.rs        Source → tokens
+  ast.rs          Expression and statement AST nodes
+  parser.rs       Recursive-descent parser + unit name registry
+  typechecker.rs  Static type checker (TypeEnv, UnitDimension, State types, loop_depth)
+  value.rs        Runtime values: Number, Text, Bool, Nil, Function, StateValue, BytecodeFunction
+  env.rs          Lexical scope chain — Rc<RefCell<Env>>
+  interpreter.rs  Tree-walk interpreter (ExecFlow: Normal / Return / Break / Continue)
+  error.rs        Structured errors: Lex / Parse / Type / Runtime / Compile
+  repl.rs         Interactive REPL with persistent type checker and interpreter
+  bytecode.rs     Instruction enum, Chunk, FunctionChunk, SimulateChunk, BytecodeProgram
+  compiler.rs     BytecodeCompiler — AST → flat bytecode (LoopContext for break/continue patching)
+  disassemble.rs  Human-readable bytecode listing printer
+  vm.rs           Stack-based VM — env-chain model, execute_chunk
+  lib.rs          Module declarations
+  tests.rs        879 unit tests
+examples/
+  hello.kimin                       arithmetic.kimin
+  variables.kimin                   conditionals.kimin
+  blocks.kimin                      errors.kimin
+  functions.kimin                   return.kimin
+  recursion.kimin                   function_errors.kimin
+  lexical_scoping.kimin             closure.kimin
+  types.kimin                       typed_functions.kimin
+  type_errors.kimin                 units.kimin
+  unit_functions.kimin              unit_errors.kimin
+  compound_units.kimin              compound_unit_errors.kimin
+  states.kimin                      state_errors.kimin
+  state_functions.kimin             simulate.kimin
+  simulate_state.kimin              simulate_errors.kimin
+  simulate_time_units.kimin         simulate_time_unit_errors.kimin
+  simulate_motion.kimin             mutable.kimin
+  mutable_units.kimin               mutable_errors.kimin
+  compound_assignment.kimin         compound_assignment_units.kimin
+  simulate_compound_assignment.kimin  compound_assignment_errors.kimin
+  while.kimin                       while_units.kimin
+  while_function.kimin              while_state.kimin
+  while_errors.kimin                break_continue.kimin
+  break_continue_nested.kimin       break_continue_function.kimin
+  break_continue_errors.kimin       bytecode_demo.kimin
+  bytecode_functions.kimin          vm_demo.kimin
+  vm_recursion.kimin                vm_simulate_state.kimin
+  vm_closure_capture.kimin          vm_dynamic_calls.kimin
+  vm_dynamic_adder.kimin
+```
+
+<details>
+<summary><strong>Detailed feature notes by milestone</strong></summary>
 
 ### Milestone 1
 - Integers and floats (`10`, `3.14`)
@@ -57,39 +578,26 @@ This repository contains **Milestone 9C** (complete): break and continue. Built 
 - Unit-aware type annotations: `let distance: meters = 10`, `let time: seconds = 2`
 - Unit types are **static-only** — the runtime sees plain numbers; no overhead at execution time
 - 13 built-in units with short aliases: `m`/`meters`, `s`/`seconds`, `kg`/`kilograms`, `A`/`amps`/`amperes`, `K`/`kelvin`, `mol`/`moles`, `cd`/`candela`, `rad`/`radians`, `deg`/`degrees`, `V`/`volts`, `W`/`watts`, `J`/`joules`, `N`/`newtons`
-- Unit arithmetic rules enforced by the type checker:
-  - `meters + meters → meters` (same unit, ok)
-  - `meters + seconds → TypeError` (different units)
-  - `Number * meters → meters` (scalar scaling)
-  - `meters / meters → Number` (same-unit division gives dimensionless result)
+- Unit arithmetic rules enforced by the type checker
 - Number literals promote to unit type at assignment (`let d: meters = 10` is valid)
 - Unit-typed function parameters and return types: `fn add_dist(a: meters, b: meters) -> meters`
-- Number literals promote in function call arguments (`add_dist(10, 5)` is valid)
 
 ### Milestone 4B
 - **Compound unit inference**: the type checker infers compound unit types from `*` and `/`
   - `meters / seconds → meters/seconds` (inferred, not annotated)
-  - `meters * seconds → meters*seconds`
   - `meters * meters → meters^2`
   - `(meters/seconds) * seconds → meters` (compound simplification)
   - `Number / seconds → 1/seconds` (reciprocal)
-  - `meters/seconds / meters/seconds → Number` (same compound unit divides to dimensionless)
-- Compound unit types display as `meters/seconds`, `meters^2`, `1/seconds`, `kilograms*meters/seconds^2`
-- No new source annotation syntax — compound types are inferred only; annotations remain single base units
+- No new source annotation syntax — compound types are inferred only
 - No runtime changes
 
 ### Milestone 5
 - **State machine declarations**: `state Name { variant1  variant2  transition v1 -> v2 }`
 - **State variable binding**: `let door: Door = Door.closed`
 - **Controlled transition statements**: `transition door -> opening`
-- **Static transition checking**: the type checker validates transitions against declared rules
-  - `transition door -> opening` where `closed -> opening` is declared: ok
-  - `transition door -> open` where `closed -> open` is NOT declared: `TypeError: invalid transition for Door: closed -> open`
-  - `transition door -> locked` where `locked` is not a variant: `TypeError: unknown variant 'locked' for state machine 'Door'`
-  - `transition x -> open` where `x` is a `Number`: `TypeError: 'x' has type Number, not a state machine`
-- **Known-variant tracking**: the type checker tracks statically known current variant and updates it after each transition
-- **State types in functions**: `fn foo(d: Door) -> Door { ... }` — functions accept and return state types
-- **Runtime state values** print as `Door.closed`, `Door.opening`, etc.
+- **Static transition checking**: validates transitions against declared rules
+- **Known-variant tracking**: type checker updates after each transition
+- **State types in functions**: `fn foo(d: Door) -> Door { ... }`
 - `transition` is a controlled mutation statement — NOT general variable assignment
 
 ### Milestone 6A
@@ -97,556 +605,55 @@ This repository contains **Milestone 9C** (complete): break and continue. Built 
   - Deterministic loop: `floor(duration / step)` iterations, no real-time waiting
   - `time` variable injected into the body scope, type matches duration unit
   - Duration and step must be a time unit (or `Unknown` for gradual typing)
-  - State transitions inside the body persist across iterations (outer variable mutated via `assign_existing`)
-- **Static checks**:
-  - Duration must be a time unit — plain `Number` is a `TypeError`
-  - Step unit must match duration unit exactly
-  - `time` is undefined outside the simulate block
-- **Runtime checks**:
-  - `step <= 0` → `RuntimeError`
-  - `duration < 0` → `RuntimeError`
+  - State transitions inside the body persist across iterations
 
 ### Milestone 6B
 - **Extended time units for `simulate`**: `milliseconds`/`ms`, `minutes`/`min`, `hours`/`h` now accepted in addition to `seconds`/`s`
-  - Duration and step must share the exact same canonical time unit — no conversion between units
-  - `ms` and `milliseconds` are identical types; same for `min`/`minutes` and `h`/`hours`
 
 ### Milestone 7A
 - **`let mut` and assignment**: disciplined, type-safe variable reassignment
   - Variables are immutable by default; only `let mut` bindings may be reassigned
-  - `let mut x: Number = 0` declares a mutable variable
-  - `x = x + 1` reassigns it — type must be preserved; Number promotes to unit at assignment site
-  - State variables must use `transition` — `door = Door.open` is a `TypeError`
+  - `let mut x: Number = 0` declares a mutable variable; `x = x + 1` reassigns it
+  - State variables must use `transition` — direct assignment is a `TypeError`
   - Assignment is a statement, not an expression
-- **`simulate` + mutation** — mutable outer variables update across iterations:
-  ```
-  let mut position: meters = 0
-  let dist_per_step: meters = 2
-  let unit_time: seconds = 1
-  let velocity = dist_per_step / unit_time
-  let duration: seconds = 3
-  let dt: seconds = 1
-  simulate duration step dt {
-    position = position + velocity * dt
-    print(position)
-  }
-  // 2 / 4 / 6
-  ```
 
 ### Milestone 8A
-- **Bytecode IR emission**: `kimin bytecode <file>` compiles a source file and prints a human-readable flat bytecode listing
-  - New modules: `bytecode.rs` (types), `compiler.rs` (lowering), `disassemble.rs` (printer)
-  - `Instruction` enum covers literals, globals/locals, arithmetic, comparisons, print, control flow, scoping, and return
-  - Constant pool: numbers, strings, booleans, nil
-  - Jump patching: `JumpIfFalse` and `Jump` targets are filled in after the branch body is emitted
-  - Local scope: variables inside `{ ... }` blocks emit `DefineLocal`/`LoadLocal`/`StoreLocal`; top-level emit `DefineGlobal`/`LoadGlobal`/`StoreGlobal`
+- **Bytecode IR emission**: `kimin bytecode <file>` compiles source and prints a flat bytecode listing
+  - `Instruction` enum: literals, globals/locals, arithmetic, comparisons, print, control flow, scoping, return
+  - Jump patching: `JumpIfFalse` and `Jump` targets filled in after branch body is emitted
   - `CompileError` type added; `KiminError::Compile` variant added
-- **`kimin bytecode` CLI command**: emits the disassembly listing to stdout; lex/parse/typecheck errors still reported normally
 
 ### Milestone 8B
-- **Function chunks**: `BytecodeProgram` now contains `main: Chunk` and `functions: Vec<FunctionChunk>`
-  - Each `FunctionChunk` stores `name`, `params`, `arity`, and its own `Chunk`
-  - Function declarations lower to `LOAD_FUNCTION name` + `DEFINE_GLOBAL name` in the main chunk and a separate function chunk
-  - Function parameters are pre-seeded as locals; body `let` bindings also emit `DefineLocal`/`LoadLocal`
-  - Bodies without an explicit `return` receive an implicit `NIL` + `RETURN` at the end
-- **Named call lowering**: `Expr::Call` with a simple variable callee lowers to argument expressions followed by `CALL name arg_count`
-  - Recursive calls (e.g., `fact(n - 1)`) correctly emit `CALL fact 1` inside the function chunk
-  - Nested calls (e.g., `square(add(2, 3))`) emit inner call before outer call
-  - Dynamic (computed) callees emit `UNSUPPORTED(dynamic call)` — not yet lowered
-- **Disassembler**: prints each function chunk after main with header `=== function name/arity ===` and `params:` line
-- State machines, `transition`, and `simulate` still emit `Unsupported(...)` markers
-- Tree-walk interpreter is unchanged and remains the execution source of truth for `kimin run`
+- **Function chunks**: `BytecodeProgram { main: Chunk, functions: Vec<FunctionChunk> }`
+  - Function declarations lower to `LOAD_FUNCTION name` + `DEFINE_GLOBAL name` in main chunk
+  - Bodies without `return` receive implicit `NIL + RETURN`
 
 ### Milestone 8C
 - **Bytecode VM**: `kimin vm <file>` executes `.kimin` files through the bytecode compiler and a stack-based VM
-  - New module `src/vm.rs`: `Vm { program, globals, output }` with `run()`, `take_output()`
-  - `execute_chunk` dispatches all lowered instructions (literals, arithmetic, comparisons, variables, control flow, print, scoping, functions)
-  - Function calls: clone chunk+params from `program.functions`, build param frame, recursive `execute_chunk`
-  - `Value::BytecodeFunction(String)` — name-only function reference used by `LoadFunction`
-  - `Unsupported(...)` instructions produce `RuntimeError: bytecode feature not yet executable: ...`
   - Division by zero, undefined variables, and wrong-arity calls produce clean `RuntimeError`
-  - `kimin run` is unchanged — tree-walk interpreter remains the source of truth
-  - `kimin vm` is an experimental parallel execution path
+  - `kimin run` unchanged — tree-walk interpreter remains source of truth
 
-### Milestone 8D
-- **State machine execution in bytecode VM**: `kimin vm` now fully executes state declarations, state variant values, and transition statements
-  - Three new bytecode instructions: `DefineState`, `LoadState`, `Transition`
-  - `DefineState`: registers state name, variants, and allowed transitions in VM state registry (`Vm.states`)
-  - `LoadState`: pushes `Value::StateValue { state_name, variant_name }` onto the stack; validates state + variant exist
-  - `Transition`: reads current variable value, validates the edge exists in the state registry, updates the variable in-place
-  - `RuntimeStateMachine { variants, transitions }` tracks state metadata at runtime
-  - `get_var` / `assign_var` free functions walk locals innermost-first then globals (matches tree-walk semantics)
-  - `kimin vm examples/states.kimin` and `kimin vm examples/state_functions.kimin` now produce output matching `kimin run`
-
-### Milestone 8E
-- **Simulate block execution in bytecode VM**: `kimin vm` now fully executes `simulate` blocks
-  - New bytecode structure: `SimulateChunk { name, chunk }` stored in `BytecodeProgram.simulate_bodies`
-  - New instruction: `Instruction::Simulate { body_idx }` — duration and step are compiled inline before it
-  - Body is compiled into a separate chunk by `BytecodeCompiler::new_for_simulate` with `"time"` pre-seeded as a local
-  - VM loop: `floor(duration / step)` iterations; each iteration pushes a fresh local scope, defines `time = i * step`, executes body, pops scope
-  - Outer globals (mutable variables, state machines) persist across iterations — same semantics as tree-walk interpreter
-  - State transitions inside simulate body work correctly (`transition` instruction writes through to outer scope)
-  - `return` inside simulate inside a function propagates out of the function — matching tree-walk behavior
-  - Runtime checks: step ≤ 0 → `RuntimeError`; duration < 0 → `RuntimeError`
-  - Disassembler prints each simulate body as `=== simulate simulate#0 ===` section after function sections
-  - `kimin vm examples/simulate.kimin`, `simulate_state.kimin`, `simulate_motion.kimin` all match `kimin run` output
-  - Dynamic calls and closures remain `Unsupported(...)` in the VM
-
-### Milestone 8F
-- **Closure and free-variable capture in bytecode VM**: `kimin vm` now correctly captures lexical environments
-  - `Value::BytecodeFunction` gains `env: EnvRef` — the definition-site environment
-  - VM replaced `globals: HashMap` with `global_env: EnvRef` (root of the env chain)
-  - `execute_chunk` takes `env: EnvRef`; `BeginScope`/`EndScope` push/pop child envs using `Env::new_child`
-  - `LoadFunction` captures `Rc::clone(&current_env)` — functions close over their definition scope
-  - `Call` creates `Env::new_child(captured_env)` as the call frame (lexical scoping, not dynamic)
-  - `Simulate` creates `Env::new_child(current_env)` per iteration — block-local outer variables now accessible
-  - `FnDecl` compiler fix: nested functions emit `DefineLocal` so they bind in the enclosing call env, not global
-  - All variable ops (`LoadGlobal`/`LoadLocal`/`StoreGlobal`/`StoreLocal`) walk the unified env chain
-  - `kimin vm examples/vm_closure_capture.kimin` → `3` (nested mutable capture across two calls)
-  - Tree-walk interpreter unchanged; `kimin run` unaffected
-
-### Milestone 8G
-- **Dynamic/computed function call execution in bytecode VM**: `kimin vm` now supports chained calls like `make_getter()()` and `make_adder(2)(3)`
-  - `Instruction::Call` changed from `Call { name: String, arg_count }` to `Call { arg_count }` — stack-based callee dispatch
-  - Compiler now compiles the callee expression first (pushing the function value), then arguments left-to-right, then `CALL arg_count`
-  - VM pops N args, pops callee value from stack, dispatches on `Value::BytecodeFunction { name, env }`
-  - Works for all callee shapes: simple variable (`g()`), returned function (`make_getter()()`), curried call (`make_adder(2)(3)`)
-  - Non-function callee produces clean `RuntimeError: attempted to call non-function value of type ...`
-  - Wrong arity produces `RuntimeError: function '...' expects N argument(s), got M`
-  - `kimin vm examples/vm_dynamic_calls.kimin` → `77`
-  - `kimin vm examples/vm_dynamic_adder.kimin` → `5`
-  - Tree-walk interpreter unchanged; `kimin run` unaffected
+### Milestones 8D–8G
+- **8D**: State machine execution in VM (`DefineState`, `LoadState`, `Transition` instructions)
+- **8E**: Simulate block execution in VM (`SimulateChunk`, `Instruction::Simulate { body_idx }`)
+- **8F**: Closure and free-variable capture in VM — `Value::BytecodeFunction { name, env: EnvRef }` carries definition-site env; env-chain model replaces flat HashMap
+- **8G**: Dynamic/computed call execution — `Call { arg_count }` pops callee from stack; all callee shapes share one dispatch path
 
 ### Milestone 9A
 - **Compound assignment operators** (`+=`, `-=`, `*=`, `/=`): unit-safe in-place mutation for `let mut` variables
-  - New tokens: `PlusEqual`, `MinusEqual`, `StarEqual`, `SlashEqual`
-  - New AST node: `Stmt::CompoundAssign { name, op: CompoundAssignOp, value, span }`
-  - Type checker enforces unit rules: `meters += meters` → ok; `meters += Number` → `TypeError`; `meters *= Number` → ok (scaling)
-  - State variables → `TypeError: state variables must be changed with transition, not compound assignment`
-  - Immutable variables → `TypeError: cannot assign to immutable variable`
-  - Tree-walk interpreter: load current value → eval rhs → binary op → `assign_existing`
-  - Bytecode compiler desugars to `Load/op/Store` — no new VM instructions needed
-  - Both `kimin run` and `kimin vm` support compound assignment
-  - Works inside `simulate` bodies, blocks, and functions
+  - Bytecode compiler desugars to `Load/op/Store` — no new VM instructions
 
 ### Milestone 9B
-- **While loops** (`while <condition> { <body> }`): general-purpose conditional loop
-  - Condition must have type `Bool`; any other type → `TypeError: while condition must be Bool, got …`
-  - Body has a fresh lexical scope per iteration; body-local `let` bindings do not leak
-  - Mutations to outer `let mut` variables persist across iterations
-  - `return` inside a while body propagates out of the enclosing function
-  - `TokenKind::While` keyword; `whiley` still lexes as an identifier
-  - Bytecode lowering uses existing jump instructions: condition → `JUMP_IF_FALSE(loop_end)` → `BEGIN_SCOPE` → body → `END_SCOPE` → `JUMP(loop_start)` — no new VM instructions
-  - Both `kimin run` and `kimin vm` support while loops
-  - `break` and `continue` are supported (see Milestone 9C)
-
-```kimin
-let mut x: Number = 0
-
-while x < 5 {
-  print(x)
-  x += 1
-}
-// prints 0 1 2 3 4
-```
+- **While loops** (`while <condition> { <body> }`)
+  - Condition must have type `Bool`
+  - Body has a fresh lexical scope per iteration
+  - Bytecode: `JumpIfFalse`/`Jump`/`BeginScope`/`EndScope` — no new VM instructions
 
 ### Milestone 9C
 - **`break`**: exits the nearest enclosing while loop immediately
 - **`continue`**: skips the rest of the current while-body iteration and re-evaluates the condition
-  - Both are only valid inside a `while` loop; using either outside a while loop → `TypeError`
-  - `break`/`continue` do not cross function or simulate boundaries (resetting loop context on entry)
-  - Nested loops: `break`/`continue` always target the **nearest** enclosing while
-  - `return` inside a while loop still exits the enclosing function (takes precedence over loop control)
-  - No labeled break/continue; no break values; no `for` loops
-  - Bytecode: both desugar to `EndScope` instructions (to unwind nested block scopes) followed by a `Jump` — no new VM instructions required
-  - Both `kimin run` and `kimin vm` support break/continue
-
-```kimin
-let mut x: Number = 0
-
-while x < 10 {
-    x += 1
-    if x == 3 { continue }
-    if x == 8 { break }
-    print(x)
-}
-// prints 1 2 4 5 6 7
-```
-
----
-
-## Install
-
-Requires [Rust](https://rustup.rs/) (edition 2021).
-
-```sh
-git clone https://github.com/MatthewKim07/kimin-lang.git
-cd kimin-lang
-cargo build --release
-```
-
-The binary is at `target/release/kimin`.
-
----
-
-## Usage
-
-### Run a file
-
-```sh
-cargo run -- run examples/functions.kimin
-```
-
-### Check syntax and types (no execution)
-
-```sh
-cargo run -- check examples/functions.kimin
-```
-
-### Start the REPL
-
-```sh
-cargo run -- repl
-```
-
-### Print bytecode IR
-
-```sh
-cargo run -- bytecode examples/bytecode_demo.kimin
-```
-
-### Execute via bytecode VM (experimental)
-
-```sh
-cargo run -- vm examples/vm_demo.kimin
-cargo run -- vm examples/vm_recursion.kimin
-```
-
----
-
-## Examples
-
-### functions.kimin
-
-```kimin
-fn add(a: Number, b: Number) -> Number {
-  return a + b
-}
-
-fn square(x: Number) -> Number {
-  return x * x
-}
-
-print(add(2, 3))
-print(square(5))
-print(square(add(2, 3)))
-```
-
-```
-5
-25
-25
-```
-
-### simulate.kimin — time simulation block
-
-```kimin
-let duration: seconds = 3
-let dt: seconds = 1
-
-simulate duration step dt {
-  print(time)
-}
-```
-
-```
-0
-1
-2
-```
-
-### states.kimin — state machines
-
-```kimin
-state Door {
-  closed
-  opening
-  open
-
-  transition closed -> opening
-  transition opening -> open
-}
-
-let door: Door = Door.closed
-print(door)
-
-transition door -> opening
-print(door)
-
-transition door -> open
-print(door)
-```
-
-```
-Door.closed
-Door.opening
-Door.open
-```
-
-### compound_units.kimin — compound unit inference
-
-```kimin
-let distance: meters = 10
-let time: seconds = 2
-let speed = distance / time   // type: meters/seconds
-let back = speed * time       // type: meters (simplification)
-print(speed)   // 5
-print(back)    // 10
-```
-
-```
-5
-10
-```
-
-### units.kimin — unit-aware types
-
-```kimin
-let distance: meters = 10
-let extra: meters = 5
-let total = distance + extra
-
-let time: seconds = 2
-let more_time: s = 3
-let total_time = time + more_time
-
-print(total)
-print(total_time)
-```
-
-```
-15
-5
-```
-
-### unit_functions.kimin — functions with unit types
-
-```kimin
-fn add_distance(a: meters, b: meters) -> meters {
-  return a + b
-}
-
-fn scale_distance(distance: meters, factor: Number) -> meters {
-  return distance * factor
-}
-
-fn ratio(a: meters, b: meters) -> Number {
-  return a / b
-}
-
-print(add_distance(10, 5))
-print(scale_distance(3, 4))
-print(ratio(10, 2))
-```
-
-```
-15
-12
-5
-```
-
-### types.kimin — type annotations
-
-```kimin
-let count: Number = 42
-let name: Text = "Kimin"
-let active: Bool = true
-
-print(count)
-print(name)
-print(active)
-```
-
-```
-42
-Kimin
-true
-```
-
-### recursion.kimin
-
-```kimin
-fn fact(n: Number) -> Number {
-  if n <= 1 {
-    return 1
-  }
-  return n * fact(n - 1)
-}
-
-print(fact(5))
-```
-
-```
-120
-```
-
-### conditionals.kimin
-
-```kimin
-let score = 12
-
-if score > 10 {
-  print("high")
-} else {
-  print("low")
-}
-```
-
-```
-high
-```
-
----
-
-## Error Messages
-
-```
-TypeError at line 1, column 5: variable 'x' declared as Number but initializer has type Text
-TypeError at line 3, column 12: function 'add' argument 2 expected Number but got Text
-TypeError at line 2, column 3: function declared return type Number but returned Text
-TypeError at line 1, column 1: function 'add' expected 2 arguments but got 1
-TypeError at line 1, column 1: cannot call 'x': value has type Number, not Function
-TypeError: if condition must be Bool, got Number
-TypeError at line 3, column 5: cannot add meters and seconds
-TypeError at line 2, column 5: variable 'bad' declared as seconds but initializer has type meters
-TypeError at line 1, column 5: cannot add meters/seconds and meters
-TypeError at line 4, column 5: variable 'v' declared as meters but initializer has type meters/seconds
-ParseError at line 2, column 5: expected expression
-LexError at line 3, column 7: unexpected character '@'
-```
-
----
-
-## Tests
-
-```sh
-cargo test
-```
-
-879 tests pass as of Milestone 9C audit hardening.
-
----
-
-## Project Structure
-
-```
-src/
-  main.rs         CLI entry point (clap) — run / check / repl / bytecode subcommands
-  lib.rs          Module declarations + tests
-  token.rs        Token types and Span
-  lexer.rs        Source → tokens
-  ast.rs          Expression and statement AST nodes (includes TypeAnnotation, Param)
-  parser.rs       Recursive-descent parser (includes resolve_unit registry)
-  typechecker.rs  Static type checker (TypeEnv, TypeChecker, Type, NumberWithUnit)
-  value.rs        Runtime value enum (includes FunctionValue)
-  env.rs          Lexical scope chain (Rc<RefCell<Env>>)
-  interpreter.rs  Tree-walk interpreter
-  error.rs        Structured error types (KiminError wraps Lex/Parse/Type/Runtime/Compile)
-  repl.rs         Interactive REPL
-  bytecode.rs     Instruction enum, Constant, Chunk, FunctionChunk, BytecodeProgram
-  compiler.rs     BytecodeCompiler — lowers AST to bytecode; function chunks + named calls
-  disassemble.rs  Human-readable bytecode listing printer (main + function chunks)
-  tests.rs        Unit tests (879 tests)
-examples/
-  hello.kimin
-  arithmetic.kimin
-  variables.kimin
-  conditionals.kimin
-  blocks.kimin
-  errors.kimin
-  functions.kimin
-  return.kimin
-  recursion.kimin
-  function_errors.kimin
-  lexical_scoping.kimin
-  closure.kimin
-  types.kimin
-  typed_functions.kimin
-  type_errors.kimin
-  units.kimin
-  unit_functions.kimin
-  unit_errors.kimin
-  compound_units.kimin
-  compound_unit_errors.kimin
-  states.kimin
-  state_errors.kimin
-  state_functions.kimin
-  simulate.kimin
-  simulate_state.kimin
-  simulate_errors.kimin
-  simulate_time_units.kimin
-  simulate_time_unit_errors.kimin
-  mutable.kimin
-  mutable_units.kimin
-  mutable_errors.kimin
-  simulate_motion.kimin
-  bytecode_demo.kimin
-  bytecode_functions.kimin
-  vm_closure_capture.kimin
-  vm_dynamic_calls.kimin
-  vm_dynamic_adder.kimin
-  compound_assignment.kimin
-  compound_assignment_units.kimin
-  simulate_compound_assignment.kimin
-  compound_assignment_errors.kimin
-```
-
----
-
-## Known Limitations
-
-- No anonymous functions / lambda syntax
-- No multiline REPL — function declarations must fit on one input line in the REPL
-- `print` is a statement keyword, not a user-definable function
-- No variable assignment after declaration (`let` only; no `x = 5`)
-- `RuntimeError` has no source location yet (spans planned for a future milestone)
-- Units are static-only in M4 — no runtime unit tracking or unit conversion
-- No derived unit simplification (`kg*m/s²` does not automatically reduce to `newtons`)
-- No compound unit annotations in source — compound types are inferred only; you cannot write `let v: meters/seconds = ...`
-- State transitions inside function bodies modify the function's local copy, not the caller's variable
-- No state transition guards or entry/exit actions
-- No automatic or event-driven transitions
-- No SI prefixes (`km`, `MHz` are not recognized)
-- No `5 meters` expression-literal syntax — units can only appear as type annotations
-- No unit conversion between time units — `minutes` and `seconds` are distinct, non-interchangeable types
-- `simulate` body type-checked once; known-variant tracking after transitions inside the body does not carry across iterations statically
-- Compound assignment unit rules: `d += 10` where `d: meters` → `TypeError`; right-hand side must match the variable's unit type for `+=`/`-=`
-- No mutable function parameters — parameters are always immutable
-- No `for` loops or range-based iteration — only `while` and `simulate`
-- No labeled `break`/`continue`; `break` and `continue` always target the nearest enclosing while loop
-- Bytecode VM: `Rc` reference cycles on recursive closures (a function stored in its own captured env) — memory leak; programs run-and-exit so no crash
-- State transitions inside function bodies (in the VM) modify the function's local parameter copy, not the caller's variable — matches tree-walk semantics
-
----
-
-## Roadmap
-
-| Milestone | Focus | Status |
-|-----------|-------|--------|
-| 1 | Lexer, parser, AST, tree-walk interpreter, REPL, tests | ✓ done |
-| 2A | Named functions, parameters, return, recursion | ✓ done |
-| 2B | Closures and lexical scoping (`Rc<RefCell<Env>>` chain) | ✓ done |
-| 3 | Static type checking | ✓ done |
-| 4 | Unit-aware types (`let d: meters = 10`) | ✓ done |
-| 4B | Compound unit inference (`meters / seconds → meters/seconds`) | ✓ done |
-| 5 | State machines as first-class language constructs | ✓ done |
-| 6A | `simulate` blocks with `seconds` time unit and `time` variable | ✓ done |
-| 6B | Extended time units (`milliseconds`, `minutes`, `hours`) for `simulate` | ✓ done |
-| 7A | `let mut` and type-safe assignment; mutable simulate accumulators | ✓ done |
-| 8A | Flat bytecode IR emission (`kimin bytecode`); `Unsupported` markers for advanced features | ✓ done |
-| 8B | Function chunks and named call lowering in bytecode IR | ✓ done |
-| 8C | Minimal stack-based bytecode VM (`kimin vm`); VM audit and hardening | ✓ done |
-| 8D | State machine execution in bytecode VM | ✓ done |
-| 8E | `simulate` block execution in bytecode VM | ✓ done |
-| 8F | Closure and free-variable capture in bytecode VM | ✓ done |
-| 8G | Dynamic/computed call execution in bytecode VM | ✓ done |
+  - Both are valid only inside a `while` loop; using either outside → `TypeError`
+  - `break`/`continue` do not cross function or simulate boundaries
+  - Bytecode: `EndScope × N + Jump` with `LoopContext` patch tracking — no new VM instructions
+
+</details>
