@@ -9368,3 +9368,557 @@ fn m9c_regression_while_return_still_works() {
 print(f())"#;
     assert_eq!(vm_run(src).unwrap(), vec!["3"]);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Milestone 9C Audit — break and continue hardening tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── 9C Audit: Lexer ────────────────────────────────────────────────────────
+
+#[test]
+fn lex_breakthrough_identifier() {
+    let kinds = tokenize("breakthrough");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "breakthrough"));
+}
+
+#[test]
+fn lex_precontinue_identifier() {
+    let kinds = tokenize("precontinue");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "precontinue"));
+}
+
+// ─── 9C Audit: Parser ───────────────────────────────────────────────────────
+
+#[test]
+fn parse_break_parses_as_stmt_break() {
+    let src = "let mut x = 0\nwhile x < 5 { x += 1\nbreak }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::While { body, .. } = &stmts[1] {
+        assert!(matches!(body[1], crate::ast::Stmt::Break { .. }));
+    } else {
+        panic!("expected While");
+    }
+}
+
+#[test]
+fn parse_continue_parses_as_stmt_continue() {
+    let src = "let mut x = 0\nwhile x < 5 { x += 1\ncontinue }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::While { body, .. } = &stmts[1] {
+        assert!(matches!(body[1], crate::ast::Stmt::Continue { .. }));
+    } else {
+        panic!("expected While");
+    }
+}
+
+#[test]
+fn parse_break_inside_nested_block() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    {
+        break
+    }
+}"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_continue_inside_nested_block() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    {
+        continue
+    }
+}"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_break_as_expression_is_error() {
+    // break is not an expression; using it in expression position is a ParseError
+    let src = "let x = break";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_continue_as_expression_is_error() {
+    // continue is not an expression
+    let src = "print(continue)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_break_does_not_consume_value() {
+    // break is a complete statement — it does not consume any following expression.
+    // The while body has exactly 2 stmts: CompoundAssign and Break.
+    let src = "let mut x = 0\nwhile x < 5 { x += 1\nbreak }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::While { body, .. } = &stmts[1] {
+        assert_eq!(body.len(), 2);
+        assert!(matches!(body[1], crate::ast::Stmt::Break { .. }));
+    } else {
+        panic!("expected While");
+    }
+}
+
+#[test]
+fn parse_continue_does_not_consume_value() {
+    let src = "let mut x = 0\nwhile x < 5 { x += 1\ncontinue }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::While { body, .. } = &stmts[1] {
+        assert_eq!(body.len(), 2);
+        assert!(matches!(body[1], crate::ast::Stmt::Continue { .. }));
+    } else {
+        panic!("expected While");
+    }
+}
+
+// ─── 9C Audit: Typechecker ──────────────────────────────────────────────────
+
+#[test]
+fn type_break_inside_nested_block_inside_while_ok() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    {
+        break
+    }
+}"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_continue_inside_nested_block_inside_while_ok() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    {
+        continue
+    }
+}"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_break_inside_function_decl_inside_while_error() {
+    // break inside a nested fn body has loop_depth=0 (reset on fn entry) → TypeError
+    let src = r#"let mut x = 0
+while true {
+    fn do_break() {
+        break
+    }
+    x += 1
+    if x == 3 { break }
+}"#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_continue_inside_function_decl_inside_while_error() {
+    let src = r#"let mut x = 0
+while true {
+    fn do_continue() {
+        continue
+    }
+    x += 1
+    if x == 3 { break }
+}"#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_continue_inside_while_inside_simulate_ok() {
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut count = 0
+simulate dur step dt {
+    while count < 10 {
+        count += 1
+        continue
+    }
+}"#;
+    assert!(check(src).is_ok());
+}
+
+// ─── 9C Audit: Interpreter ──────────────────────────────────────────────────
+
+#[test]
+fn interp_break_inside_nested_block() {
+    // break propagates up through Block → while catches it
+    let src = r#"let mut x = 0
+while x < 10 {
+    x += 1
+    {
+        if x == 4 { break }
+    }
+}"#;
+    assert_eq!(run(src).unwrap().get_var("x"), Some(Value::Number(4.0)));
+}
+
+#[test]
+fn interp_continue_inside_nested_block() {
+    // continue propagates up through Block → while re-evaluates condition
+    let src = r#"let mut x = 0
+let mut acc = 0
+while x < 5 {
+    x += 1
+    {
+        if x == 3 { continue }
+    }
+    acc += x
+}"#;
+    // acc = 1+2+4+5=12 (skipping x=3)
+    assert_eq!(run(src).unwrap().get_var("acc"), Some(Value::Number(12.0)));
+}
+
+#[test]
+fn interp_body_scope_cleanup_after_break() {
+    // Section 7A: y defined inside nested block; break fires; x never incremented
+    let src = r#"let mut x: Number = 0
+while x < 3 {
+    {
+        let y: Number = 99
+        break
+    }
+}
+print(x)"#;
+    assert_eq!(run(src).unwrap().get_var("x"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_body_scope_cleanup_after_continue() {
+    // Section 7B: continue fires before total += 1; total stays 0
+    let src = r#"let mut x: Number = 0
+let mut total: Number = 0
+while x < 3 {
+    x += 1
+    {
+        let y: Number = 100
+        continue
+    }
+    total += 1
+}"#;
+    assert_eq!(run(src).unwrap().get_var("total"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_continue_inside_while_inside_simulate() {
+    let src = r#"let dur: seconds = 2
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut x = 0
+    while x < 4 {
+        x += 1
+        if x == 2 { continue }
+        total += x
+    }
+}"#;
+    // per simulate iter: total += 1+3+4=8 (skip x=2). 2 iters → total=16
+    assert_eq!(
+        run(src).unwrap().get_var("total"),
+        Some(Value::Number(16.0))
+    );
+}
+
+// ─── 9C Audit: Bytecode ─────────────────────────────────────────────────────
+
+#[test]
+fn bytecode_break_inside_if_patched_to_loop_end() {
+    // Correct patch: break jump goes to loop_end, not loop_start or mid-loop
+    let src = "let mut x = 0\nwhile x < 10 { x += 1\nif x == 5 { break } }\nprint(x)";
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn bytecode_continue_inside_if_patched_to_loop_start() {
+    // Correct patch: continue jump goes to loop_start (re-evaluates condition)
+    let src = r#"let mut x = 0
+let mut acc = 0
+while x < 5 {
+    x += 1
+    if x == 3 { continue }
+    acc += x
+}
+print(acc)"#;
+    // acc = 1+2+4+5=12 (skip x=3)
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+#[test]
+fn bytecode_nested_continue_targets_inner_loop() {
+    // continue in inner loop patches to inner loop_start, not outer
+    let src = r#"let mut outer = 0
+let mut inner_total = 0
+while outer < 2 {
+    outer += 1
+    let mut inner = 0
+    while inner < 4 {
+        inner += 1
+        if inner == 2 { continue }
+        inner_total += inner
+    }
+}
+print(inner_total)"#;
+    // per outer iter: inner_total += 1+3+4=8. 2 outer iters → 16
+    assert_eq!(vm_run(src).unwrap(), vec!["16"]);
+}
+
+#[test]
+fn bytecode_no_break_continue_opcodes_needed() {
+    // break and continue lower to existing EndScope+Jump: no new VM opcodes added
+    let src = r#"let mut x = 0
+while x < 10 {
+    x += 1
+    if x == 3 { continue }
+    if x == 8 { break }
+}"#;
+    let prog = compile_prog(src);
+    // Break + continue + loop-back = at least 3 Jump instructions
+    let jump_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Jump(_)))
+        .count();
+    assert!(
+        jump_count >= 3,
+        "expected at least 3 Jump instructions, got {}",
+        jump_count
+    );
+}
+
+#[test]
+fn bytecode_break_continue_inside_function_compiles() {
+    let src = r#"fn search(n: Number) -> Number {
+    let mut x = 0
+    while x < n {
+        x += 1
+        if x == 3 { continue }
+        if x == 8 { break }
+    }
+    return x
+}
+print(search(10))"#;
+    let prog = compile_prog(src);
+    assert!(!prog.functions.is_empty());
+    assert_eq!(vm_run(src).unwrap(), vec!["8"]);
+}
+
+#[test]
+fn bytecode_break_continue_inside_simulate_compiles() {
+    let src = r#"let dur: seconds = 3
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut x = 0
+    while x < 5 {
+        x += 1
+        if x == 2 { continue }
+        if x == 4 { break }
+        total += x
+    }
+}
+print(total)"#;
+    // per simulate iter: total += 1+3=4 (skip x=2, break at x=4). 3 iters → 12
+    let prog = compile_prog(src);
+    assert!(!prog.simulate_bodies.is_empty());
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+// ─── 9C Audit: VM ───────────────────────────────────────────────────────────
+
+#[test]
+fn vm_continue_inside_simulate_while() {
+    let src = r#"let dur: seconds = 2
+let dt: seconds = 1
+let mut total = 0
+simulate dur step dt {
+    let mut x = 0
+    while x < 4 {
+        x += 1
+        if x == 2 { continue }
+        total += x
+    }
+}
+print(total)"#;
+    // per simulate iter: total += 1+3+4=8 (skip x=2). 2 iters → 16
+    assert_eq!(vm_run(src).unwrap(), vec!["16"]);
+}
+
+#[test]
+fn vm_break_continue_stack_clean() {
+    // After break, the stack is clean and subsequent arithmetic is correct
+    let src = r#"let mut x = 0
+let mut result = 0
+while x < 10 {
+    x += 1
+    if x == 5 { break }
+    result += x
+}
+result += 100
+print(result)"#;
+    // result = 1+2+3+4=10, then +100=110
+    assert_eq!(vm_run(src).unwrap(), vec!["110"]);
+}
+
+#[test]
+fn vm_matches_tree_break_continue_function() {
+    let src = r#"fn first_over(limit: Number) -> Number {
+    let mut x: Number = 0
+    while true {
+        x += 1
+        if x > limit {
+            break
+        }
+    }
+    return x
+}
+print(first_over(5))"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["6"]);
+}
+
+#[test]
+fn vm_matches_tree_break_continue_errors_example() {
+    // Valid portion of break_continue_errors.kimin: x reaches 2, print(x)=2
+    let src = r#"let mut x: Number = 0
+while x < 2 {
+    x += 1
+    continue
+}
+print(x)"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+// ─── 9C Audit: Function boundary ─────────────────────────────────────────────
+
+#[test]
+fn nested_function_inside_while_break_type_error() {
+    // break inside a fn declared within a while body → TypeError (loop_depth=0 in fn scope)
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    fn do_break() {
+        break
+    }
+}"#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn nested_function_inside_while_continue_type_error() {
+    let src = r#"let mut x = 0
+while x < 5 {
+    x += 1
+    fn do_continue() {
+        continue
+    }
+}"#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn function_while_continue_then_return() {
+    let src = r#"fn sum_without(n: Number, skip: Number) -> Number {
+    let mut x = 0
+    let mut acc = 0
+    while x < n {
+        x += 1
+        if x == skip { continue }
+        acc += x
+    }
+    return acc
+}
+print(sum_without(5, 3))"#;
+    // sum 1+2+4+5=12 (skip 3)
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+// ─── 9C Audit: Unit interaction ──────────────────────────────────────────────
+
+#[test]
+fn while_units_break_at_limit() {
+    let src = r#"let stride: meters = 1
+let stop: meters = 3
+let target: meters = 10
+let mut pos: meters = 0
+while pos < target {
+    pos += stride
+    if pos == stop { break }
+}
+print(pos)"#;
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn while_units_continue_skips_print() {
+    let src = r#"let stride: meters = 1
+let skip: meters = 3
+let limit: meters = 5
+let mut pos: meters = 0
+while pos < limit {
+    pos += stride
+    if pos == skip { continue }
+    print(pos)
+}"#;
+    // prints 1 2 4 5 (skips pos=3)
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2", "4", "5"]);
+}
+
+#[test]
+fn simulate_while_break_with_position() {
+    let src = r#"let duration: seconds = 2
+let dt: seconds = 1
+let stride: meters = 1
+let mut total: meters = 0
+simulate duration step dt {
+    let mut pos: meters = 0
+    let limit: meters = 5
+    while pos < limit {
+        pos += stride
+        if pos == stride { break }
+    }
+    total += pos
+}
+print(total)"#;
+    // per simulate iter: pos=1 then break, total += 1. 2 iters → 2
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+#[test]
+fn simulate_while_continue_with_position() {
+    let src = r#"let duration: seconds = 2
+let dt: seconds = 1
+let stride: meters = 1
+let skip: meters = 2
+let limit: meters = 4
+let mut acc: meters = 0
+simulate duration step dt {
+    let mut pos: meters = 0
+    while pos < limit {
+        pos += stride
+        if pos == skip { continue }
+        acc += pos
+    }
+}
+print(acc)"#;
+    // per simulate iter: acc += 1+3+4=8 (skip pos=2). 2 iters → 16
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["16"]);
+}
