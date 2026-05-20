@@ -389,6 +389,121 @@ impl BytecodeCompiler {
                     .push(jump_idx);
             }
 
+            Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                // Lowering layout:
+                //   BEGIN_SCOPE (outer for scope — holds loop var and end sentinel)
+                //     <start>
+                //     DEFINE_LOCAL i
+                //     <end>
+                //     DEFINE_LOCAL __kimin_range_end_N
+                //   @loop_start:
+                //     LOAD_LOCAL i
+                //     LOAD_LOCAL __kimin_range_end_N
+                //     LESS
+                //     JUMP_IF_FALSE @loop_end
+                //     BEGIN_SCOPE (body)
+                //       <body>          ← break → EndScope(s) + Jump(@loop_end)
+                //                       ← continue → EndScope(s) + Jump(@increment)
+                //     END_SCOPE (body)
+                //   @increment:
+                //     LOAD_LOCAL i
+                //     CONSTANT 1
+                //     ADD
+                //     STORE_LOCAL i
+                //     JUMP @loop_start
+                //   @loop_end:
+                //   END_SCOPE (outer)
+                //
+                // Note: @loop_end points to END_SCOPE(outer), so break correctly
+                // closes both the body scope (via its own EndScopes) and the outer scope.
+
+                // Use a counter to produce unique sentinel names even for nested for loops.
+                let sentinel_name = format!("__kimin_range_end_{}", self.locals_stack.len());
+
+                // Outer for scope.
+                self.chunk.emit(Instruction::BeginScope);
+                self.locals_stack.push(HashSet::new());
+
+                // Define loop variable.
+                self.compile_expr(start)?;
+                self.locals_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(var_name.clone());
+                self.chunk.emit(Instruction::DefineLocal(var_name.clone()));
+
+                // Define end sentinel.
+                self.compile_expr(end)?;
+                self.locals_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(sentinel_name.clone());
+                self.chunk
+                    .emit(Instruction::DefineLocal(sentinel_name.clone()));
+
+                // Condition check.
+                let loop_start = self.chunk.instructions.len();
+                self.chunk.emit(Instruction::LoadLocal(var_name.clone()));
+                self.chunk
+                    .emit(Instruction::LoadLocal(sentinel_name.clone()));
+                self.chunk.emit(Instruction::Less);
+                let jump_if_false_idx = self.chunk.emit(Instruction::JumpIfFalse(0));
+
+                // Body scope. Record scope_depth_before_body BEFORE body's BeginScope.
+                let scope_depth_before_body = self.locals_stack.len();
+                self.chunk.emit(Instruction::BeginScope);
+                self.locals_stack.push(HashSet::new());
+
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    scope_depth_before_body,
+                });
+
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+
+                let ctx = self.loop_stack.pop().expect("loop_stack underflow");
+                self.locals_stack.pop();
+                self.chunk.emit(Instruction::EndScope); // close body scope (normal exit)
+
+                // Increment target — continue jumps here.
+                let increment_target = self.chunk.instructions.len();
+                self.chunk.emit(Instruction::LoadLocal(var_name.clone()));
+                let one_idx = self.chunk.add_constant(Constant::Number(1.0));
+                self.chunk.emit(Instruction::Constant(one_idx));
+                self.chunk.emit(Instruction::Add);
+                self.chunk.emit(Instruction::StoreLocal(var_name.clone()));
+                self.chunk.emit(Instruction::Jump(loop_start));
+
+                // loop_end points to the outer END_SCOPE so break lands there and
+                // the outer scope is closed by the normal END_SCOPE instruction.
+                let loop_end = self.chunk.instructions.len();
+                self.chunk.emit(Instruction::EndScope); // close outer for scope
+
+                // Patch JumpIfFalse to loop_end.
+                self.chunk.instructions[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
+
+                // Patch break jumps to loop_end.
+                for idx in ctx.break_jumps {
+                    self.chunk.instructions[idx] = Instruction::Jump(loop_end);
+                }
+                // Patch continue jumps to increment_target (not loop_start).
+                for idx in ctx.continue_jumps {
+                    self.chunk.instructions[idx] = Instruction::Jump(increment_target);
+                }
+
+                // Pop the outer for scope from locals_stack.
+                self.locals_stack.pop();
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
