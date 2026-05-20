@@ -202,4 +202,12 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// Array element assignment: `arr[index] = value`. Only valid for `let mut` arrays.
+    /// The target must be an identifier naming a mutable array variable.
+    IndexAssign {
+        name: String,
+        index: Expr,
+        value: Expr,
+        span: Span,
+    },
 }

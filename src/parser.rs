@@ -87,6 +87,10 @@ impl Parser {
         } else if matches!(self.current_kind(), TokenKind::LBrace) {
             self.parse_block()
         } else if matches!(self.current_kind(), TokenKind::Ident(_))
+            && matches!(self.peek_kind(), TokenKind::LBracket)
+        {
+            self.parse_index_assign_or_expr()
+        } else if matches!(self.current_kind(), TokenKind::Ident(_))
             && matches!(self.peek_kind(), TokenKind::Eq)
         {
             self.parse_assign()
@@ -484,6 +488,41 @@ impl Parser {
         self.advance(); // consume `=`
         let value = self.parse_expr()?;
         Ok(Stmt::Assign { name, value, span })
+    }
+
+    /// Try to parse `name[index] = value` as `Stmt::IndexAssign`.
+    /// If after `]` there is no `=`, backtrack and parse as a plain expression statement.
+    fn parse_index_assign_or_expr(&mut self) -> Result<Stmt, ParseError> {
+        let saved_pos = self.pos;
+        let span = self.current_span();
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        self.advance(); // consume name
+        self.advance(); // consume `[`
+
+        let index = self.parse_expr()?;
+
+        if !matches!(self.current_kind(), TokenKind::RBracket) {
+            return Err(self.error("expected ']' after index expression"));
+        }
+        self.advance(); // consume `]`
+
+        if matches!(self.current_kind(), TokenKind::Eq) {
+            self.advance(); // consume `=`
+            let value = self.parse_expr()?;
+            Ok(Stmt::IndexAssign {
+                name,
+                index,
+                value,
+                span,
+            })
+        } else {
+            // Not an index assignment — backtrack and fall through to expression statement.
+            self.pos = saved_pos;
+            Ok(Stmt::Expr(self.parse_expr()?))
+        }
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
