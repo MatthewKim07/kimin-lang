@@ -13686,3 +13686,557 @@ fn regression_compound_assign_scalar_unaffected_by_m10b() {
     let src = "let mut x = 5\nx += 3\nprint(x)";
     assert_eq!(vm_run(src).unwrap(), vec!["8"]);
 }
+
+// ============================================================
+// M10B Audit — additional hardening tests
+// ============================================================
+
+// --- Parser: missing cases ---
+
+#[test]
+fn parse_index_compound_inside_while() {
+    let src = "let mut a = [1, 2, 3]\nlet mut i = 0\nwhile i < 3 {\na[i] += 5\ni += 1\n}";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_compound_call_target_rejected() {
+    // f()[0] += 1 — callee is not a plain ident; parser sees Ident(f) Lparen, NOT Ident LBracket,
+    // so it falls through to Stmt::Expr, then += cannot start the next statement → parse error.
+    let tokens = crate::lexer::Lexer::new(
+        "fn get() -> Number { return 1 }\nlet mut a = [1, 2]\nget()[0] += 1",
+    )
+    .tokenize()
+    .unwrap();
+    assert!(crate::parser::Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_index_compound_nested_target_rejected() {
+    // arr[0][1] += 1 — backtracking in parse_index_assign_or_expr sees `[` after `]`, not an op,
+    // backtracks, parses arr[0][1] as expression, then += starts new stmt → parse error.
+    let tokens = crate::lexer::Lexer::new("let mut a = [1, 2, 3]\na[0][1] += 1")
+        .tokenize()
+        .unwrap();
+    assert!(crate::parser::Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_index_compound_expression_context_error() {
+    // print(arr[0] += 1) — inside print arg expression, += is not valid after index → parse error.
+    let tokens = crate::lexer::Lexer::new("let mut a = [1]\nprint(a[0] += 1)")
+        .tokenize()
+        .unwrap();
+    assert!(crate::parser::Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_index_compound_missing_bracket_error() {
+    // arr[0 += 1 — missing `]` → parse error.
+    let tokens = crate::lexer::Lexer::new("let mut a = [1]\na[0 += 1")
+        .tokenize()
+        .unwrap();
+    assert!(crate::parser::Parser::new(tokens).parse().is_err());
+}
+
+// --- Typechecker: missing cases ---
+
+#[test]
+fn type_index_compound_bool_error() {
+    // Bool + Number has no valid binary op — should TypeError.
+    let e = check("let mut a = [true, false]\na[0] += 1").unwrap_err();
+    let msg = e.to_string();
+    assert!(
+        msg.contains("Bool") || msg.contains("+"),
+        "expected type error for bool compound assign in: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_index_compound_immutable_captured_array_error() {
+    // Immutable array captured by closure — index compound assign must TypeError.
+    let src = concat!(
+        "fn outer() {\n",
+        "let a = [1, 2]\n",
+        "fn update() {\na[0] += 10\n}\n",
+        "update()\n",
+        "}"
+    );
+    let e = check(src).unwrap_err();
+    assert!(
+        e.to_string().contains("immutable"),
+        "expected immutable error in: {}",
+        e
+    );
+}
+
+// --- Interpreter: missing cases ---
+
+#[test]
+fn interp_index_compound_preserves_other_elements() {
+    let src = "let mut a = [1, 2, 3]\na[1] += 10";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(12.0),
+            Value::Number(3.0),
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_compound_length_unchanged() {
+    let src = "let mut a = [1, 2, 3]\na[0] += 10";
+    let interp = run(src).unwrap();
+    if let Some(Value::Array(v)) = interp.get_var("a") {
+        assert_eq!(v.len(), 3);
+    } else {
+        panic!("expected Array");
+    }
+}
+
+#[test]
+fn interp_index_compound_closure_repeated_calls() {
+    // Two calls via separate closure variable — array persists between calls.
+    let src = concat!(
+        "fn outer() -> Number {\n",
+        "let mut nums = [1, 2, 3]\n",
+        "fn update() -> Number {\nnums[0] += 10\nreturn nums[0]\n}\n",
+        "update()\n",
+        "return update()\n",
+        "}\n",
+        "print(outer())"
+    );
+    assert_eq!(run(src).unwrap().get_var(""), None); // just run; parity checked below via vm_run
+    assert_eq!(vm_run(src).unwrap(), vec!["21"]);
+}
+
+#[test]
+fn interp_index_compound_block_shadow() {
+    // Inner block shadows outer `a` — compound assign stays in inner binding.
+    let src = concat!(
+        "let mut a = [1, 2, 3]\n",
+        "{\n",
+        "let mut a = [10, 20, 30]\n",
+        "a[0] += 99\n",
+        "}\n",
+        "print(a[0])"
+    );
+    // Outer a[0] must still be 1.
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(2.0),
+            Value::Number(3.0),
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_compound_updates_nearest_binding() {
+    // No shadow: inner block compound assign updates outer mutable array via env chain.
+    let src = concat!("let mut a = [1, 2]\n", "{\na[0] += 99\n}\n", "print(a[0])");
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![Value::Number(100.0), Value::Number(2.0)]))
+    );
+}
+
+#[test]
+fn interp_index_compound_while_loop() {
+    let src = concat!(
+        "let mut a = [1, 2, 3]\n",
+        "let mut i = 0\n",
+        "while i < 3 {\na[i] += 5\ni += 1\n}"
+    );
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(6.0),
+            Value::Number(7.0),
+            Value::Number(8.0),
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_compound_negative_index_error() {
+    let src = "let mut a = [1, 2]\na[-1] += 1";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => assert!(
+            e.to_string().contains("negative") || e.to_string().contains("out of bounds"),
+            "expected bounds error in: {}",
+            e
+        ),
+    }
+}
+
+// --- Bytecode: missing cases ---
+
+#[test]
+fn bytecode_index_compound_sub_emits_instruction() {
+    let prog = compile_prog("let mut a = [10]\na[0] -= 3");
+    assert!(prog.main.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::IndexCompoundAssign { op, .. }
+        if *op == crate::ast::CompoundAssignOp::Subtract
+    )));
+}
+
+#[test]
+fn bytecode_index_compound_mul_emits_instruction() {
+    let prog = compile_prog("let mut a = [2]\na[0] *= 4");
+    assert!(prog.main.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::IndexCompoundAssign { op, .. }
+        if *op == crate::ast::CompoundAssignOp::Multiply
+    )));
+}
+
+#[test]
+fn bytecode_index_compound_div_emits_instruction() {
+    let prog = compile_prog("let mut a = [10]\na[0] /= 2");
+    assert!(prog.main.instructions.iter().any(|i| matches!(
+        i,
+        Instruction::IndexCompoundAssign { op, .. }
+        if *op == crate::ast::CompoundAssignOp::Divide
+    )));
+}
+
+#[test]
+fn bytecode_index_compound_no_lhs_index_instruction() {
+    // Compound assign must NOT emit an INDEX instruction for the LHS read.
+    // The VM reads the old element internally. Count INDEX instructions:
+    // the only INDEX in this program should be from print(a[0]).
+    let prog = compile_prog("let mut a = [1, 2]\na[0] += 5\nprint(a[0])");
+    let index_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Index))
+        .count();
+    // Exactly one INDEX: from the print(a[0]) read, not from the compound assign.
+    assert_eq!(
+        index_count, 1,
+        "expected exactly 1 INDEX (for print read), got {}",
+        index_count
+    );
+}
+
+#[test]
+fn bytecode_index_expr_still_emits_index() {
+    // Read indexing (not assignment) still emits INDEX, not IndexCompoundAssign.
+    let prog = compile_prog("let a = [1, 2]\nprint(a[0])");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. })));
+}
+
+#[test]
+fn bytecode_index_compound_inside_function() {
+    // IndexCompoundAssign appears inside a function chunk, not main.
+    let src = "fn update(arr: Number) {\nlet mut a = [1, 2]\na[0] += arr\n}";
+    let prog = compile_prog(src);
+    let has = prog.functions.iter().any(|fc| {
+        fc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }))
+    });
+    assert!(has, "expected IndexCompoundAssign in function chunk");
+}
+
+#[test]
+fn bytecode_index_compound_inside_for() {
+    let prog = compile_prog("let mut a = [0, 0, 0]\nfor i in range(0, 3) {\na[i] += i\n}");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has, "expected IndexCompoundAssign in main chunk (for body)");
+}
+
+#[test]
+fn bytecode_index_compound_inside_simulate() {
+    let prog = compile_prog(
+        "let mut a = [0, 0]\nlet mut i = 0\nlet d: seconds = 2\nlet dt: seconds = 1\nsimulate d step dt {\na[i] += 1\ni += 1\n}",
+    );
+    let has = prog.simulate_bodies.iter().any(|sc| {
+        sc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }))
+    });
+    assert!(has, "expected IndexCompoundAssign in simulate body chunk");
+}
+
+// --- VM: missing cases ---
+
+#[test]
+fn vm_index_compound_preserves_other_elements() {
+    let src = "let mut a = [1, 2, 3]\na[1] += 10\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "12", "3"]);
+}
+
+#[test]
+fn vm_index_compound_length_unchanged() {
+    let src = "let mut a = [1, 2, 3]\na[0] += 9\nprint(len(a))";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_index_compound_closure_repeated_calls() {
+    let src = concat!(
+        "fn outer() -> Number {\n",
+        "let mut nums = [1, 2, 3]\n",
+        "fn update() -> Number {\nnums[0] += 10\nreturn nums[0]\n}\n",
+        "update()\n",
+        "return update()\n",
+        "}\n",
+        "print(outer())"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["21"]);
+}
+
+#[test]
+fn vm_index_compound_block_shadow() {
+    // Inner shadow binding updated; outer binding unchanged.
+    let src = concat!(
+        "let mut a = [1, 2, 3]\n",
+        "{\n",
+        "let mut a = [10, 20, 30]\n",
+        "a[0] += 99\n",
+        "}\n",
+        "print(a[0])"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["1"]);
+}
+
+#[test]
+fn vm_index_compound_while_loop() {
+    let src = "let mut a = [1, 2, 3]\nlet mut i = 0\nwhile i < 3 {\na[i] += 5\ni += 1\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["6", "7", "8"]);
+}
+
+#[test]
+fn vm_index_compound_negative_index_error() {
+    let src = "let mut a = [1, 2]\na[-1] += 1";
+    let err = vm_run(src).unwrap_err();
+    assert!(
+        err.to_string().contains("negative") || err.to_string().contains("out of bounds"),
+        "expected bounds error in: {}",
+        err
+    );
+}
+
+// --- Simulate audit tests ---
+
+#[test]
+fn simulate_index_compound_with_counter() {
+    // Standard pattern: mutable counter as index, compound assign per step.
+    let src = concat!(
+        "let mut a = [0, 0]\n",
+        "let mut idx = 0\n",
+        "let dur: seconds = 2\n",
+        "let dt: seconds = 1\n",
+        "simulate dur step dt {\n",
+        "a[idx] += 10\n",
+        "idx += 1\n",
+        "}\n",
+        "print(a[0])\nprint(a[1])"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "10"]);
+}
+
+#[test]
+fn simulate_index_compound_out_of_bounds_error() {
+    let src = concat!(
+        "let mut a = [0]\n",
+        "let mut idx = 0\n",
+        "let dur: seconds = 2\n",
+        "let dt: seconds = 1\n",
+        "simulate dur step dt {\n",
+        "a[idx] += 1\n",
+        "idx += 1\n",
+        "}"
+    );
+    // Second iteration idx=1 → out of bounds for len=1 array.
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => assert!(
+            e.to_string().contains("out of bounds"),
+            "expected bounds error in: {}",
+            e
+        ),
+    }
+}
+
+#[test]
+fn simulate_time_index_compound_type_error() {
+    // time has unit type (seconds) — cannot be used as array index.
+    let src = concat!(
+        "let mut a = [0, 0, 0]\n",
+        "let dur: seconds = 3\n",
+        "let dt: seconds = 1\n",
+        "simulate dur step dt {\n",
+        "a[time] += 1\n",
+        "}"
+    );
+    let e = check(src).unwrap_err();
+    assert!(
+        e.to_string().contains("Number") || e.to_string().contains("seconds"),
+        "expected unit-as-index error in: {}",
+        e
+    );
+}
+
+// --- Loop audit tests ---
+
+#[test]
+fn index_compound_for_continue_preserves_update() {
+    // continue skips i==2 iteration; other elements still get mutated.
+    let src = concat!(
+        "let mut a = [1, 2, 3, 4]\n",
+        "for i in range(0, 4) {\n",
+        "if i == 2 { continue }\n",
+        "a[i] += 10\n",
+        "}"
+    );
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(11.0),
+            Value::Number(12.0),
+            Value::Number(3.0),
+            Value::Number(14.0),
+        ]))
+    );
+    assert!(vm_run(src).is_ok()); // no print output; run for side effects only
+}
+
+#[test]
+fn index_compound_for_break_preserves_update() {
+    // break at i==2; elements 0 and 1 mutated, 2 and 3 unchanged.
+    let src = concat!(
+        "let mut a = [1, 2, 3, 4]\n",
+        "for i in range(0, 4) {\n",
+        "if i == 2 { break }\n",
+        "a[i] += 10\n",
+        "}"
+    );
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(11.0),
+            Value::Number(12.0),
+            Value::Number(3.0),
+            Value::Number(4.0),
+        ]))
+    );
+}
+
+#[test]
+fn index_compound_for_continue_vm_parity() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, 4) {\nif i == 2 { continue }\na[i] += 10\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])\nprint(a[3])";
+    assert_eq!(vm_run(src).unwrap(), vec!["11", "12", "3", "14"]);
+}
+
+#[test]
+fn index_compound_for_break_vm_parity() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, 4) {\nif i == 2 { break }\na[i] += 10\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])\nprint(a[3])";
+    assert_eq!(vm_run(src).unwrap(), vec!["11", "12", "3", "4"]);
+}
+
+#[test]
+fn index_compound_dynamic_rhs_in_loop() {
+    // Side-effectful RHS in loop: each iteration RHS function increments counter.
+    let src = concat!(
+        "let mut a = [10, 20, 30]\n",
+        "let mut counter = 0\n",
+        "fn next_val() -> Number {\ncounter += 5\nreturn counter\n}\n",
+        "for i in range(0, 3) {\na[i] += next_val()\n}\n",
+        "print(a[0])\nprint(a[1])\nprint(a[2])"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["15", "30", "45"]);
+}
+
+// --- Unit/state audit tests ---
+
+#[test]
+fn index_compound_unit_scalar_mul_supported() {
+    // meters *= Number should be valid (same rule as scalar multiply for units).
+    let src =
+        "let d1: meters = 5\nlet d2: meters = 3\nlet mut a = [d1, d2]\na[0] *= 2\nprint(a[0])";
+    assert!(check(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+#[test]
+fn index_compound_state_array_error_confirmed() {
+    let src =
+        "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet mut a = [d1, d2]\na[0] += d2";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn index_assign_state_array_still_works_after_m10b() {
+    // Plain index assign on state arrays must still work.
+    let src = "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.closed\nlet mut doors = [d1, d2]\ndoors[1] = Door.open\nprint(doors[1])";
+    assert!(run(src).is_ok());
+    assert!(vm_run(src).is_ok());
+}
+
+// --- Output matching tests ---
+
+#[test]
+fn vm_matches_tree_array_index_compound() {
+    let src = "let mut a = [1, 2, 3]\na[0] += 10\na[1] *= 3\na[2] -= 1\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["11", "6", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_array_index_compound_loop() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, len(a)) {\na[i] *= 2\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])\nprint(a[3])";
+    assert_eq!(vm_run(src).unwrap(), vec!["2", "4", "6", "8"]);
+}
+
+#[test]
+fn vm_matches_tree_array_index_compound_simulate() {
+    let src = concat!(
+        "let mut values = [0, 0, 0]\n",
+        "let mut i: Number = 0\n",
+        "let duration: seconds = 3\n",
+        "let dt: seconds = 1\n",
+        "simulate duration step dt {\n",
+        "values[i] += i + 10\n",
+        "i += 1\n",
+        "}\n",
+        "print(values[0])\nprint(values[1])\nprint(values[2])"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "11", "12"]);
+}
+
+#[test]
+fn vm_matches_tree_array_index_compound_errors_example() {
+    // errors example: only valid case runs (arr[1] += 10, starting value 2, result 12).
+    let src = "let mut nums = [1, 2, 3]\nnums[1] += 10\nprint(nums[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
