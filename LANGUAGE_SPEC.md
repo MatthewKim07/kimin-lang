@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 10B
+# Kimin Language Specification — Milestone 10C
 
-This document describes the syntax and semantics implemented through Milestone 10B.
+This document describes the syntax and semantics implemented through Milestone 10C.
 
 ---
 
@@ -714,6 +714,26 @@ print(nums[1])   // 40
   - Index must be non-negative.
   - Index must be less than `len(arr)`.
 
+#### `push` and `pop` builtins
+
+```kimin
+let mut log = [0]
+push(log, 1)
+push(log, 2)
+print(len(log))   // 3
+
+let v = pop(log)
+print(v)          // 2
+print(len(log))   // 2
+```
+
+- `push(arr, value)` — appends `value` to the end of `arr`; returns `Nil`.
+- `pop(arr)` — removes and returns the last element of `arr`; `RuntimeError` if the array is empty.
+- Both require a **mutable array variable** as the first argument (plain identifier only; literal expressions rejected at the typechecker).
+- `push` checks that `value` is type-compatible with the element type (same rules as `IndexAssign`, including Number→unit promotion).
+- `pop` return type is the element type `T` of `Array<T>`.
+- `push` and `pop` are **builtins**, not user-defined functions; they take precedence over any user-defined function with those names.
+
 #### Bytecode lowering
 
 | Operation | Instructions emitted |
@@ -723,6 +743,8 @@ print(nums[1])   // 40
 | `len(arr)` | compile arr; emit `LEN` (no `CALL` instruction) |
 | `arr[i] = value` | compile i; compile value; emit `SET_INDEX name` |
 | `arr[i] op= value` | compile i; compile value; emit `INDEX_COMPOUND_ASSIGN name op` |
+| `push(arr, value)` | compile value; emit `ARRAY_PUSH name` (no `CALL` instruction) |
+| `pop(arr)` | emit `ARRAY_POP name` (no `CALL` instruction; pushes element) |
 
 ---
 
@@ -1124,11 +1146,11 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR and VM (Milestones 8A–10B)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–10C)
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–10B)
+### What the bytecode VM executes (M8A–10C)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -1143,6 +1165,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **Arrays** (M9E): `[e1, e2, e3]` → `ARRAY count`; `arr[i]` → `INDEX`; `len(arr)` → `LEN`; all three are new VM instructions
 - **Array mutation by index** (M10A): `arr[i] = value` compiles index first, then value, then emits `SET_INDEX name`; VM looks up the existing array binding, validates the index, replaces the element, and writes the updated array back through the env chain
 - **Array index compound assignment** (M10B): `arr[i] += value` and friends compile index first, then rhs, then emit `INDEX_COMPOUND_ASSIGN name op`; VM evaluates the index once, reads the old element, applies the compound operator, and writes the updated array back through the env chain
+- **`push`/`pop` builtins** (M10C): `push(arr, value)` compiles value arg then emits `ARRAY_PUSH name`; `pop(arr)` emits `ARRAY_POP name`; no `CALL` instruction emitted; VM grows/shrinks the array in-place via env chain
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk
@@ -1234,3 +1257,7 @@ SimulateChunk {
 | `ARRAY count` | Pop `count` values (top = last element), reverse, push `Value::Array` |
 | `INDEX` | Pop index and array; validate integer/bounds; push element |
 | `LEN` | Pop array; push `Value::Number(len)` |
+| `SET_INDEX name` | Pop new_value and index; look up `name` in env chain; clone array; update element; assign back |
+| `INDEX_COMPOUND_ASSIGN name op` | Pop rhs and index; read old element at index; apply op(old, rhs); clone array; update element; assign back |
+| `ARRAY_PUSH name` | Pop new_value; look up `name` in env chain; clone array; append element; assign back; push Nil |
+| `ARRAY_POP name` | Look up `name` in env chain; clone array; pop last element; assign back; push popped element |

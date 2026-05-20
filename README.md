@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1316_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1359_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-10B-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-10C-informational?style=flat-square)
 
 </div>
 
@@ -286,7 +286,19 @@ print(nums[1])   // 4
 print(nums[2])   // 6
 ```
 
-- No push/pop/slices yet — arrays remain fixed-size after creation
+- **`push(arr, value)` builtin** — appends `value` to a mutable array; returns `Nil`; first argument must be a mutable `Array<T>` variable; value type must match element type (Number→unit promotion allowed)
+- **`pop(arr)` builtin** — removes and returns the last element of a mutable array; RuntimeError if empty; return type is the element type `T`
+
+```kimin
+let mut log = [0]
+push(log, 1)
+push(log, 2)
+print(len(log))   // 3
+
+let v = pop(log)
+print(v)          // 2
+print(len(log))   // 2
+```
 
 ### Bytecode backend
 
@@ -490,10 +502,10 @@ LexError  at line 3, col 7:  unexpected character '@'
 | Bytecode VM: recursive closure cycles | A function stored in its own captured env creates an `Rc` cycle → memory leak; harmless for run-and-exit programs |
 | No multiline REPL input | Multi-line constructs (functions, while) must fit on one input line in the REPL |
 | No package system | No module imports or namespacing |
-| No array push/pop/slices | Arrays are fixed-size after creation; only element mutation by index |
+| No array slices | No `arr[1..3]` range indexing; `push`/`pop` are available for dynamic growth/shrink |
 | No nested arrays | `[[1,2],[3,4]]` — technically typechecks as `Array<Array<T>>` but is documented as unsupported |
 | No array type annotations | `let a: Array<Number> = [1,2]` is a ParseError; element type inferred only |
-| `len` shadows user `fn len` | The `len` builtin takes precedence over any user-defined single-argument function named `len` |
+| `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
 
@@ -527,6 +539,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 9E | Fixed-size typed arrays (`[e1,e2]`, `arr[i]`, `len`) | ✅ |
 | 10A | Array mutation by index (`arr[i] = value`, `let mut` required) | ✅ |
 | 10B | Array index compound assignment (`arr[i] += value`, etc.) | ✅ |
+| 10C | `push(arr, value)` and `pop(arr)` builtins | ✅ |
 
 ---
 
@@ -534,7 +547,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 1316 passed, 0 failed
+# 1359 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -561,7 +574,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1316 unit tests
+  tests.rs        1359 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -594,6 +607,8 @@ examples/
   array_mutation_simulate.kimin     array_mutation_errors.kimin
   array_index_compound.kimin        array_index_compound_loop.kimin
   array_index_compound_simulate.kimin  array_index_compound_errors.kimin
+  array_push_pop.kimin              array_push_pop_loop.kimin
+  array_push_pop_simulate.kimin     array_push_pop_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
