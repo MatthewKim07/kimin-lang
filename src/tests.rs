@@ -9922,3 +9922,490 @@ print(acc)"#;
     assert!(run(src).is_ok());
     assert_eq!(vm_run(src).unwrap(), vec!["16"]);
 }
+
+// --- Milestone 9D: for/range loops ---
+
+// Lexer tests
+
+#[test]
+fn lex_for_keyword() {
+    let kinds = tokenize("for");
+    assert!(matches!(kinds[0], TokenKind::For));
+}
+
+#[test]
+fn lex_in_keyword() {
+    let kinds = tokenize("in");
+    assert!(matches!(kinds[0], TokenKind::In));
+}
+
+#[test]
+fn lex_for_in_range_tokens() {
+    let kinds = tokenize("for i in range(0, 5) { }");
+    assert!(matches!(kinds[0], TokenKind::For));
+    assert!(matches!(kinds[1], TokenKind::Ident(ref s) if s == "i"));
+    assert!(matches!(kinds[2], TokenKind::In));
+    assert!(matches!(kinds[3], TokenKind::Ident(ref s) if s == "range"));
+}
+
+#[test]
+fn lex_for_not_ident() {
+    // `for` must lex as For, not Ident
+    let kinds = tokenize("for");
+    assert!(!matches!(kinds[0], TokenKind::Ident(_)));
+}
+
+#[test]
+fn lex_in_not_ident() {
+    let kinds = tokenize("in");
+    assert!(!matches!(kinds[0], TokenKind::Ident(_)));
+}
+
+#[test]
+fn lex_forinrange_still_ident() {
+    // Identifiers that start with "for" or contain "in" are still Ident
+    let kinds = tokenize("forks inner");
+    assert!(matches!(kinds[0], TokenKind::Ident(ref s) if s == "forks"));
+    assert!(matches!(kinds[1], TokenKind::Ident(ref s) if s == "inner"));
+}
+
+// Parser tests
+
+#[test]
+fn parse_for_range_basic() {
+    assert!(check("for i in range(0, 5) { }").is_ok());
+}
+
+#[test]
+fn parse_for_range_with_body() {
+    assert!(check("for i in range(0, 10) { let x: Number = i * 2 }").is_ok());
+}
+
+#[test]
+fn parse_for_range_expr_bounds() {
+    assert!(check("let a: Number = 1\nlet b: Number = 5\nfor i in range(a, b) { }").is_ok());
+}
+
+#[test]
+fn parse_for_range_nested() {
+    assert!(check("for x in range(0, 3) { for y in range(0, 3) { } }").is_ok());
+}
+
+#[test]
+fn parse_for_range_break_inside() {
+    assert!(check("for i in range(0, 10) { break }").is_ok());
+}
+
+#[test]
+fn parse_for_range_continue_inside() {
+    assert!(check("for i in range(0, 10) { continue }").is_ok());
+}
+
+#[test]
+fn parse_for_missing_in_error() {
+    let result = check("for i range(0, 5) { }");
+    assert!(matches!(result, Err(KiminError::Parse(_))));
+}
+
+#[test]
+fn parse_for_missing_range_error() {
+    let result = check("for i in (0, 5) { }");
+    assert!(matches!(result, Err(KiminError::Parse(_))));
+}
+
+#[test]
+fn parse_for_missing_lparen_error() {
+    let result = check("for i in range 0, 5) { }");
+    assert!(matches!(result, Err(KiminError::Parse(_))));
+}
+
+#[test]
+fn parse_for_missing_comma_error() {
+    let result = check("for i in range(0 5) { }");
+    assert!(matches!(result, Err(KiminError::Parse(_))));
+}
+
+#[test]
+fn parse_for_three_arg_range_error() {
+    let result = check("for i in range(0, 5, 1) { }");
+    assert!(matches!(result, Err(KiminError::Parse(_))));
+}
+
+#[test]
+fn parse_for_missing_rparen_error() {
+    let result = check("for i in range(0, 5 { }");
+    assert!(matches!(result, Err(KiminError::Parse(_))));
+}
+
+// Type checker tests
+
+#[test]
+fn type_for_range_ok() {
+    assert!(check("for i in range(0, 5) { }").is_ok());
+}
+
+#[test]
+fn type_for_range_loop_var_is_number() {
+    assert!(check("for i in range(0, 5) { let x: Number = i }").is_ok());
+}
+
+#[test]
+fn type_for_range_loop_var_immutable() {
+    let result = check("for i in range(0, 5) { i = 3 }");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_loop_var_scoped() {
+    // i is not accessible after the loop
+    let result = check("for i in range(0, 5) { }\nlet x: Number = i");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_start_must_be_number() {
+    let result = check("let t: seconds = 1\nfor i in range(t, 5) { }");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_end_must_be_number() {
+    let result = check("let t: seconds = 5\nfor i in range(0, t) { }");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_break_valid_inside() {
+    assert!(check("for i in range(0, 5) { break }").is_ok());
+}
+
+#[test]
+fn type_for_range_continue_valid_inside() {
+    assert!(check("for i in range(0, 5) { continue }").is_ok());
+}
+
+#[test]
+fn type_for_range_break_outside_loop_error() {
+    let result = check("for i in range(0, 5) { }\nbreak");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_nested_break_targets_inner() {
+    // break inside inner loop is valid
+    assert!(check("for x in range(0, 3) { for y in range(0, 3) { break } }").is_ok());
+}
+
+#[test]
+fn type_for_range_break_in_fn_outside_loop_error() {
+    let result = check("fn f() { break }");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_loop_depth_resets_in_fn() {
+    // for loop inside function — loop_depth resets to 0 on fn entry
+    assert!(check("for i in range(0, 3) { fn f() { } }").is_ok());
+    // break inside fn body inside for loop is an error
+    let result = check("for i in range(0, 3) { fn f() { break } }");
+    assert!(matches!(result, Err(KiminError::Type(_))));
+}
+
+#[test]
+fn type_for_range_in_function_body() {
+    assert!(check("fn sum(n: Number) -> Number { let mut t: Number = 0\nfor i in range(0, n) { t += i }\nreturn t }").is_ok());
+}
+
+// Interpreter / runtime tests
+
+#[test]
+fn for_range_zero_iterations() {
+    // range(5, 5) → empty; body never runs
+    assert!(run("let mut x: Number = 0\nfor i in range(5, 5) { x = 99 }").is_ok());
+    assert_eq!(
+        vm_run("let mut x: Number = 0\nfor i in range(5, 5) { x = 99 }\nprint(x)").unwrap(),
+        vec!["0"]
+    );
+}
+
+#[test]
+fn for_range_reversed_is_empty() {
+    // range(5, 0) → 0 iterations (start >= end)
+    assert_eq!(
+        vm_run("let mut x: Number = 0\nfor i in range(5, 0) { x = 99 }\nprint(x)").unwrap(),
+        vec!["0"]
+    );
+}
+
+#[test]
+fn for_range_prints_0_to_4() {
+    assert_eq!(
+        vm_run("for i in range(0, 5) { print(i) }").unwrap(),
+        vec!["0", "1", "2", "3", "4"]
+    );
+}
+
+#[test]
+fn for_range_sum_1_to_5() {
+    assert_eq!(
+        vm_run("let mut t: Number = 0\nfor i in range(1, 6) { t += i }\nprint(t)").unwrap(),
+        vec!["15"]
+    );
+}
+
+#[test]
+fn for_range_loop_var_increments_by_one() {
+    assert_eq!(
+        vm_run("for i in range(3, 6) { print(i) }").unwrap(),
+        vec!["3", "4", "5"]
+    );
+}
+
+#[test]
+fn for_range_loop_var_not_visible_after_loop() {
+    // i is loop-local; after loop, i is gone
+    let result = run("for i in range(0, 3) { }\nlet x: Number = i");
+    assert!(result.is_err());
+}
+
+#[test]
+fn for_range_outer_mut_persists() {
+    // mutations to outer mut vars persist across iterations
+    assert_eq!(
+        vm_run("let mut acc: Number = 0\nfor i in range(0, 4) { acc += i }\nprint(acc)").unwrap(),
+        vec!["6"]
+    );
+}
+
+#[test]
+fn for_range_break_exits_early() {
+    assert_eq!(
+        vm_run("for i in range(0, 10) { if i == 3 { break }\nprint(i) }").unwrap(),
+        vec!["0", "1", "2"]
+    );
+}
+
+#[test]
+fn for_range_continue_skips_iteration() {
+    assert_eq!(
+        vm_run("for i in range(0, 5) { if i == 2 { continue }\nprint(i) }").unwrap(),
+        vec!["0", "1", "3", "4"]
+    );
+}
+
+#[test]
+fn for_range_return_inside_function() {
+    assert_eq!(vm_run("fn first_gt(n: Number) -> Number { for i in range(0, 10) { if i > n { return i } }\nreturn -1 }\nprint(first_gt(4))").unwrap(), vec!["5"]);
+}
+
+#[test]
+fn for_range_nested_independent_iters() {
+    assert_eq!(vm_run("let mut s: Number = 0\nfor x in range(0, 3) { for y in range(0, 3) { s += 1 } }\nprint(s)").unwrap(), vec!["9"]);
+}
+
+#[test]
+fn for_range_nested_break_inner_only() {
+    // break in inner loop only exits inner
+    assert_eq!(vm_run("let mut c: Number = 0\nfor x in range(0, 3) { for y in range(0, 10) { if y == 2 { break }\nc += 1 } }\nprint(c)").unwrap(), vec!["6"]);
+}
+
+#[test]
+fn for_range_loop_var_shadows_outer() {
+    // loop var `i` shadows outer `i` inside body; outer `i` unchanged after loop
+    assert_eq!(
+        vm_run("let mut i: Number = 100\nfor i in range(0, 3) { }\nprint(i)").unwrap(),
+        vec!["100"]
+    );
+}
+
+#[test]
+fn for_range_loop_in_function_factorial() {
+    assert_eq!(vm_run("fn factorial(n: Number) -> Number { let mut r: Number = 1\nfor i in range(1, n + 1) { r *= i }\nreturn r }\nprint(factorial(5))").unwrap(), vec!["120"]);
+}
+
+#[test]
+fn for_range_body_let_does_not_leak() {
+    // let declared inside loop body is local to each iteration
+    let result = run("for i in range(0, 3) { let x: Number = i }\nlet y: Number = x");
+    assert!(result.is_err());
+}
+
+// Bytecode compiler tests
+
+#[test]
+fn bytecode_for_range_emits_begin_end_scope() {
+    let prog = compile_prog("for i in range(0, 5) { }");
+    let has_begin = prog
+        .main
+        .instructions
+        .iter()
+        .any(|instr| matches!(instr, Instruction::BeginScope));
+    let has_end = prog
+        .main
+        .instructions
+        .iter()
+        .any(|instr| matches!(instr, Instruction::EndScope));
+    assert!(has_begin);
+    assert!(has_end);
+}
+
+#[test]
+fn bytecode_for_range_emits_jump_if_false() {
+    let prog = compile_prog("for i in range(0, 5) { }");
+    let has_jif = prog
+        .main
+        .instructions
+        .iter()
+        .any(|instr| matches!(instr, Instruction::JumpIfFalse(_)));
+    assert!(has_jif);
+}
+
+#[test]
+fn bytecode_for_range_emits_jump_back() {
+    let prog = compile_prog("for i in range(0, 5) { }");
+    let has_jump = prog
+        .main
+        .instructions
+        .iter()
+        .any(|instr| matches!(instr, Instruction::Jump(_)));
+    assert!(has_jump);
+}
+
+#[test]
+fn bytecode_for_range_defines_loop_var() {
+    let prog = compile_prog("for i in range(0, 5) { }");
+    let has_define = prog
+        .main
+        .instructions
+        .iter()
+        .any(|instr| matches!(instr, Instruction::DefineLocal(n) if n == "i"));
+    assert!(has_define);
+}
+
+#[test]
+fn bytecode_for_range_defines_sentinel() {
+    let prog = compile_prog("for i in range(0, 5) { }");
+    let has_sentinel = prog.main.instructions.iter().any(
+        |instr| matches!(instr, Instruction::DefineLocal(n) if n.starts_with("__kimin_range_end_")),
+    );
+    assert!(has_sentinel);
+}
+
+#[test]
+fn bytecode_for_range_sentinel_collision_nested() {
+    // Nested for loops must use distinct sentinel names
+    let prog = compile_prog("for x in range(0, 3) { for y in range(0, 3) { } }");
+    let sentinels: Vec<_> = prog
+        .main
+        .instructions
+        .iter()
+        .filter_map(|instr| {
+            if let Instruction::DefineLocal(n) = instr {
+                if n.starts_with("__kimin_range_end_") {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(sentinels.len(), 2);
+    assert_ne!(sentinels[0], sentinels[1]);
+}
+
+// VM tests
+
+#[test]
+fn vm_for_range_prints_0_to_4() {
+    assert_eq!(
+        vm_run("for i in range(0, 5) { print(i) }").unwrap(),
+        vec!["0", "1", "2", "3", "4"]
+    );
+}
+
+#[test]
+fn vm_for_range_empty() {
+    let out = vm_run("let mut x: Number = 0\nfor i in range(5, 5) { x = 99 }\nprint(x)").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_for_range_sum() {
+    let out = vm_run("let mut t: Number = 0\nfor i in range(1, 6) { t += i }\nprint(t)").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_for_range_break() {
+    let out = vm_run("for i in range(0, 10) { if i == 3 { break }\nprint(i) }").unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn vm_for_range_continue() {
+    let out = vm_run("for i in range(0, 5) { if i == 2 { continue }\nprint(i) }").unwrap();
+    assert_eq!(out, vec!["0", "1", "3", "4"]);
+}
+
+#[test]
+fn vm_for_range_nested() {
+    let out = vm_run(
+        "let mut s: Number = 0\nfor x in range(0, 3) { for y in range(0, 3) { s += 1 } }\nprint(s)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn vm_for_range_matches_tree_walk() {
+    let src = "let mut acc: Number = 0\nfor i in range(1, 11) { acc += i }\nprint(acc)";
+    assert!(run(src).is_ok());
+    let vm = vm_run(src).unwrap();
+    assert_eq!(vm, vec!["55"]);
+}
+
+#[test]
+fn vm_for_range_function_factorial() {
+    let src = "fn factorial(n: Number) -> Number { let mut r: Number = 1\nfor i in range(1, n + 1) { r *= i }\nreturn r }\nprint(factorial(6))";
+    assert!(run(src).is_ok());
+    let vm = vm_run(src).unwrap();
+    assert_eq!(vm, vec!["720"]);
+}
+
+// Regression tests
+
+#[test]
+fn for_range_does_not_break_while_loop() {
+    // While loops must still work after adding for loop support
+    assert_eq!(
+        vm_run("let mut x: Number = 0\nwhile x < 3 { x += 1 }\nprint(x)").unwrap(),
+        vec!["3"]
+    );
+}
+
+#[test]
+fn for_range_does_not_break_break_continue_in_while() {
+    assert_eq!(
+        vm_run("let mut x: Number = 0\nwhile x < 10 { x += 1\nif x == 5 { break } }\nprint(x)")
+            .unwrap(),
+        vec!["5"]
+    );
+}
+
+#[test]
+fn for_range_mixed_with_while() {
+    assert_eq!(vm_run("let mut total: Number = 0\nfor i in range(1, 4) { let mut j: Number = 0\nwhile j < i { total += 1\nj += 1 } }\nprint(total)").unwrap(), vec!["6"]);
+}
+
+#[test]
+fn for_range_does_not_break_simulate() {
+    assert!(check("let t: seconds = 3\nlet dt: seconds = 1\nsimulate t step dt { }").is_ok());
+}
+
+#[test]
+fn vm_for_range_does_not_break_while_loop() {
+    let out = vm_run("let mut x: Number = 0\nwhile x < 3 { x += 1 }\nprint(x)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}

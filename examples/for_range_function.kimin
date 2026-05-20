@@ -1,0 +1,24 @@
+// Sum all integers from 1 to n (inclusive)
+fn sum_to(n: Number) -> Number {
+    let mut total: Number = 0
+    for i in range(1, n + 1) {
+        total += i
+    }
+    return total
+}
+
+print(sum_to(5))
+print(sum_to(10))
+print(sum_to(0))
+
+// Factorial using for loop
+fn factorial(n: Number) -> Number {
+    let mut result: Number = 1
+    for i in range(1, n + 1) {
+        result *= i
+    }
+    return result
+}
+
+print(factorial(5))
+print(factorial(6))
