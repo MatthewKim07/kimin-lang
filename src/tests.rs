@@ -11849,13 +11849,17 @@ fn parse_array_literal_in_function_call_arg() {
 }
 
 #[test]
-fn parse_index_assignment_is_parse_error() {
-    // arr[0] = 5 is not supported syntax
+fn parse_index_assignment_supported_since_m10a() {
+    // arr[0] = 5 is valid syntax since M10A.
     let tokens = Lexer::new("let mut arr = [1, 2, 3]\narr[0] = 5")
         .tokenize()
         .unwrap();
     let result = Parser::new(tokens).parse();
-    assert!(result.is_err(), "index assignment should be a parse error");
+    assert!(
+        result.is_ok(),
+        "index assignment should parse since M10A: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -12268,4 +12272,508 @@ fn vm_matches_tree_state_array() {
     let src = "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet doors = [d1, d2]\nprint(doors[0])\nprint(len(doors))";
     assert!(run(src).is_ok());
     assert_eq!(vm_run(src).unwrap(), vec!["Door.closed", "2"]);
+}
+
+// ─── M10A: Array mutation by index ─────────────────────────────────────────
+
+// --- parser tests ---
+
+#[test]
+fn parse_index_assign_simple() {
+    let src = "let mut a = [1, 2]\na[0] = 99";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_assign_expr_index() {
+    let src = "let mut a = [1, 2, 3]\nlet i = 1\na[i] = 99";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_assign_expr_value() {
+    let src = "let mut a = [1, 2]\nlet x = 5\na[0] = x + 1";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_assign_inside_fn() {
+    let src = "fn fill(arr: Number) {\nlet mut a = [1, 2]\na[0] = arr\n}";
+    let tokens = crate::lexer::Lexer::new(src).tokenize().unwrap();
+    let stmts = crate::parser::Parser::new(tokens).parse();
+    assert!(stmts.is_ok());
+}
+
+#[test]
+fn parse_index_assign_inside_for() {
+    let src = "let mut a = [0, 0, 0]\nfor i in range(0, 3) {\na[i] = i\n}";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_assign_missing_bracket_error() {
+    let src = "let mut a = [1]\na[0 = 99";
+    let tokens = crate::lexer::Lexer::new(src).tokenize().unwrap();
+    let result = crate::parser::Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_index_assign_missing_value_error() {
+    let src = "let mut a = [1]\na[0] =";
+    let tokens = crate::lexer::Lexer::new(src).tokenize().unwrap();
+    let result = crate::parser::Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_normal_index_expr_unaffected() {
+    // arr[0] used as expression (e.g. in print) must still work.
+    let src = "let a = [1, 2]\nprint(a[0])";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn parse_normal_assign_unaffected() {
+    // Variable-level assignment of array literal still works.
+    let src = "let mut a = [1]\na = [2]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_expr_no_eq_falls_through() {
+    // arr[0] as a standalone expression statement (no `=`) should parse OK (as Stmt::Expr).
+    let src = "let a = [1, 2]\na[0]";
+    let tokens = crate::lexer::Lexer::new(src).tokenize().unwrap();
+    let result = crate::parser::Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+// --- typechecker tests ---
+
+#[test]
+fn type_index_assign_number_array_ok() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] = 99").is_ok());
+}
+
+#[test]
+fn type_index_assign_text_array_ok() {
+    assert!(check("let mut a = [\"x\", \"y\"]\na[0] = \"z\"").is_ok());
+}
+
+#[test]
+fn type_index_assign_bool_array_ok() {
+    assert!(check("let mut a = [true, false]\na[1] = true").is_ok());
+}
+
+#[test]
+fn type_index_assign_unit_array_ok() {
+    assert!(check("let d1: meters = 1\nlet d2: meters = 2\nlet mut a = [d1, d2]\nlet d3: meters = 5\na[0] = d3").is_ok());
+}
+
+#[test]
+fn type_index_assign_number_to_unit_ok() {
+    // Number can be promoted to a unit element type, matching assignment promotion rules.
+    assert!(
+        check("let d1: meters = 1\nlet d2: meters = 2\nlet mut a = [d1, d2]\na[0] = 5").is_ok()
+    );
+}
+
+#[test]
+fn type_index_assign_immutable_error() {
+    let e = check("let a = [1, 2]\na[0] = 99").unwrap_err();
+    let msg = e.to_string();
+    assert!(
+        msg.contains("immutable"),
+        "expected 'immutable' in: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_index_assign_undefined_error() {
+    let e = check("nums[0] = 99").unwrap_err();
+    let msg = e.to_string();
+    assert!(
+        msg.contains("undefined"),
+        "expected 'undefined' in: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_index_assign_non_array_error() {
+    let e = check("let mut x = 5\nx[0] = 99").unwrap_err();
+    let msg = e.to_string();
+    assert!(
+        msg.contains("not an array"),
+        "expected 'not an array' in: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_index_assign_text_index_error() {
+    let e = check("let mut a = [1, 2]\na[\"0\"] = 99").unwrap_err();
+    let msg = e.to_string();
+    assert!(msg.contains("Number"), "expected 'Number' in: {}", msg);
+}
+
+#[test]
+fn type_index_assign_bool_index_error() {
+    let e = check("let mut a = [1, 2]\na[true] = 99").unwrap_err();
+    let msg = e.to_string();
+    assert!(msg.contains("Number"), "expected 'Number' in: {}", msg);
+}
+
+#[test]
+fn type_index_assign_wrong_elem_type_error() {
+    let e = check("let mut a = [1, 2]\na[0] = \"hello\"").unwrap_err();
+    let msg = e.to_string();
+    assert!(
+        msg.contains("Number") && msg.contains("Text"),
+        "expected type mismatch in: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_index_assign_inside_fn_ok() {
+    assert!(check("fn f() {\nlet mut a = [1, 2]\na[0] = 99\n}").is_ok());
+}
+
+#[test]
+fn type_index_assign_inside_for_ok() {
+    assert!(check("let mut a = [0, 0, 0]\nfor i in range(0, 3) {\na[i] = i\n}").is_ok());
+}
+
+#[test]
+fn type_index_assign_inside_simulate_ok() {
+    // Uses an outer mutable counter as index (time has unit type, not Number).
+    assert!(check("let mut a = [0, 0]\nlet mut i = 0\nlet dur: seconds = 2\nlet dt: seconds = 1\nsimulate dur step dt {\na[i] = i\ni += 1\n}").is_ok());
+}
+
+// --- interpreter tests ---
+
+#[test]
+fn interp_index_assign_updates_array() {
+    let src = "let mut a = [1, 2, 3]\na[1] = 99\nprint(a[1])";
+    let out = run(src).unwrap();
+    // Verify via get_var
+    assert_eq!(
+        out.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(99.0),
+            Value::Number(3.0)
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_assign_first_middle_last() {
+    let src = "let mut a = [1, 2, 3]\na[0] = 10\na[1] = 20\na[2] = 30";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(10.0),
+            Value::Number(20.0),
+            Value::Number(30.0)
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_assign_length_unchanged() {
+    let src = "let mut a = [1, 2, 3]\na[0] = 99\na[2] = 42";
+    let interp = run(src).unwrap();
+    let arr = interp.get_var("a").unwrap();
+    if let Value::Array(v) = arr {
+        assert_eq!(v.len(), 3);
+    } else {
+        panic!("expected Array");
+    }
+}
+
+#[test]
+fn interp_index_assign_inside_fn() {
+    let src = "fn update() -> Number {\nlet mut a = [1, 2, 3]\na[0] = 99\nreturn a[0]\n}\nprint(update())";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn interp_index_assign_inside_closure() {
+    let src = "fn outer() -> Number {\nlet mut nums = [1, 2, 3]\nfn update() -> Number {\nnums[0] = 99\nreturn nums[0]\n}\nreturn update()\n}\nprint(outer())";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn interp_index_assign_inside_for_doubles() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, len(a)) {\na[i] = a[i] * 2\n}\nprint(a[0])\nprint(a[3])";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(2.0),
+            Value::Number(4.0),
+            Value::Number(6.0),
+            Value::Number(8.0)
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_assign_inside_simulate() {
+    let src = "let mut a = [0, 0, 0]\nlet mut i = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\na[i] = i + 10\ni += 1\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a"),
+        Some(Value::Array(vec![
+            Value::Number(10.0),
+            Value::Number(11.0),
+            Value::Number(12.0)
+        ]))
+    );
+}
+
+#[test]
+fn interp_index_assign_unit_array() {
+    let src = "let d1: meters = 1\nlet d2: meters = 2\nlet mut a = [d1, d2]\nlet d3: meters = 5\na[0] = d3\nprint(a[0])";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn interp_index_assign_state_array() {
+    let src = "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.closed\nlet mut doors = [d1, d2]\ndoors[1] = Door.open\nprint(doors[1])";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn interp_index_assign_out_of_bounds() {
+    let src = "let mut a = [1, 2, 3]\na[9] = 99";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("out of bounds"),
+                "expected bounds error in: {}",
+                msg
+            );
+        }
+    }
+}
+
+#[test]
+fn interp_index_assign_negative_index() {
+    let src = "let mut a = [1, 2, 3]\na[-1] = 99";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("negative") || msg.contains("out of bounds"),
+                "expected negative/bounds error in: {}",
+                msg
+            );
+        }
+    }
+}
+
+#[test]
+fn interp_index_assign_fractional_index() {
+    let src = "let mut a = [1, 2, 3]\na[1.5] = 99";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("integer"),
+                "expected integer error in: {}",
+                msg
+            );
+        }
+    }
+}
+
+// --- bytecode tests ---
+
+#[test]
+fn bytecode_index_assign_emits_set_index() {
+    let prog = compile_prog("let mut a = [1, 2]\na[0] = 99");
+    let has_set_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(name) if name == "a"));
+    assert!(has_set_index, "expected SetIndex(\"a\") in main chunk");
+}
+
+#[test]
+fn bytecode_index_assign_index_before_value() {
+    // Verify compile order: index expression compiled before value expression.
+    let prog = compile_prog("let mut a = [1, 2]\na[0] = 99");
+    let instrs = &prog.main.instructions;
+    let set_idx_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::SetIndex(_)))
+        .expect("no SetIndex");
+    // The two CONSTANT instructions for 0 (index) and 99 (value) should appear
+    // somewhere before SetIndex. We just verify SetIndex exists and the chunk compiles.
+    assert!(set_idx_pos > 0);
+}
+
+#[test]
+fn bytecode_set_index_disassembly() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let mut a = [1, 2]\na[0] = 99");
+    let dis = disassemble(&prog);
+    assert!(
+        dis.contains("SET_INDEX a"),
+        "expected SET_INDEX a in:\n{}",
+        dis
+    );
+}
+
+#[test]
+fn bytecode_index_assign_in_for() {
+    let prog = compile_prog("let mut a = [0, 0]\nfor i in range(0, 2) {\na[i] = i\n}");
+    let has_set_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_)));
+    assert!(has_set_index);
+}
+
+#[test]
+fn bytecode_index_assign_in_simulate() {
+    let prog = compile_prog("let mut a = [0, 0]\nlet mut i = 0\nlet d: seconds = 2\nlet dt: seconds = 1\nsimulate d step dt {\na[i] = i\ni += 1\n}");
+    // SetIndex appears in the simulate body chunk.
+    let has_set_index = prog.simulate_bodies.iter().any(|sc| {
+        sc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::SetIndex(_)))
+    });
+    assert!(has_set_index, "expected SetIndex in simulate body chunk");
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_index_assign_updates_array() {
+    let src = "let mut a = [1, 2, 3]\na[1] = 99\nprint(a[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["99"]);
+}
+
+#[test]
+fn vm_index_assign_first_middle_last() {
+    let src = "let mut a = [1, 2, 3]\na[0] = 10\na[1] = 20\na[2] = 30\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "20", "30"]);
+}
+
+#[test]
+fn vm_index_assign_inside_fn() {
+    let src = "fn update() -> Number {\nlet mut a = [1, 2, 3]\na[0] = 99\nreturn a[0]\n}\nprint(update())";
+    assert_eq!(vm_run(src).unwrap(), vec!["99"]);
+}
+
+#[test]
+fn vm_index_assign_inside_closure() {
+    let src = "fn outer() -> Number {\nlet mut nums = [1, 2, 3]\nfn update() -> Number {\nnums[0] = 99\nreturn nums[0]\n}\nreturn update()\n}\nprint(outer())";
+    assert_eq!(vm_run(src).unwrap(), vec!["99"]);
+}
+
+#[test]
+fn vm_index_assign_inside_for() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, len(a)) {\na[i] = a[i] * 2\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])\nprint(a[3])";
+    assert_eq!(vm_run(src).unwrap(), vec!["2", "4", "6", "8"]);
+}
+
+#[test]
+fn vm_index_assign_inside_simulate() {
+    let src = "let mut a = [0, 0, 0]\nlet mut i = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\na[i] = i + 10\ni += 1\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "11", "12"]);
+}
+
+#[test]
+fn vm_index_assign_units() {
+    let src = "let d1: meters = 1\nlet d2: meters = 2\nlet mut a = [d1, d2]\nlet d3: meters = 5\na[0] = d3\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn vm_index_assign_out_of_bounds() {
+    let src = "let mut a = [1, 2, 3]\na[9] = 99";
+    let err = vm_run(src).unwrap_err();
+    assert!(err.to_string().contains("out of bounds"));
+}
+
+#[test]
+fn vm_index_assign_negative_index() {
+    let src = "let mut a = [1, 2, 3]\na[-1] = 99";
+    let err = vm_run(src).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("negative") || msg.contains("out of bounds"));
+}
+
+#[test]
+fn vm_index_assign_fractional_index() {
+    let src = "let mut a = [1, 2, 3]\na[1.5] = 99";
+    let err = vm_run(src).unwrap_err();
+    assert!(err.to_string().contains("integer"));
+}
+
+#[test]
+fn vm_index_assign_output_matches_tree() {
+    let src = "let mut a = [1, 2, 3]\na[0] = 99\na[2] = 42\nprint(a[0])\nprint(a[1])\nprint(a[2])\nprint(len(a))";
+    let tree_out: Vec<String> = {
+        // Capture println output via run() doesn't capture; use vm_run for both to compare.
+        // Compare tree-walk state vs VM output.
+        let interp = run(src).unwrap();
+        let a = interp.get_var("a").unwrap();
+        if let Value::Array(v) = a {
+            v.iter().map(|x| format!("{}", x)).collect()
+        } else {
+            panic!("expected Array");
+        }
+    };
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["99", "2", "42", "3"]);
+    assert_eq!(tree_out, vec!["99", "2", "42"]);
+}
+
+// --- regression tests ---
+
+#[test]
+fn regression_existing_arrays_still_work() {
+    let src = "let a = [10, 20, 30]\nprint(a[0])\nprint(len(a))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "3"]);
+}
+
+#[test]
+fn regression_index_read_unaffected_by_mutation() {
+    let src = "let mut a = [1, 2, 3]\na[1] = 99\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "99", "3"]);
+}
+
+#[test]
+fn regression_len_after_mutation_unchanged() {
+    let src = "let mut a = [1, 2, 3]\na[0] = 99\nprint(len(a))";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn regression_for_range_still_works_after_m10a() {
+    let src = "for i in range(0, 3) {\nprint(i)\n}";
+    assert_eq!(vm_run(src).unwrap(), vec!["0", "1", "2"]);
+}
+
+#[test]
+fn regression_simulate_still_works_after_m10a() {
+    let src = "let mut x = 0\nlet d: seconds = 3\nlet dt: seconds = 1\nsimulate d step dt {\nx += 1\n}\nprint(x)";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
 }

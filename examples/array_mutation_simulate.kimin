@@ -1,0 +1,17 @@
+// Simulate body uses a mutable integer counter as array index.
+// (time has a unit type and cannot be used as an array index directly.)
+
+let mut values = [0, 0, 0]
+let mut idx = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+    values[idx] = idx + 10
+    idx += 1
+}
+
+print(values[0])
+print(values[1])
+print(values[2])

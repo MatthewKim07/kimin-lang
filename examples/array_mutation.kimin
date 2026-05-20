@@ -1,0 +1,9 @@
+let mut nums = [1, 2, 3]
+
+nums[0] = 99
+nums[2] = 42
+
+print(nums[0])
+print(nums[1])
+print(nums[2])
+print(len(nums))
