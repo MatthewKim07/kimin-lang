@@ -614,6 +614,74 @@ impl TypeChecker {
                 Ok(())
             }
 
+            Stmt::IndexAssign {
+                name,
+                index,
+                value,
+                span,
+            } => {
+                let (var_ty, var_mutable) = self
+                    .env
+                    .get(name)
+                    .map(|vi| (vi.ty.clone(), vi.mutable))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                if !var_mutable {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let elem_ty = match var_ty {
+                    Type::Array(elem) => *elem,
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        return Err(TypeError {
+                            msg: format!(
+                                "index assignment target '{}' is not an array, got {}",
+                                name,
+                                other.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                };
+
+                let idx_ty = self.check_expr(index, *span)?;
+                if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("array index must be Number, got {}", idx_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let val_ty = self.check_expr(value, *span)?;
+                let compatible = val_ty.is_unknown()
+                    || elem_ty.is_unknown()
+                    || val_ty == elem_ty
+                    || (matches!(&elem_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "array element has type {} but assigned value has type {}",
+                            elem_ty.name(),
+                            val_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
+
             Stmt::Print { value } => {
                 let ty = self.check_expr(value, Span { line: 0, col: 0 })?;
                 if matches!(ty, Type::Function { .. }) {

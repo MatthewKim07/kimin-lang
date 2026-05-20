@@ -99,6 +99,71 @@ impl Interpreter {
                 }
                 Ok(ExecFlow::Normal)
             }
+            Stmt::IndexAssign {
+                name, index, value, ..
+            } => {
+                // Evaluate index first, then value (source order).
+                let idx_val = self.eval_expr(index)?;
+                let new_elem = self.eval_expr(value)?;
+
+                // Read current array value, clone its Vec, update, assign back.
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+                let mut elems = match current {
+                    Value::Array(v) => v,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "index assignment target '{}' is not an array, got {}",
+                                name,
+                                other.type_name()
+                            ),
+                        })
+                    }
+                };
+
+                let n = match idx_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("array index must be Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("array index must be an integer, got {}", n),
+                    });
+                }
+                if n < 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("array index out of bounds: index {} is negative", n as i64),
+                    });
+                }
+                let i = n as usize;
+                if i >= elems.len() {
+                    return Err(RuntimeError {
+                        msg: format!(
+                            "array index out of bounds: index {} but length is {}",
+                            i,
+                            elems.len()
+                        ),
+                    });
+                }
+                elems[i] = new_elem;
+                let found = self
+                    .env
+                    .borrow_mut()
+                    .assign_existing(name, Value::Array(elems));
+                if !found {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", name),
+                    });
+                }
+                Ok(ExecFlow::Normal)
+            }
+
             Stmt::Print { value } => {
                 let v = self.eval_expr(value)?;
                 println!("{}", v);
