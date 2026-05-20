@@ -1,0 +1,18 @@
+// Runnable by default — demonstrates valid index compound assignment.
+
+let mut nums = [1, 2, 3]
+nums[1] += 10
+print(nums[1])
+
+// Uncomment to test immutable array:
+// let frozen = [1, 2, 3]
+// frozen[0] += 1
+
+// Uncomment to test wrong element type:
+// nums[0] += "hello"
+
+// Uncomment to test bad index type:
+// nums["0"] += 1
+
+// Uncomment to test out of bounds:
+// nums[99] += 1

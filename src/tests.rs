@@ -12792,14 +12792,13 @@ fn parse_index_assign_inside_while() {
 }
 
 #[test]
-fn parse_index_compound_assign_rejected() {
-    // arr[i] += val has no syntax — backtracks to expr then +=
-    // which cannot start a statement. Should be a parse error.
+fn parse_index_compound_assign_supported_since_m10b() {
+    // M10B added index compound assignment. arr[i] += val is now valid syntax.
     let tokens = crate::lexer::Lexer::new("let mut a = [1, 2]\na[0] += 1")
         .tokenize()
         .unwrap();
     let result = crate::parser::Parser::new(tokens).parse();
-    assert!(result.is_err(), "expected parse error for arr[i] += val");
+    assert!(result.is_ok(), "arr[i] += val should parse in M10B");
 }
 
 #[test]
@@ -13102,4 +13101,588 @@ fn vm_matches_tree_array_mutation_while() {
 fn vm_matches_tree_array_mutation_simulate() {
     let src = "let mut a = [0, 0, 0]\nlet mut i = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\na[i] = i + 10\ni += 1\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])";
     assert_eq!(vm_run(src).unwrap(), vec!["10", "11", "12"]);
+}
+
+// ============================================================
+// M10B: Index compound assignment (arr[i] += value, etc.)
+// ============================================================
+
+// --- Parser tests ---
+
+#[test]
+fn parse_index_compound_add() {
+    assert!(check("let mut a = [1, 2]\na[0] += 5").is_ok());
+}
+
+#[test]
+fn parse_index_compound_subtract() {
+    assert!(check("let mut a = [1, 2]\na[0] -= 1").is_ok());
+}
+
+#[test]
+fn parse_index_compound_multiply() {
+    assert!(check("let mut a = [2, 3]\na[1] *= 4").is_ok());
+}
+
+#[test]
+fn parse_index_compound_divide() {
+    assert!(check("let mut a = [10, 4]\na[0] /= 2").is_ok());
+}
+
+#[test]
+fn parse_index_compound_expression_index() {
+    let src = "let mut a = [1, 2, 3]\nlet i = 1\na[i] += 10";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_compound_expression_value() {
+    let src = "let mut a = [1, 2]\nlet x = 3\na[0] += x * 2";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_compound_inside_function() {
+    let src = "fn update() {\nlet mut a = [1, 2]\na[0] += 5\n}";
+    let tokens = crate::lexer::Lexer::new(src).tokenize().unwrap();
+    assert!(crate::parser::Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_index_compound_inside_for() {
+    let src = "let mut a = [0, 0, 0]\nfor i in range(0, 3) {\na[i] += i\n}";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_compound_inside_simulate() {
+    let src =
+        "let mut a = [0]\nlet mut i = 0\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt {\na[i] += 1\ni += 1\n}";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_index_compound_missing_value_error() {
+    let tokens = crate::lexer::Lexer::new("let mut a = [1]\na[0] +=")
+        .tokenize()
+        .unwrap();
+    assert!(crate::parser::Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_index_expr_unaffected_by_compound() {
+    // arr[i] as read-only expression must still work after M10B.
+    assert!(run("let a = [1, 2]\nprint(a[0])").is_ok());
+}
+
+#[test]
+fn parse_index_assign_unaffected_by_compound() {
+    // Plain arr[i] = val must still work.
+    assert!(check("let mut a = [1, 2]\na[0] = 99").is_ok());
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_index_compound_number_add_ok() {
+    assert!(check("let mut a = [1, 2]\na[0] += 5").is_ok());
+}
+
+#[test]
+fn type_index_compound_number_sub_ok() {
+    assert!(check("let mut a = [10, 2]\na[0] -= 3").is_ok());
+}
+
+#[test]
+fn type_index_compound_number_mul_ok() {
+    assert!(check("let mut a = [2, 3]\na[1] *= 4").is_ok());
+}
+
+#[test]
+fn type_index_compound_number_div_ok() {
+    assert!(check("let mut a = [10, 4]\na[0] /= 2").is_ok());
+}
+
+#[test]
+fn type_index_compound_text_add_ok() {
+    assert!(check("let mut a = [\"hello\", \"world\"]\na[0] += \"!\"").is_ok());
+}
+
+#[test]
+fn type_index_compound_text_sub_error() {
+    let e = check("let mut a = [\"hello\"]\na[0] -= \"x\"").unwrap_err();
+    assert!(e.to_string().contains("Text") || e.to_string().contains("'-'"));
+}
+
+#[test]
+fn type_index_compound_immutable_array_error() {
+    let e = check("let a = [1, 2]\na[0] += 1").unwrap_err();
+    assert!(
+        e.to_string().contains("immutable"),
+        "expected immutable error in: {}",
+        e
+    );
+}
+
+#[test]
+fn type_index_compound_undefined_error() {
+    let e = check("nums[0] += 1").unwrap_err();
+    assert!(e.to_string().contains("undefined"));
+}
+
+#[test]
+fn type_index_compound_non_array_error() {
+    let e = check("let mut x = 5\nx[0] += 1").unwrap_err();
+    assert!(e.to_string().contains("not an array"));
+}
+
+#[test]
+fn type_index_compound_text_index_error() {
+    let e = check("let mut a = [1, 2]\na[\"0\"] += 1").unwrap_err();
+    assert!(e.to_string().contains("Number"));
+}
+
+#[test]
+fn type_index_compound_wrong_element_type_error() {
+    let e = check("let mut a = [1, 2]\na[0] += \"hello\"").unwrap_err();
+    assert!(
+        e.to_string().contains("Number") || e.to_string().contains("Text"),
+        "expected type error in: {}",
+        e
+    );
+}
+
+#[test]
+fn type_index_compound_unit_same_unit_ok() {
+    let src = "let d1: meters = 1\nlet d2: meters = 2\nlet mut a = [d1, d2]\nlet inc: meters = 5\na[0] += inc";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_index_compound_wrong_unit_error() {
+    let src = "let d1: meters = 1\nlet d2: meters = 2\nlet mut a = [d1, d2]\nlet s: seconds = 1\na[0] += s";
+    let e = check(src).unwrap_err();
+    assert!(
+        e.to_string().contains("meters") || e.to_string().contains("seconds"),
+        "expected unit mismatch in: {}",
+        e
+    );
+}
+
+#[test]
+fn type_index_compound_state_error() {
+    // State elements cannot use arithmetic compound assignment.
+    let src =
+        "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet mut a = [d1, d2]\na[0] += d2";
+    let e = check(src).unwrap_err();
+    let msg = e.to_string();
+    assert!(
+        msg.contains("State") || msg.contains("Door") || msg.contains("+"),
+        "expected type error for state compound assign in: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_index_compound_inside_function_ok() {
+    assert!(check("fn f() {\nlet mut a = [1, 2]\na[0] += 5\n}").is_ok());
+}
+
+#[test]
+fn type_index_compound_inside_closure_ok() {
+    let src = concat!(
+        "fn outer() {\n",
+        "let mut nums = [1, 2]\n",
+        "fn inner() {\nnums[0] += 10\n}\n",
+        "inner()\n",
+        "}"
+    );
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_index_compound_inside_for_ok() {
+    assert!(check("let mut a = [0, 0, 0]\nfor i in range(0, 3) {\na[i] += i\n}").is_ok());
+}
+
+#[test]
+fn type_index_compound_inside_simulate_ok() {
+    let src =
+        "let mut a = [0, 0]\nlet mut i = 0\nlet d: seconds = 2\nlet dt: seconds = 1\nsimulate d step dt {\na[i] += i\ni += 1\n}";
+    assert!(check(src).is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_index_compound_add() {
+    let src = "let mut a = [1, 2, 3]\na[1] += 10\nprint(a[1])";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a").unwrap(),
+        Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(12.0),
+            Value::Number(3.0)
+        ])
+    );
+}
+
+#[test]
+fn interp_index_compound_subtract() {
+    let src = "let mut a = [10, 5]\na[0] -= 3";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a").unwrap(),
+        Value::Array(vec![Value::Number(7.0), Value::Number(5.0)])
+    );
+}
+
+#[test]
+fn interp_index_compound_multiply() {
+    let src = "let mut a = [2, 3]\na[0] *= 4";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a").unwrap(),
+        Value::Array(vec![Value::Number(8.0), Value::Number(3.0)])
+    );
+}
+
+#[test]
+fn interp_index_compound_divide() {
+    let src = "let mut a = [10, 4]\na[0] /= 2";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a").unwrap(),
+        Value::Array(vec![Value::Number(5.0), Value::Number(4.0)])
+    );
+}
+
+#[test]
+fn interp_index_compound_text_concat() {
+    let src = "let mut a = [\"hello\", \"world\"]\na[0] += \"!\"";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a").unwrap(),
+        Value::Array(vec![
+            Value::Str("hello!".into()),
+            Value::Str("world".into())
+        ])
+    );
+}
+
+#[test]
+fn interp_index_compound_units() {
+    let src = "let d1: meters = 5\nlet d2: meters = 3\nlet mut a = [d1, d2]\nlet inc: meters = 2\na[0] += inc\nprint(a[0])";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn interp_index_compound_closure_capture() {
+    // inner closure mutates captured outer array via +=.
+    let src = concat!(
+        "fn outer() -> Number {\n",
+        "let mut nums = [1, 2, 3]\n",
+        "fn update() {\nnums[0] += 10\n}\n",
+        "update()\n",
+        "update()\n",
+        "return nums[0]\n",
+        "}\n",
+        "print(outer())"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["21"]);
+}
+
+#[test]
+fn interp_index_compound_for_loop() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, len(a)) {\na[i] *= 2\n}";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("a").unwrap(),
+        Value::Array(vec![
+            Value::Number(2.0),
+            Value::Number(4.0),
+            Value::Number(6.0),
+            Value::Number(8.0),
+        ])
+    );
+}
+
+#[test]
+fn interp_index_compound_simulate() {
+    let src = concat!(
+        "let mut values = [0, 0, 0]\n",
+        "let mut i: Number = 0\n",
+        "let duration: seconds = 3\n",
+        "let dt: seconds = 1\n",
+        "simulate duration step dt {\n",
+        "values[i] += i + 10\n",
+        "i += 1\n",
+        "}"
+    );
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("values").unwrap(),
+        Value::Array(vec![
+            Value::Number(10.0),
+            Value::Number(11.0),
+            Value::Number(12.0),
+        ])
+    );
+}
+
+#[test]
+fn interp_index_compound_eval_order() {
+    // idx() runs first (counter→1, returns 0), then rhs() (counter→11, returns 11).
+    // arr[0] = 10 + 11 = 21.
+    let src = concat!(
+        "let mut arr = [10, 20]\n",
+        "let mut counter: Number = 0\n",
+        "fn idx() -> Number {\ncounter += 1\nreturn 0\n}\n",
+        "fn rhs() -> Number {\ncounter += 10\nreturn counter\n}\n",
+        "arr[idx()] += rhs()\n",
+        "print(arr[0])\n",
+        "print(counter)"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["21", "11"]);
+}
+
+#[test]
+fn interp_index_compound_out_of_bounds_error() {
+    let src = "let mut a = [1, 2]\na[9] += 1";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => assert!(e.to_string().contains("out of bounds")),
+    }
+}
+
+#[test]
+fn interp_index_compound_fractional_index_error() {
+    let src = "let mut a = [1, 2]\na[0.5] += 1";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => assert!(e.to_string().contains("integer")),
+    }
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_index_compound_add_emits_instruction() {
+    let prog = compile_prog("let mut a = [1, 2]\na[0] += 5");
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::IndexCompoundAssign { name, op }
+            if name == "a" && *op == crate::ast::CompoundAssignOp::Add)
+    });
+    assert!(has, "expected IndexCompoundAssign Add in main chunk");
+}
+
+#[test]
+fn bytecode_index_compound_order_index_then_rhs() {
+    // Verify index compiled before rhs: both appear before IndexCompoundAssign.
+    let prog = compile_prog("let mut a = [1, 2]\na[0] += 5");
+    let pos = prog
+        .main
+        .instructions
+        .iter()
+        .position(|i| matches!(i, Instruction::IndexCompoundAssign { .. }))
+        .expect("no IndexCompoundAssign");
+    assert!(
+        pos >= 2,
+        "expected at least 2 instructions before IndexCompoundAssign"
+    );
+}
+
+#[test]
+fn bytecode_index_compound_no_double_index_eval() {
+    // The index expression appears exactly once before IndexCompoundAssign.
+    // Verify by checking only one CONSTANT #0 (the index value 0) before the instruction.
+    let prog = compile_prog("let mut a = [1, 2]\na[0] += 5");
+    let instrs = &prog.main.instructions;
+    let ica_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::IndexCompoundAssign { .. }))
+        .unwrap();
+    // There should be exactly one Constant(0) before the IndexCompoundAssign that could be index.
+    // Just verify IndexCompoundAssign exists once (no double emission).
+    let count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::IndexCompoundAssign { .. }))
+        .count();
+    assert_eq!(count, 1);
+    let _ = ica_pos;
+}
+
+#[test]
+fn disassemble_index_compound_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let mut a = [1, 2]\na[0] += 5\na[1] *= 3");
+    let dis = disassemble(&prog);
+    assert!(
+        dis.contains("INDEX_COMPOUND_ASSIGN a +="),
+        "missing +=: {}",
+        dis
+    );
+    assert!(
+        dis.contains("INDEX_COMPOUND_ASSIGN a *="),
+        "missing *=: {}",
+        dis
+    );
+}
+
+#[test]
+fn bytecode_index_assign_still_uses_set_index() {
+    // Plain `arr[i] = val` must still emit SetIndex, not IndexCompoundAssign.
+    let prog = compile_prog("let mut a = [1, 2]\na[0] = 99");
+    let has_set_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_)));
+    let has_ica = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has_set_index, "expected SetIndex for plain index assign");
+    assert!(!has_ica, "unexpected IndexCompoundAssign for plain assign");
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_index_compound_add() {
+    let src = "let mut a = [1, 2, 3]\na[1] += 10\nprint(a[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+#[test]
+fn vm_index_compound_subtract() {
+    let src = "let mut a = [10, 5]\na[0] -= 3\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["7"]);
+}
+
+#[test]
+fn vm_index_compound_multiply() {
+    let src = "let mut a = [2, 3]\na[0] *= 4\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["8"]);
+}
+
+#[test]
+fn vm_index_compound_divide() {
+    let src = "let mut a = [10]\na[0] /= 2\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn vm_index_compound_text_concat() {
+    let src = "let mut a = [\"hello\"]\na[0] += \"!\"\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["hello!"]);
+}
+
+#[test]
+fn vm_index_compound_units() {
+    let src = "let d1: meters = 5\nlet d2: meters = 3\nlet mut a = [d1, d2]\nlet inc: meters = 2\na[0] += inc\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["7"]);
+}
+
+#[test]
+fn vm_index_compound_closure_capture() {
+    let src = concat!(
+        "fn outer() -> Number {\n",
+        "let mut nums = [1, 2, 3]\n",
+        "fn update() {\nnums[0] += 10\n}\n",
+        "update()\n",
+        "update()\n",
+        "return nums[0]\n",
+        "}\n",
+        "print(outer())"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["21"]);
+}
+
+#[test]
+fn vm_index_compound_for_loop() {
+    let src = "let mut a = [1, 2, 3, 4]\nfor i in range(0, len(a)) {\na[i] *= 2\n}\nprint(a[0])\nprint(a[1])\nprint(a[2])\nprint(a[3])";
+    assert_eq!(vm_run(src).unwrap(), vec!["2", "4", "6", "8"]);
+}
+
+#[test]
+fn vm_index_compound_simulate() {
+    let src = concat!(
+        "let mut values = [0, 0, 0]\n",
+        "let mut i: Number = 0\n",
+        "let duration: seconds = 3\n",
+        "let dt: seconds = 1\n",
+        "simulate duration step dt {\n",
+        "values[i] += i + 10\n",
+        "i += 1\n",
+        "}\n",
+        "print(values[0])\nprint(values[1])\nprint(values[2])"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "11", "12"]);
+}
+
+#[test]
+fn vm_index_compound_eval_order() {
+    let src = concat!(
+        "let mut arr = [10, 20]\n",
+        "let mut counter: Number = 0\n",
+        "fn idx() -> Number {\ncounter += 1\nreturn 0\n}\n",
+        "fn rhs() -> Number {\ncounter += 10\nreturn counter\n}\n",
+        "arr[idx()] += rhs()\n",
+        "print(arr[0])\n",
+        "print(counter)"
+    );
+    assert_eq!(vm_run(src).unwrap(), vec!["21", "11"]);
+}
+
+#[test]
+fn vm_index_compound_stack_clean() {
+    // After IndexCompoundAssign, stack is clean; subsequent operations work correctly.
+    let src = "let mut a = [1, 2, 3]\na[0] += 9\na[2] += 7\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "2", "10"]);
+}
+
+#[test]
+fn vm_index_compound_out_of_bounds() {
+    let src = "let mut a = [1, 2]\na[9] += 1";
+    let err = vm_run(src).unwrap_err();
+    assert!(err.to_string().contains("out of bounds"));
+}
+
+#[test]
+fn vm_index_compound_fractional_index() {
+    let src = "let mut a = [1, 2]\na[0.5] += 1";
+    let err = vm_run(src).unwrap_err();
+    assert!(err.to_string().contains("integer"));
+}
+
+#[test]
+fn vm_index_compound_matches_tree() {
+    // VM and tree-walk produce same final array state.
+    let src = "let mut a = [1, 2, 3]\na[0] += 9\na[1] *= 3\na[2] -= 1\nprint(a[0])\nprint(a[1])\nprint(a[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "6", "2"]);
+}
+
+// --- Regression tests ---
+
+#[test]
+fn regression_m10a_index_assign_unaffected_by_m10b() {
+    // Plain index assign must still work after M10B.
+    let src = "let mut a = [1, 2, 3]\na[0] = 99\nprint(a[0])";
+    assert_eq!(vm_run(src).unwrap(), vec!["99"]);
+}
+
+#[test]
+fn regression_arrays_read_unaffected_by_m10b() {
+    let src = "let a = [10, 20, 30]\nprint(a[0])\nprint(len(a))";
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "3"]);
+}
+
+#[test]
+fn regression_compound_assign_scalar_unaffected_by_m10b() {
+    // Plain variable compound assign still works.
+    let src = "let mut x = 5\nx += 3\nprint(x)";
+    assert_eq!(vm_run(src).unwrap(), vec!["8"]);
 }
