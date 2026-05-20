@@ -127,6 +127,16 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Index => "INDEX".to_string(),
         Instruction::Len => "LEN".to_string(),
         Instruction::SetIndex(n) => format!("SET_INDEX {}", n),
+        Instruction::IndexCompoundAssign { name, op } => {
+            use crate::ast::CompoundAssignOp;
+            let op_str = match op {
+                CompoundAssignOp::Add => "+=",
+                CompoundAssignOp::Subtract => "-=",
+                CompoundAssignOp::Multiply => "*=",
+                CompoundAssignOp::Divide => "/=",
+            };
+            format!("INDEX_COMPOUND_ASSIGN {} {}", name, op_str)
+        }
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

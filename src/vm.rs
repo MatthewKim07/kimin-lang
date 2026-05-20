@@ -595,6 +595,56 @@ impl Vm {
                     }
                 }
 
+                Instruction::IndexCompoundAssign { name, op } => {
+                    // Stack before: [..., index_value, rhs_value]
+                    let rhs = pop(stack)?;
+                    let idx_val = pop(stack)?;
+
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    let mut elems = match current {
+                        Value::Array(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "index compound assignment target '{}' is not an array, got {}",
+                                name,
+                                other.type_name()
+                            )))
+                        }
+                    };
+
+                    let n = match idx_val {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("array index must be a Number")),
+                    };
+                    if n.fract() != 0.0 {
+                        return Err(runtime_err("array index must be an integer"));
+                    }
+                    if n < 0.0 {
+                        return Err(runtime_err("array index out of bounds: index is negative"));
+                    }
+                    let i = n as usize;
+                    if i >= elems.len() {
+                        return Err(runtime_err(&format!(
+                            "array index out of bounds: index {} but length is {}",
+                            i,
+                            elems.len()
+                        )));
+                    }
+
+                    let old_elem = elems[i].clone();
+                    let new_elem = apply_compound_op(&op, old_elem, rhs)?;
+                    elems[i] = new_elem;
+                    if !current_env
+                        .borrow_mut()
+                        .assign_existing(&name, Value::Array(elems))
+                    {
+                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    }
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",
@@ -632,4 +682,36 @@ fn runtime_err(msg: &str) -> KiminError {
     KiminError::Runtime(RuntimeError {
         msg: msg.to_string(),
     })
+}
+
+fn apply_compound_op(
+    op: &crate::ast::CompoundAssignOp,
+    a: Value,
+    b: Value,
+) -> Result<Value, KiminError> {
+    use crate::ast::CompoundAssignOp;
+    match op {
+        CompoundAssignOp::Add => match (a, b) {
+            (Value::Number(x), Value::Number(y)) => Ok(Value::Number(x + y)),
+            (Value::Str(x), Value::Str(y)) => Ok(Value::Str(x + &y)),
+            _ => Err(runtime_err("'+=' requires two numbers or two strings")),
+        },
+        CompoundAssignOp::Subtract => match (a, b) {
+            (Value::Number(x), Value::Number(y)) => Ok(Value::Number(x - y)),
+            _ => Err(runtime_err("'-=' requires numbers")),
+        },
+        CompoundAssignOp::Multiply => match (a, b) {
+            (Value::Number(x), Value::Number(y)) => Ok(Value::Number(x * y)),
+            _ => Err(runtime_err("'*=' requires numbers")),
+        },
+        CompoundAssignOp::Divide => match (a, b) {
+            (Value::Number(x), Value::Number(y)) => {
+                if y == 0.0 {
+                    return Err(runtime_err("division by zero"));
+                }
+                Ok(Value::Number(x / y))
+            }
+            _ => Err(runtime_err("'/=' requires numbers")),
+        },
+    }
 }

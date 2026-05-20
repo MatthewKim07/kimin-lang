@@ -190,6 +190,23 @@ impl BytecodeCompiler {
                 self.chunk.emit(Instruction::SetIndex(name.clone()));
             }
 
+            Stmt::IndexCompoundAssign {
+                name,
+                index,
+                op,
+                value,
+                ..
+            } => {
+                // Stack layout before IndexCompoundAssign: [..., index_value, rhs_value]
+                // Index evaluated once here; VM reads old element internally.
+                self.compile_expr(index)?;
+                self.compile_expr(value)?;
+                self.chunk.emit(Instruction::IndexCompoundAssign {
+                    name: name.clone(),
+                    op: op.clone(),
+                });
+            }
+
             Stmt::Print { value } => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Instruction::Print);

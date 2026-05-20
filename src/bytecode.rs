@@ -103,6 +103,14 @@ pub enum Instruction {
     /// Pops both; looks up `name` in the env chain; validates and clones the array;
     /// updates the element; assigns the updated array back to the existing binding.
     SetIndex(String),
+    /// Compound-assign to an array element: `arr[i] op= rhs`.
+    /// Stack before: [..., index_value, rhs_value]
+    /// Pops rhs, pops index; reads old element at index; applies op(old, rhs);
+    /// clones Vec, replaces element, assigns updated array back.
+    IndexCompoundAssign {
+        name: String,
+        op: crate::ast::CompoundAssignOp,
+    },
 
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
