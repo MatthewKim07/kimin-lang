@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1171_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1228_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-9E-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-10A-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1171 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1228 tests passing**.
 
 ---
 
@@ -267,7 +267,22 @@ print(sum)             // 28
 - Array literal `[e1, e2, e3]` — at least one element; all elements must share the same type
 - Index expression `arr[i]` — `i` must be a `Number`; runtime checks: integer, non-negative, in-bounds
 - `len(arr)` builtin — returns the number of elements as `Number`
-- Arrays are **fixed-size and read-only** after creation; no mutation
+- **Index assignment `arr[i] = value`** — requires `let mut` array; element type must match; array stays fixed-size
+  - Runtime: integer index, non-negative, in-bounds; updates binding via `assign_existing`
+  - Bytecode: `SET_INDEX name` instruction pops index and value; looks up array in env chain
+
+```kimin
+let mut nums = [1, 2, 3]
+nums[0] = 99
+for i in range(0, len(nums)) {
+    nums[i] = nums[i] * 2
+}
+print(nums[0])   // 198
+print(nums[1])   // 4
+print(nums[2])   // 6
+```
+
+- No push/pop/slices yet — arrays remain fixed-size after creation
 
 ### Bytecode backend
 
@@ -471,6 +486,12 @@ LexError  at line 3, col 7:  unexpected character '@'
 | Bytecode VM: recursive closure cycles | A function stored in its own captured env creates an `Rc` cycle → memory leak; harmless for run-and-exit programs |
 | No multiline REPL input | Multi-line constructs (functions, while) must fit on one input line in the REPL |
 | No package system | No module imports or namespacing |
+| No array push/pop/slices | Arrays are fixed-size after creation; only element mutation by index |
+| No nested arrays | `[[1,2],[3,4]]` — technically typechecks as `Array<Array<T>>` but is documented as unsupported |
+| No array type annotations | `let a: Array<Number> = [1,2]` is a ParseError; element type inferred only |
+| `len` shadows user `fn len` | The `len` builtin takes precedence over any user-defined single-argument function named `len` |
+| `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
+| No index compound assignment | `arr[i] += 1` is not supported; use `arr[i] = arr[i] + 1` |
 
 ---
 
@@ -500,6 +521,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 9C | `break` and `continue` | ✅ |
 | 9D | `for i in range(start, end)` loops | ✅ |
 | 9E | Fixed-size typed arrays (`[e1,e2]`, `arr[i]`, `len`) | ✅ |
+| 10A | Array mutation by index (`arr[i] = value`, `let mut` required) | ✅ |
 
 ---
 
@@ -507,7 +529,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 1171 passed, 0 failed
+# 1228 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -563,6 +585,8 @@ examples/
   for_range_function.kimin          for_range_errors.kimin
   arrays.kimin                      arrays_loop.kimin
   arrays_units.kimin                array_errors.kimin
+  array_mutation.kimin              array_mutation_loop.kimin
+  array_mutation_simulate.kimin     array_mutation_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
@@ -711,8 +735,15 @@ examples/
   - Array literal must have at least one element; all elements must share the same type (otherwise TypeError)
   - Index expression `arr[i]`: index must be `Number`; runtime bounds/integer/negative checks enforced
   - `len(arr)` builtin: returns element count as `Number`; intercepted before normal function dispatch
-  - Arrays are read-only after creation — no index assignment, no push/pop
   - Bytecode: `Array { count }`, `Index`, `Len` instructions; `len` compiles to `Len` (no Call emitted)
   - Both `kimin run` and `kimin vm` support all array operations
+
+### Milestone 10A
+- **Array mutation by index** (`arr[i] = value`)
+  - Requires a `let mut` array binding; immutable arrays reject index assignment statically
+  - Index must type-check as `Number`; runtime still enforces integer, non-negative, and in-bounds access
+  - Assigned value must match the array element type; `Number` still promotes into unit-typed element slots
+  - Works in functions, closures, `for` loops, and `simulate` bodies through env-chain reassignment
+  - Bytecode: `SetIndex(name)` / `SET_INDEX name` updates the existing array binding in place
 
 </details>

@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 9E
+# Kimin Language Specification — Milestone 10A
 
-This document describes the syntax and semantics implemented through Milestone 9E.
+This document describes the syntax and semantics implemented through Milestone 10A.
 
 ---
 
@@ -669,12 +669,31 @@ for i in range(0, len(primes)) {
 print(sum)   // 28
 ```
 
+#### Index assignment
+
+```kimin
+let mut nums = [10, 20, 30]
+nums[1] = 99
+print(nums[1])   // 99
+```
+
+- Index assignment is a **statement**, not an expression.
+- The target must be a mutable array binding declared with `let mut`.
+- The index expression must type-check as `Number`.
+- The assigned value must match the array element type.
+- A plain `Number` may still promote to a unit-typed array element slot, matching normal assignment rules.
+- Runtime checks match index reads:
+  - Index must be an integer.
+  - Index must be non-negative.
+  - Index must be less than `len(arr)`.
+- The array remains fixed-size; only element replacement is supported.
+
 #### Restrictions
 
-- **No mutation**: index assignment (`arr[0] = 1`) is not supported.
-- **No nested arrays**: element type must be a base type.
+- **No nested arrays**: nested arrays are documented as unsupported.
 - **No type annotation syntax**: `let a: Array<Number> = [...]` is a `ParseError`; element type is inferred.
 - **`len` is a builtin**, not a user-defined function. A user-defined function named `len` with a single array argument would be shadowed by the builtin.
+- **No index compound assignment**: `arr[i] += 1` is not supported.
 
 #### Bytecode lowering
 
@@ -683,6 +702,7 @@ print(sum)   // 28
 | `[e1, e2, e3]` | compile e1, e2, e3 left-to-right; emit `ARRAY 3` |
 | `arr[i]` | compile arr; compile i; emit `INDEX` |
 | `len(arr)` | compile arr; emit `LEN` (no `CALL` instruction) |
+| `arr[i] = value` | compile i; compile value; emit `SET_INDEX name` |
 
 ---
 
@@ -1033,7 +1053,7 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 ```
 program         = stmt* EOF
 stmt            = state_decl | transition_stmt | simulate_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
-                | compound_assign_stmt | print_stmt | if_stmt | block | expr_stmt
+                | compound_assign_stmt | index_assign_stmt | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
 inner_transition = "transition" IDENT "->" IDENT
@@ -1048,6 +1068,7 @@ return_stmt     = "return" expr?
 let_stmt        = "let" "mut"? IDENT (":" type_ann)? "=" expr
 assign_stmt          = IDENT "=" expr    (only when IDENT followed by single "=", not "==")
 compound_assign_stmt = IDENT ("+=" | "-=" | "*=" | "/=") expr
+index_assign_stmt    = IDENT "[" expr "]" "=" expr
 print_stmt      = "print" "(" expr ")"
 if_stmt         = "if" expr block ("else" block)?
 block           = "{" stmt* "}"
@@ -1082,11 +1103,11 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR and VM (Milestones 8A–9C)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–10A)
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–9E)
+### What the bytecode VM executes (M8A–10A)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -1099,6 +1120,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **Break and continue** (M9C): both desugar to `EndScope × N + Jump`; jump targets patched by `LoopContext`; no new VM instructions
 - **For/range loops** (M9D): `for i in range(start, end) { ... }` — outer `BeginScope` holds loop var + sentinel; condition, body, increment, `Jump`; `continue` jumps to increment; `break` jumps to `EndScope(outer)`; no new VM instructions
 - **Arrays** (M9E): `[e1, e2, e3]` → `ARRAY count`; `arr[i]` → `INDEX`; `len(arr)` → `LEN`; all three are new VM instructions
+- **Array mutation by index** (M10A): `arr[i] = value` compiles index first, then value, then emits `SET_INDEX name`; VM looks up the existing array binding, validates the index, replaces the element, and writes the updated array back through the env chain
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk
