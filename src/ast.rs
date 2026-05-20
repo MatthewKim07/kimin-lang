@@ -181,4 +181,14 @@ pub enum Stmt {
     Continue {
         span: Span,
     },
+    /// A numeric range-based for loop: `for <var> in range(<start>, <end>) { ... }`
+    /// Iterates `i` from `start` (inclusive) to `end` (exclusive) by 1.
+    /// The loop variable is immutable and loop-local.
+    ForRange {
+        var_name: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
 }

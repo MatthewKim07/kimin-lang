@@ -207,6 +207,8 @@ impl Lexer {
             "step" => TokenKind::Step,
             "mut" => TokenKind::Mut,
             "while" => TokenKind::While,
+            "for" => TokenKind::For,
+            "in" => TokenKind::In,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             _ => TokenKind::Ident(s),

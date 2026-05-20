@@ -20,6 +20,8 @@ pub enum TokenKind {
     Step,
     Mut,
     While,
+    For,
+    In,
     Break,
     Continue,
 

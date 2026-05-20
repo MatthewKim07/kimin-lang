@@ -7,12 +7,13 @@ use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
-/// Grammar (Milestone 7A):
+/// Grammar (Milestone 9D):
 ///   program         → stmt* EOF
-///   stmt            → state_decl | transition_stmt | simulate_stmt | while_stmt | break_stmt | continue_stmt
+///   stmt            → state_decl | transition_stmt | simulate_stmt | while_stmt | for_stmt | break_stmt | continue_stmt
 ///                   | fn_decl | return_stmt | let_stmt | assign_stmt | print_stmt | if_stmt | block | expr_stmt
 ///   simulate_stmt   → "simulate" expr "step" expr "{" stmt* "}"
 ///   while_stmt      → "while" expr "{" stmt* "}"
+///   for_stmt        → "for" IDENT "in" "range" "(" expr "," expr ")" "{" stmt* "}"
 ///   state_decl      → "state" IDENT "{" (variant_decl | transition_decl)* "}"
 ///   variant_decl    → IDENT
 ///   transition_decl → "transition" IDENT "->" IDENT
@@ -67,6 +68,8 @@ impl Parser {
             self.parse_simulate_stmt()
         } else if matches!(self.current_kind(), TokenKind::While) {
             self.parse_while()
+        } else if matches!(self.current_kind(), TokenKind::For) {
+            self.parse_for_range()
         } else if matches!(self.current_kind(), TokenKind::Break) {
             self.parse_break()
         } else if matches!(self.current_kind(), TokenKind::Continue) {
@@ -203,6 +206,58 @@ impl Parser {
 
         Ok(Stmt::While {
             condition,
+            body,
+            span,
+        })
+    }
+
+    fn parse_for_range(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `for`
+
+        // Loop variable identifier.
+        let var_name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected loop variable name after 'for'")),
+        };
+        self.advance(); // consume identifier
+
+        // `in` keyword.
+        if !matches!(self.current_kind(), TokenKind::In) {
+            return Err(self.error("expected 'in' after loop variable in 'for' statement"));
+        }
+        self.advance(); // consume `in`
+
+        // `range` identifier.
+        match self.current_kind() {
+            TokenKind::Ident(n) if n == "range" => {}
+            _ => return Err(self.error("expected 'range(start, end)' after 'in'")),
+        }
+        self.advance(); // consume `range`
+
+        self.expect_kind(TokenKind::LParen, "expected '(' after 'range'")?;
+
+        let start = self.parse_expr()?;
+
+        self.expect_kind(TokenKind::Comma, "expected ',' between range arguments")?;
+
+        let end = self.parse_expr()?;
+
+        // Reject three-argument range: next token must be `)`.
+        if matches!(self.current_kind(), TokenKind::Comma) {
+            return Err(self.error(
+                "range takes exactly 2 arguments (start, end); 3-argument range is not supported",
+            ));
+        }
+
+        self.expect_kind(TokenKind::RParen, "expected ')' after range arguments")?;
+
+        let body = self.parse_fn_body()?;
+
+        Ok(Stmt::ForRange {
+            var_name,
+            start,
+            end,
             body,
             span,
         })
