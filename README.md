@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1228_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1316_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-10A-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-10B-informational?style=flat-square)
 
 </div>
 
@@ -270,6 +270,10 @@ print(sum)             // 28
 - **Index assignment `arr[i] = value`** — requires `let mut` array; element type must match; array stays fixed-size
   - Runtime: integer index, non-negative, in-bounds; updates binding via `assign_existing`
   - Bytecode: `SET_INDEX name` instruction pops index and value; looks up array in env chain
+- **Index compound assignment `arr[i] op= value`** — requires `let mut` array; index evaluated once
+  - Supported operators: `+=`, `-=`, `*=`, `/=`
+  - Semantics: sugar for `arr[i] = arr[i] op value`, but the current element is read internally and the index is not re-evaluated
+  - Bytecode: `INDEX_COMPOUND_ASSIGN name op` updates the existing array binding through the env chain
 
 ```kimin
 let mut nums = [1, 2, 3]
@@ -491,7 +495,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | No array type annotations | `let a: Array<Number> = [1,2]` is a ParseError; element type inferred only |
 | `len` shadows user `fn len` | The `len` builtin takes precedence over any user-defined single-argument function named `len` |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
-| No index compound assignment | `arr[i] += 1` is not supported; use `arr[i] = arr[i] + 1` |
+| No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
 
 ---
 
@@ -522,6 +526,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 9D | `for i in range(start, end)` loops | ✅ |
 | 9E | Fixed-size typed arrays (`[e1,e2]`, `arr[i]`, `len`) | ✅ |
 | 10A | Array mutation by index (`arr[i] = value`, `let mut` required) | ✅ |
+| 10B | Array index compound assignment (`arr[i] += value`, etc.) | ✅ |
 
 ---
 
@@ -529,7 +534,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 1228 passed, 0 failed
+# 1316 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -556,7 +561,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1171 unit tests
+  tests.rs        1316 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -587,6 +592,8 @@ examples/
   arrays_units.kimin                array_errors.kimin
   array_mutation.kimin              array_mutation_loop.kimin
   array_mutation_simulate.kimin     array_mutation_errors.kimin
+  array_index_compound.kimin        array_index_compound_loop.kimin
+  array_index_compound_simulate.kimin  array_index_compound_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
@@ -745,5 +752,15 @@ examples/
   - Assigned value must match the array element type; `Number` still promotes into unit-typed element slots
   - Works in functions, closures, `for` loops, and `simulate` bodies through env-chain reassignment
   - Bytecode: `SetIndex(name)` / `SET_INDEX name` updates the existing array binding in place
+
+### Milestone 10B
+- **Array index compound assignment** (`arr[i] += value`, `arr[i] *= value`, etc.)
+  - Supported operators: `+=`, `-=`, `*=`, `/=`
+  - Requires a `let mut` array binding; immutable arrays reject index compound assignment statically
+  - Index must type-check as `Number`; runtime still enforces integer, non-negative, and in-bounds access
+  - The element type participates in the same binary operator rules as normal compound assignment
+  - Index is evaluated once, then the current element is read, combined with the rhs, and written back
+  - Works in functions, closures, `for` loops, and `simulate` bodies through env-chain reassignment
+  - Bytecode: `IndexCompoundAssign { name, op }` / `INDEX_COMPOUND_ASSIGN name op`
 
 </details>
