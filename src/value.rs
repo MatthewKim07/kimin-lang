@@ -40,6 +40,8 @@ pub enum Value {
         state_name: String,
         variant_name: String,
     },
+    /// A fixed-size homogeneous array.
+    Array(Vec<Value>),
 }
 
 impl Value {
@@ -52,6 +54,7 @@ impl Value {
             Value::Function(_) => "Function",
             Value::BytecodeFunction { .. } => "Function",
             Value::StateValue { .. } => "StateValue",
+            Value::Array(_) => "Array",
         }
     }
 }
@@ -76,6 +79,7 @@ impl PartialEq for Value {
                     variant_name: v2,
                 },
             ) => s1 == s2 && v1 == v2,
+            (Value::Array(a), Value::Array(b)) => a == b,
             _ => false,
         }
     }
@@ -98,6 +102,10 @@ impl fmt::Display for Value {
                 variant_name,
             } => {
                 write!(f, "{}.{}", state_name, variant_name)
+            }
+            Value::Array(elems) => {
+                let parts: Vec<String> = elems.iter().map(|v| format!("{}", v)).collect();
+                write!(f, "[{}]", parts.join(", "))
             }
         }
     }

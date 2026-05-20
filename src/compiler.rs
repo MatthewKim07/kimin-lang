@@ -601,6 +601,14 @@ impl BytecodeCompiler {
             }
 
             Expr::Call { callee, args, .. } => {
+                // Intercept the `len` builtin: compile the single argument, emit Len.
+                if let Expr::Variable { name, .. } = callee.as_ref() {
+                    if name == "len" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Len);
+                        return Ok(());
+                    }
+                }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.
                 // This handles named calls, returned closures, and chained calls uniformly.
@@ -611,6 +619,21 @@ impl BytecodeCompiler {
                 self.chunk.emit(Instruction::Call {
                     arg_count: args.len(),
                 });
+            }
+
+            Expr::ArrayLiteral { elements, .. } => {
+                for elem in elements {
+                    self.compile_expr(elem)?;
+                }
+                self.chunk.emit(Instruction::Array {
+                    count: elements.len(),
+                });
+            }
+
+            Expr::Index { array, index, .. } => {
+                self.compile_expr(array)?;
+                self.compile_expr(index)?;
+                self.chunk.emit(Instruction::Index);
             }
 
             Expr::StateVariant {

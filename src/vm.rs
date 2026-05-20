@@ -491,6 +491,62 @@ impl Vm {
                     }
                 }
 
+                // ── Arrays ───────────────────────────────────────────────────────
+                Instruction::Array { count } => {
+                    let mut elements: Vec<Value> = (0..count)
+                        .map(|_| pop(stack))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    // Elements were pushed left-to-right, so reverse to restore order.
+                    elements.reverse();
+                    stack.push(Value::Array(elements));
+                }
+
+                Instruction::Index => {
+                    let idx_val = pop(stack)?;
+                    let arr_val = pop(stack)?;
+                    let arr = match arr_val {
+                        Value::Array(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "index operator requires Array, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let n = match idx_val {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("array index must be a Number")),
+                    };
+                    if n.fract() != 0.0 {
+                        return Err(runtime_err("array index must be an integer"));
+                    }
+                    if n < 0.0 {
+                        return Err(runtime_err("array index out of bounds: index is negative"));
+                    }
+                    let i = n as usize;
+                    if i >= arr.len() {
+                        return Err(runtime_err(&format!(
+                            "array index out of bounds: index {} but length is {}",
+                            i,
+                            arr.len()
+                        )));
+                    }
+                    stack.push(arr[i].clone());
+                }
+
+                Instruction::Len => {
+                    let val = pop(stack)?;
+                    match val {
+                        Value::Array(v) => stack.push(Value::Number(v.len() as f64)),
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "len() requires Array, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    }
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

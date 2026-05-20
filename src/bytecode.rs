@@ -90,6 +90,15 @@ pub enum Instruction {
         body_idx: usize,
     },
 
+    /// Build a fixed-size array from the top N stack values (leftmost element pushed first).
+    Array {
+        count: usize,
+    },
+    /// Index into an array. Stack: [..., array, index] → element.
+    Index,
+    /// Return the length of an array. Stack: [..., array] → Number.
+    Len,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }

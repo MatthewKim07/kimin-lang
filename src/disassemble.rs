@@ -123,6 +123,9 @@ fn fmt_instruction(instr: &Instruction) -> String {
             format!("TRANSITION {} -> {}", variable, target)
         }
         Instruction::Simulate { body_idx } => format!("SIMULATE #{}", body_idx),
+        Instruction::Array { count } => format!("ARRAY {}", count),
+        Instruction::Index => "INDEX".to_string(),
+        Instruction::Len => "LEN".to_string(),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }
