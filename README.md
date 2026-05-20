@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-842_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1115_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-9D-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-9E-informational?style=flat-square)
 
 </div>
 
@@ -250,6 +250,25 @@ print(total)  // 55
 - Both target the **nearest** enclosing loop only; no labels
 - Neither crosses function or simulate boundaries (loop context resets on entry)
 
+### Arrays
+
+```kimin
+let primes = [2, 3, 5, 7, 11]
+print(primes[0])       // 2
+print(len(primes))     // 5
+
+let mut sum = 0
+for i in range(0, len(primes)) {
+    sum += primes[i]
+}
+print(sum)             // 28
+```
+
+- Array literal `[e1, e2, e3]` — at least one element; all elements must share the same type
+- Index expression `arr[i]` — `i` must be a `Number`; runtime checks: integer, non-negative, in-bounds
+- `len(arr)` builtin — returns the number of elements as `Number`
+- Arrays are **fixed-size and read-only** after creation; no mutation
+
 ### Bytecode backend
 
 ```sh
@@ -480,6 +499,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 9B | While loops | ✅ |
 | 9C | `break` and `continue` | ✅ |
 | 9D | `for i in range(start, end)` loops | ✅ |
+| 9E | Fixed-size typed arrays (`[e1,e2]`, `arr[i]`, `len`) | ✅ |
 
 ---
 
@@ -487,7 +507,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 944 passed, 0 failed
+# 1115 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -504,7 +524,7 @@ src/
   ast.rs          Expression and statement AST nodes
   parser.rs       Recursive-descent parser + unit name registry
   typechecker.rs  Static type checker (TypeEnv, UnitDimension, State types, loop_depth)
-  value.rs        Runtime values: Number, Text, Bool, Nil, Function, StateValue, BytecodeFunction
+  value.rs        Runtime values: Number, Text, Bool, Nil, Function, StateValue, BytecodeFunction, Array
   env.rs          Lexical scope chain — Rc<RefCell<Env>>
   interpreter.rs  Tree-walk interpreter (ExecFlow: Normal / Return / Break / Continue)
   error.rs        Structured errors: Lex / Parse / Type / Runtime / Compile
@@ -514,7 +534,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        944 unit tests
+  tests.rs        1115 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -541,6 +561,8 @@ examples/
   break_continue_errors.kimin       for_range.kimin
   for_range_sum.kimin               for_range_break_continue.kimin
   for_range_function.kimin          for_range_errors.kimin
+  arrays.kimin                      arrays_loop.kimin
+  arrays_units.kimin                array_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
@@ -683,5 +705,14 @@ examples/
   - Loop variable is immutable and loop-local; `start`/`end` must be `Number`
   - `break` and `continue` work inside for loops; `continue` jumps to the increment step (not the condition)
   - Bytecode: outer `BeginScope` holds loop var + sentinel; increment emitted after body; no new VM instructions
+
+### Milestone 9E
+- **Fixed-size typed arrays** (`[e1, e2, e3]`, `arr[i]`, `len(arr)`)
+  - Array literal must have at least one element; all elements must share the same type (otherwise TypeError)
+  - Index expression `arr[i]`: index must be `Number`; runtime bounds/integer/negative checks enforced
+  - `len(arr)` builtin: returns element count as `Number`; intercepted before normal function dispatch
+  - Arrays are read-only after creation — no index assignment, no push/pop
+  - Bytecode: `Array { count }`, `Index`, `Len` instructions; `len` compiles to `Len` (no Call emitted)
+  - Both `kimin run` and `kimin vm` support all array operations
 
 </details>

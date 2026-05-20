@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 9D
+# Kimin Language Specification — Milestone 9E
 
-This document describes the syntax and semantics implemented through Milestone 9D.
+This document describes the syntax and semantics implemented through Milestone 9E.
 
 ---
 
@@ -613,6 +613,79 @@ The compiler emits:
 
 ---
 
+### 4.13 Arrays
+
+A **fixed-size typed array** is a homogeneous sequence of values.
+
+#### Array literals
+
+```kimin
+let nums = [10, 20, 30]
+let words = ["hello", "world"]
+let flags = [true, false, true]
+```
+
+- At least one element is required; empty array literals are a `ParseError`.
+- Trailing commas are allowed: `[1, 2,]` is valid.
+- All elements must have the same type. Mixed types are a `TypeError`:
+
+```kimin
+[1, "two"]   // TypeError: array elements must have the same type
+```
+
+#### Indexing
+
+```kimin
+let arr = [10, 20, 30]
+print(arr[0])    // 10
+print(arr[2])    // 30
+```
+
+- The index expression must be a `Number`. A non-Number index is a `TypeError`.
+- Runtime checks:
+  - Index must be an integer (fractional → `RuntimeError`).
+  - Index must be ≥ 0 (negative → `RuntimeError`).
+  - Index must be less than `len(arr)` (out-of-bounds → `RuntimeError`).
+
+#### `len` builtin
+
+```kimin
+let arr = [1, 2, 3]
+print(len(arr))   // 3
+```
+
+- `len` takes exactly one argument of type `Array<T>`.
+- Returns a `Number`.
+- A non-Array argument is a `TypeError`.
+
+#### Using arrays with loops
+
+```kimin
+let primes = [2, 3, 5, 7, 11]
+let mut sum = 0
+for i in range(0, len(primes)) {
+    sum += primes[i]
+}
+print(sum)   // 28
+```
+
+#### Restrictions
+
+- **No mutation**: index assignment (`arr[0] = 1`) is not supported.
+- **No nested arrays**: element type must be a base type.
+- **No type annotation syntax**: `let a: Array<Number> = [...]` is a `ParseError`; element type is inferred.
+- **`len` is a builtin**, not a user-defined function. A user-defined function named `len` with a single array argument would be shadowed by the builtin.
+
+#### Bytecode lowering
+
+| Operation | Instructions emitted |
+|-----------|---------------------|
+| `[e1, e2, e3]` | compile e1, e2, e3 left-to-right; emit `ARRAY 3` |
+| `arr[i]` | compile arr; compile i; emit `INDEX` |
+| `len(arr)` | compile arr; emit `LEN` (no `CALL` instruction) |
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
@@ -998,10 +1071,11 @@ comparison      = term (("<" | "<=" | ">" | ">=") term)*
 term            = factor (("+" | "-") factor)*
 factor          = unary (("*" | "/") unary)*
 unary           = ("-" | "!") unary | call
-call            = primary ("(" args ")")*
+call            = primary ("(" args ")" | "[" expr "]")*
 primary         = NUMBER | STRING | "true" | "false"
-                | IDENT "." IDENT        (state variant expression)
-                | IDENT                  (variable reference)
+                | "[" expr ("," expr)* ","? "]"   (array literal, ≥1 element)
+                | IDENT "." IDENT                  (state variant expression)
+                | IDENT                            (variable reference)
                 | "(" expr ")"
 args            = (expr ("," expr)*)?
 ```
@@ -1012,7 +1086,7 @@ args            = (expr ("," expr)*)?
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–9D)
+### What the bytecode VM executes (M8A–9E)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -1024,6 +1098,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **While loops** (M9B): `while <Bool-expr> { ... }` — lowered to `JumpIfFalse`/`Jump`/`BeginScope`/`EndScope`; no new VM instructions
 - **Break and continue** (M9C): both desugar to `EndScope × N + Jump`; jump targets patched by `LoopContext`; no new VM instructions
 - **For/range loops** (M9D): `for i in range(start, end) { ... }` — outer `BeginScope` holds loop var + sentinel; condition, body, increment, `Jump`; `continue` jumps to increment; `break` jumps to `EndScope(outer)`; no new VM instructions
+- **Arrays** (M9E): `[e1, e2, e3]` → `ARRAY count`; `arr[i]` → `INDEX`; `len(arr)` → `LEN`; all three are new VM instructions
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk
@@ -1112,3 +1187,6 @@ SimulateChunk {
 | `LOAD_STATE state.variant` | Validate and push `Value::StateValue { state_name, variant_name }` |
 | `TRANSITION var -> target` | Read var, validate transition edge, update var in-place via env-chain |
 | `SIMULATE body_idx` | Pop step and duration; loop body_idx chunk floor(dur/step) times |
+| `ARRAY count` | Pop `count` values (top = last element), reverse, push `Value::Array` |
+| `INDEX` | Pop index and array; validate integer/bounds; push element |
+| `LEN` | Pop array; push `Value::Number(len)` |
