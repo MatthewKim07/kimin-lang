@@ -6,7 +6,7 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-944_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-842_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 ![Milestone](https://img.shields.io/badge/milestone-9D-informational?style=flat-square)
