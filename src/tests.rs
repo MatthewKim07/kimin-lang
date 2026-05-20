@@ -11348,3 +11348,416 @@ fn vm_matches_tree_for_range_function() {
     assert!(run(src).is_ok());
     assert_eq!(vm_run(src).unwrap(), vec!["55"]);
 }
+
+// ─── M9E: Arrays ──────────────────────────────────────────────────────────────
+
+// --- Lexer ---
+
+#[test]
+fn lex_lbracket() {
+    let kinds = tokenize("[");
+    assert_eq!(kinds[0], TokenKind::LBracket);
+}
+
+#[test]
+fn lex_rbracket() {
+    let kinds = tokenize("]");
+    assert_eq!(kinds[0], TokenKind::RBracket);
+}
+
+#[test]
+fn lex_array_literal_tokens() {
+    let kinds = tokenize("[1, 2, 3]");
+    assert_eq!(kinds[0], TokenKind::LBracket);
+    assert!(matches!(kinds[1], TokenKind::Number(_)));
+    assert_eq!(kinds[2], TokenKind::Comma);
+    assert!(matches!(kinds[3], TokenKind::Number(_)));
+    assert_eq!(kinds[4], TokenKind::Comma);
+    assert!(matches!(kinds[5], TokenKind::Number(_)));
+    assert_eq!(kinds[6], TokenKind::RBracket);
+}
+
+#[test]
+fn lex_index_expr_tokens() {
+    let kinds = tokenize("arr[0]");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "arr"));
+    assert_eq!(kinds[1], TokenKind::LBracket);
+    assert!(matches!(kinds[2], TokenKind::Number(_)));
+    assert_eq!(kinds[3], TokenKind::RBracket);
+}
+
+// --- Parser ---
+
+#[test]
+fn parse_array_literal_numbers() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("[1, 2, 3]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(
+        matches!(&stmts[0], Stmt::Expr(Expr::ArrayLiteral { elements, .. }) if elements.len() == 3)
+    );
+}
+
+#[test]
+fn parse_array_literal_trailing_comma() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("[1, 2,]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(
+        matches!(&stmts[0], Stmt::Expr(Expr::ArrayLiteral { elements, .. }) if elements.len() == 2)
+    );
+}
+
+#[test]
+fn parse_array_index_expr() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("arr[0]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[0], Stmt::Expr(Expr::Index { .. })));
+}
+
+#[test]
+fn parse_empty_array_literal_error() {
+    let tokens = Lexer::new("[]").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_array_missing_rbracket_error() {
+    let tokens = Lexer::new("[1, 2").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_index_empty_brackets_error() {
+    let tokens = Lexer::new("arr[]").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn typecheck_array_number_literal_ok() {
+    assert!(check("[1, 2, 3]").is_ok());
+}
+
+#[test]
+fn typecheck_array_string_literal_ok() {
+    assert!(check(r#"["a", "b"]"#).is_ok());
+}
+
+#[test]
+fn typecheck_array_bool_literal_ok() {
+    assert!(check("[true, false]").is_ok());
+}
+
+#[test]
+fn typecheck_array_mixed_type_error() {
+    let result = check(r#"[1, "two"]"#);
+    assert!(result.is_err());
+    if let Err(KiminError::Type(e)) = result {
+        assert!(e.msg.contains("same type"));
+    }
+}
+
+#[test]
+fn typecheck_array_mixed_number_bool_error() {
+    let result = check("[1, true]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn typecheck_index_returns_element_type() {
+    assert!(check("let arr = [10, 20]\nlet x: Number = arr[0]").is_ok());
+}
+
+#[test]
+fn typecheck_index_non_number_index_error() {
+    let result = check(r#"let arr = [1, 2]\nlet x = arr["oops"]"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn typecheck_index_non_array_error() {
+    let result = check("let x = 42\nlet y = x[0]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn typecheck_len_number_array_ok() {
+    assert!(check("let arr = [1, 2, 3]\nlen(arr)").is_ok());
+}
+
+#[test]
+fn typecheck_len_non_array_error() {
+    let result = check("let n = 42\nlen(n)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn typecheck_len_wrong_arg_count_error() {
+    let result = check("let arr = [1, 2]\nlen(arr, arr)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn typecheck_array_unit_elements_ok() {
+    assert!(check("let d1: meters = 10\nlet d2: meters = 20\nlet arr = [d1, d2]").is_ok());
+}
+
+#[test]
+fn typecheck_array_mixed_units_error() {
+    let result = check("let d: meters = 10\nlet t: seconds = 5\nlet arr = [d, t]");
+    assert!(result.is_err());
+}
+
+// --- Interpreter (tree-walk) ---
+
+#[test]
+fn interp_array_literal_index() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30]\nprint(a[1])").unwrap(),
+        vec!["20"]
+    );
+}
+
+#[test]
+fn interp_array_first_element() {
+    assert_eq!(vm_run("print([5, 6, 7][0])").unwrap(), vec!["5"]);
+}
+
+#[test]
+fn interp_array_last_element() {
+    assert_eq!(vm_run("let a = [1, 2, 3]\nprint(a[2])").unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_len_basic() {
+    assert_eq!(vm_run("print(len([1, 2, 3]))").unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_len_single_element() {
+    assert_eq!(vm_run("print(len([42]))").unwrap(), vec!["1"]);
+}
+
+#[test]
+fn interp_array_string_elements() {
+    assert_eq!(
+        vm_run("let a = [\"x\", \"y\"]\nprint(a[0])").unwrap(),
+        vec!["x"]
+    );
+}
+
+#[test]
+fn interp_array_bool_elements() {
+    assert_eq!(
+        vm_run("let a = [true, false]\nprint(a[1])").unwrap(),
+        vec!["false"]
+    );
+}
+
+#[test]
+fn interp_array_index_out_of_bounds_runtime_error() {
+    let result = run("let a = [1, 2]\nlet _ = a[5]");
+    assert!(result.is_err());
+    if let Err(KiminError::Runtime(e)) = result {
+        assert!(e.msg.contains("out of bounds"));
+    }
+}
+
+#[test]
+fn interp_array_index_negative_runtime_error() {
+    let result = run("let a = [1]\nlet _ = a[-1]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_array_index_fractional_runtime_error() {
+    let result = run("let a = [1, 2]\nlet _ = a[0.5]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_len_wrong_arg_count_error() {
+    let result = run("let arr = [1, 2]\nlen(arr, arr)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_array_loop_sum() {
+    let src =
+        "let a = [1, 2, 3, 4]\nlet mut s = 0\nfor i in range(0, len(a)) { s = s + a[i] }\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+#[test]
+fn interp_array_loop_with_break() {
+    let src = "let a = [10, 20, 30, 40]\nlet mut s = 0\nfor i in range(0, len(a)) { if i == 2 { break }\ns = s + a[i] }\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["30"]);
+}
+
+#[test]
+fn interp_array_in_function() {
+    let src = "fn first(a: Number, b: Number) -> Number { let arr = [a, b]\nreturn arr[0] }\nprint(first(7, 8))";
+    assert_eq!(vm_run(src).unwrap(), vec!["7"]);
+}
+
+#[test]
+fn interp_nested_index_expr() {
+    let src =
+        "fn idx(n: Number) -> Number { return n }\nlet arr = [100, 200, 300]\nprint(arr[idx(2)])";
+    assert_eq!(vm_run(src).unwrap(), vec!["300"]);
+}
+
+// --- Bytecode (instruction emission) ---
+
+#[test]
+fn bytecode_array_literal_emits_array_instruction() {
+    let prog = compile_prog("[1, 2, 3]");
+    let has_array = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Array { count: 3 }));
+    assert!(has_array, "expected Array{{count:3}} instruction");
+}
+
+#[test]
+fn bytecode_array_elements_emit_constants() {
+    let prog = compile_prog("[10, 20]");
+    assert!(prog.main.constants.contains(&Constant::Number(10.0)));
+    assert!(prog.main.constants.contains(&Constant::Number(20.0)));
+}
+
+#[test]
+fn bytecode_index_emits_index_instruction() {
+    let prog = compile_prog("let a = [1, 2]\na[0]");
+    let has_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index));
+    assert!(has_index, "expected INDEX instruction");
+}
+
+#[test]
+fn bytecode_len_emits_len_instruction() {
+    let prog = compile_prog("let a = [1]\nlen(a)");
+    let has_len = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Len));
+    assert!(has_len, "expected LEN instruction");
+}
+
+#[test]
+fn bytecode_len_does_not_emit_call() {
+    let prog = compile_prog("let a = [1]\nlen(a)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "len should not emit a Call instruction");
+}
+
+#[test]
+fn bytecode_array_single_element() {
+    let prog = compile_prog("[42]");
+    let has_array = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Array { count: 1 }));
+    assert!(has_array);
+}
+
+// --- VM execution ---
+
+#[test]
+fn vm_array_index_basic() {
+    assert_eq!(vm_run("let a = [1, 2, 3]\nprint(a[0])").unwrap(), vec!["1"]);
+}
+
+#[test]
+fn vm_array_len_basic() {
+    assert_eq!(vm_run("print(len([10, 20, 30]))").unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_array_index_last() {
+    assert_eq!(vm_run("let a = [5, 6, 7]\nprint(a[2])").unwrap(), vec!["7"]);
+}
+
+#[test]
+fn vm_array_out_of_bounds_error() {
+    let result = vm_run("let a = [1]\nprint(a[5])");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_array_negative_index_error() {
+    let result = vm_run("let a = [1, 2]\nprint(a[-1])");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_array_fractional_index_error() {
+    let result = vm_run("let a = [1, 2]\nprint(a[1.5])");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_len_non_array_error() {
+    let result = vm_run("let n = 42\nlen(n)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_array_loop_sum() {
+    let src =
+        "let a = [2, 4, 6]\nlet mut s = 0\nfor i in range(0, len(a)) { s = s + a[i] }\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["12"]);
+}
+
+#[test]
+fn vm_array_in_function() {
+    let src = "fn second(x: Number, y: Number) -> Number { let arr = [x, y]\nreturn arr[1] }\nprint(second(3, 9))";
+    assert_eq!(vm_run(src).unwrap(), vec!["9"]);
+}
+
+// --- VM/tree parity ---
+
+#[test]
+fn vm_matches_tree_array_basic() {
+    let src = "let a = [10, 20, 30]\nprint(a[0])\nprint(a[2])\nprint(len(a))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "30", "3"]);
+}
+
+#[test]
+fn vm_matches_tree_array_loop() {
+    let src =
+        "let a = [1, 2, 3, 4]\nlet mut s = 0\nfor i in range(0, len(a)) { s = s + a[i] }\nprint(s)";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+#[test]
+fn vm_matches_tree_array_string_elements() {
+    let src = "let a = [\"hello\", \"world\"]\nprint(a[1])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["world"]);
+}
+
+#[test]
+fn vm_matches_tree_len_in_for_range() {
+    let src = "let a = [10, 20, 30]\nfor i in range(0, len(a)) { print(a[i]) }";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "20", "30"]);
+}

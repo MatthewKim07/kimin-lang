@@ -1,0 +1,13 @@
+// Iterating over an array using a for loop and len.
+let primes = [2, 3, 5, 7, 11]
+
+let mut sum = 0
+for i in range(0, len(primes)) {
+    sum = sum + primes[i]
+}
+print(sum)
+
+// Print each element.
+for i in range(0, len(primes)) {
+    print(primes[i])
+}

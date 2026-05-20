@@ -1,0 +1,30 @@
+// Valid array program. Error cases below are commented out — they would each
+// produce a TypeError or RuntimeError if uncommented.
+
+let arr = [1, 2, 3]
+print(arr[0])
+print(arr[2])
+print(len(arr))
+
+// TypeError: mixed element types
+// let bad = [1, "two", true]
+
+// TypeError: index must be Number
+// let s = "x"
+// let v = arr[s]
+
+// TypeError: len requires Array
+// let n = 42
+// let _ = len(n)
+
+// TypeError: empty array literal not allowed
+// let empty = []
+
+// RuntimeError: index out of bounds
+// print(arr[10])
+
+// RuntimeError: fractional index
+// print(arr[1.5])
+
+// RuntimeError: negative index
+// print(arr[-1])

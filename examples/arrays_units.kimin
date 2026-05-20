@@ -1,0 +1,17 @@
+// Arrays with unit-typed elements.
+let distances: meters = 0
+let d1: meters = 10
+let d2: meters = 20
+let d3: meters = 30
+
+let ds = [d1, d2, d3]
+print(ds[0])
+print(ds[1])
+print(ds[2])
+print(len(ds))
+
+let mut total: meters = 0
+for i in range(0, len(ds)) {
+    total = total + ds[i]
+}
+print(total)
