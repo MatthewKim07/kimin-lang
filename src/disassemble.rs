@@ -126,6 +126,8 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Array { count } => format!("ARRAY {}", count),
         Instruction::Index => "INDEX".to_string(),
         Instruction::Len => "LEN".to_string(),
+        Instruction::ArrayPush(n) => format!("ARRAY_PUSH {}", n),
+        Instruction::ArrayPop(n) => format!("ARRAY_POP {}", n),
         Instruction::SetIndex(n) => format!("SET_INDEX {}", n),
         Instruction::IndexCompoundAssign { name, op } => {
             use crate::ast::CompoundAssignOp;

@@ -627,12 +627,25 @@ impl BytecodeCompiler {
             }
 
             Expr::Call { callee, args, .. } => {
-                // Intercept the `len` builtin: compile the single argument, emit Len.
+                // Intercept builtins: len, push, pop.
                 if let Expr::Variable { name, .. } = callee.as_ref() {
                     if name == "len" && args.len() == 1 {
                         self.compile_expr(&args[0])?;
                         self.chunk.emit(Instruction::Len);
                         return Ok(());
+                    }
+                    if name == "push" && args.len() == 2 {
+                        if let Expr::Variable { name: arr_name, .. } = &args[0] {
+                            self.compile_expr(&args[1])?;
+                            self.chunk.emit(Instruction::ArrayPush(arr_name.clone()));
+                            return Ok(());
+                        }
+                    }
+                    if name == "pop" && args.len() == 1 {
+                        if let Expr::Variable { name: arr_name, .. } = &args[0] {
+                            self.chunk.emit(Instruction::ArrayPop(arr_name.clone()));
+                            return Ok(());
+                        }
                     }
                 }
                 // Compile callee first (pushes function value onto stack),

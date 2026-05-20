@@ -645,6 +645,58 @@ impl Vm {
                     }
                 }
 
+                Instruction::ArrayPush(name) => {
+                    let new_elem = pop(stack)?;
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    let mut elems = match current {
+                        Value::Array(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "push() requires Array, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    elems.push(new_elem);
+                    if !current_env
+                        .borrow_mut()
+                        .assign_existing(&name, Value::Array(elems))
+                    {
+                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    }
+                    stack.push(Value::Nil);
+                }
+
+                Instruction::ArrayPop(name) => {
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    let mut elems = match current {
+                        Value::Array(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "pop() requires Array, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    if elems.is_empty() {
+                        return Err(runtime_err("cannot pop from empty array"));
+                    }
+                    let popped = elems.pop().unwrap();
+                    if !current_env
+                        .borrow_mut()
+                        .assign_existing(&name, Value::Array(elems))
+                    {
+                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    }
+                    stack.push(popped);
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

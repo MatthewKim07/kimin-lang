@@ -98,6 +98,13 @@ pub enum Instruction {
     Index,
     /// Return the length of an array. Stack: [..., array] → Number.
     Len,
+    /// Append a value to a mutable array variable.
+    /// Stack before: [..., new_value] — pops value, pushes Nil.
+    ArrayPush(String),
+    /// Remove and return the last element of a mutable array variable.
+    /// No stack input needed — pushes popped element (or errors if empty).
+    ArrayPop(String),
+
     /// Assign to an array element by index.
     /// Stack before: [..., index_value, new_value]
     /// Pops both; looks up `name` in the env chain; validates and clones the array;
