@@ -416,7 +416,72 @@ impl Interpreter {
                 eval_binary(op, lv, rv)
             }
 
+            Expr::ArrayLiteral { elements, .. } => {
+                let mut vals = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    vals.push(self.eval_expr(elem)?);
+                }
+                Ok(Value::Array(vals))
+            }
+
+            Expr::Index { array, index, .. } => {
+                let arr_val = self.eval_expr(array)?;
+                let idx_val = self.eval_expr(index)?;
+                let elems = match arr_val {
+                    Value::Array(v) => v,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("cannot index into value of type {}", other.type_name()),
+                        })
+                    }
+                };
+                let n = match idx_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("array index must be Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("array index must be an integer, got {}", n),
+                    });
+                }
+                if n < 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("array index out of bounds: index {} is negative", n as i64),
+                    });
+                }
+                let i = n as usize;
+                elems.get(i).cloned().ok_or_else(|| RuntimeError {
+                    msg: format!(
+                        "array index out of bounds: index {} but length is {}",
+                        i,
+                        elems.len()
+                    ),
+                })
+            }
+
             Expr::Call { callee, args, .. } => {
+                // `len` builtin: len(array) -> Number
+                if let Expr::Variable { name, .. } = callee.as_ref() {
+                    if name == "len" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("len() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let arg_val = self.eval_expr(&args[0])?;
+                        return match arg_val {
+                            Value::Array(v) => Ok(Value::Number(v.len() as f64)),
+                            other => Err(RuntimeError {
+                                msg: format!("len() requires Array, got {}", other.type_name()),
+                            }),
+                        };
+                    }
+                }
+
                 let callee_val = self.eval_expr(callee)?;
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for arg in args {

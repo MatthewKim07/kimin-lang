@@ -137,6 +137,8 @@ pub enum Type {
     },
     /// A state machine value. The String is the state machine name.
     State(String),
+    /// A fixed-size homogeneous array. The inner type is the element type.
+    Array(Box<Type>),
     /// Inferred or unannotated type — skips type checking on operations involving it.
     Unknown,
 }
@@ -151,6 +153,7 @@ impl Type {
             Type::Nil => "Nil".into(),
             Type::Function { .. } => "Function".into(),
             Type::State(s) => s.clone(),
+            Type::Array(elem) => format!("Array<{}>", elem.name()),
             Type::Unknown => "Unknown".into(),
         }
     }
@@ -933,7 +936,79 @@ impl TypeChecker {
                 self.check_binary(op, lt, rt, context_span)
             }
 
+            Expr::ArrayLiteral { elements, span } => {
+                if elements.is_empty() {
+                    return Err(TypeError {
+                        msg: "empty array literals are not supported; cannot infer element type"
+                            .into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                let first_ty = self.check_expr(&elements[0], *span)?;
+                for elem in elements.iter().skip(1) {
+                    let elem_ty = self.check_expr(elem, *span)?;
+                    if !elem_ty.is_unknown() && !first_ty.is_unknown() && elem_ty != first_ty {
+                        return Err(TypeError {
+                            msg: format!(
+                                "array elements must have the same type; expected {} but got {}",
+                                first_ty.name(),
+                                elem_ty.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                }
+                Ok(Type::Array(Box::new(first_ty)))
+            }
+
+            Expr::Index { array, index, span } => {
+                let arr_ty = self.check_expr(array, *span)?;
+                let idx_ty = self.check_expr(index, *span)?;
+                if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("array index must be Number, got {}", idx_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                match arr_ty {
+                    Type::Array(elem) => Ok(*elem),
+                    Type::Unknown => Ok(Type::Unknown),
+                    other => Err(TypeError {
+                        msg: format!("cannot index into value of type {}", other.name()),
+                        line: span.line,
+                        col: span.col,
+                    }),
+                }
+            }
+
             Expr::Call { callee, args, span } => {
+                // `len` builtin: len(array) -> Number
+                if let Expr::Variable { name, .. } = callee.as_ref() {
+                    if name == "len" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("len() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        match arg_ty {
+                            Type::Array(_) | Type::Unknown => return Ok(Type::Number),
+                            other => {
+                                return Err(TypeError {
+                                    msg: format!("len() requires Array, got {}", other.name()),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 let callee_ty = self.check_expr(callee, *span)?;
                 let callee_name = if let Expr::Variable { name, .. } = callee.as_ref() {
                     name.as_str()
