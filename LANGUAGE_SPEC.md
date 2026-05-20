@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 9C
+# Kimin Language Specification — Milestone 9D
 
-This document describes the syntax and semantics implemented through Milestone 9A.
+This document describes the syntax and semantics implemented through Milestone 9D.
 
 ---
 
@@ -56,7 +56,7 @@ foo  bar_baz  _x  score1
 ### 1.5 Keywords
 
 ```
-let  mut  if  else  while  break  continue  print  fn  return  true  false  state  transition  simulate  step
+let  mut  if  else  while  for  in  break  continue  print  fn  return  true  false  state  transition  simulate  step
 ```
 
 ### 1.6 Operators and Delimiters
@@ -542,7 +542,78 @@ Bytecode lowering:
 
 ---
 
-### 4.11 Mutable Variables and Assignment
+### 4.11 For/Range Loops
+
+A `for` loop iterates a variable over a numeric range:
+
+```kimin
+for i in range(start, end) {
+    <body>
+}
+```
+
+The loop variable `i` takes integer values from `start` (inclusive) to `end` (exclusive), incrementing by 1 each iteration.
+
+```kimin
+// Prints 0 1 2 3 4
+for i in range(0, 5) {
+    print(i)
+}
+
+// Sum 1 through 10
+let mut total: Number = 0
+for i in range(1, 11) {
+    total += i
+}
+print(total)   // 55
+```
+
+**Static rules:**
+- `start` and `end` must have type `Number`. Providing a unit type → `TypeError`.
+- `range` takes exactly 2 arguments. 3 or more arguments → `ParseError`.
+- The loop variable is immutable. Assigning to it inside the body → `TypeError`.
+- The loop variable is loop-local. It is not visible after the loop body.
+- `break` and `continue` are valid inside a `for` loop body (same rules as `while`).
+- `break`/`continue` do not cross function or simulate boundaries.
+
+**Runtime rules:**
+- If `start >= end`, the body executes zero times.
+- The loop variable is incremented by exactly 1.0 after each iteration.
+- Mutations to outer mutable variables persist across iterations.
+- `break` exits the loop immediately.
+- `continue` skips the rest of the current iteration and jumps to the increment step (not the condition re-check — the variable is incremented before the condition is re-evaluated).
+- `return` inside a for body propagates out to the enclosing function.
+
+**Error examples:**
+```kimin
+let t: seconds = 5
+for i in range(0, t) { }   // TypeError: range end must be Number, got seconds
+
+for i in range(0, 3) { i = 1 }   // TypeError: cannot assign to immutable variable 'i'
+
+for i in range(0, 3) { }
+print(i)   // TypeError: undefined variable 'i'
+
+for i in range(0, 5, 1) { }   // ParseError: range takes exactly 2 arguments
+```
+
+**Bytecode lowering:**
+
+The compiler emits:
+1. `BeginScope` (outer) — holds loop var `i` and a hidden sentinel `__kimin_range_end_N`
+2. `start` expression → `DefineLocal i`
+3. `end` expression → `DefineLocal __kimin_range_end_N`
+4. `@loop_start:` `LoadLocal i`, `LoadLocal __kimin_range_end_N`, `LESS`, `JumpIfFalse(@loop_end)`
+5. `BeginScope` (body) — body statements
+6. `EndScope` (body)
+7. `@increment:` `LoadLocal i`, `CONSTANT 1`, `ADD`, `StoreLocal i`, `Jump(@loop_start)`
+8. `@loop_end:` `EndScope` (outer)
+
+`break` jumps to `@loop_end`; `continue` jumps to `@increment`. No new VM instructions.
+
+---
+
+### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
 
@@ -888,7 +959,7 @@ Most errors that were previously RuntimeErrors (undefined variable, wrong arity,
 
 ```
 program         = stmt* EOF
-stmt            = state_decl | transition_stmt | simulate_stmt | while_stmt | break_stmt | continue_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
+stmt            = state_decl | transition_stmt | simulate_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | fn_decl | return_stmt | let_stmt | assign_stmt
                 | compound_assign_stmt | print_stmt | if_stmt | block | expr_stmt
 state_decl      = "state" IDENT "{" (variant_decl | inner_transition)* "}"
 variant_decl    = IDENT
@@ -896,6 +967,7 @@ inner_transition = "transition" IDENT "->" IDENT
 transition_stmt = "transition" IDENT "->" IDENT
 simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 while_stmt      = "while" expr "{" stmt* "}"
+for_stmt        = "for" IDENT "in" "range" "(" expr "," expr ")" "{" stmt* "}"
 break_stmt      = "break"
 continue_stmt   = "continue"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
@@ -940,7 +1012,7 @@ args            = (expr ("," expr)*)?
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–9C)
+### What the bytecode VM executes (M8A–9D)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -951,6 +1023,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **Compound assignment** (M9A): `x += expr`, `x -= expr`, `x *= expr`, `x /= expr` — desugared to `Load/op/Store` sequence; no new instructions
 - **While loops** (M9B): `while <Bool-expr> { ... }` — lowered to `JumpIfFalse`/`Jump`/`BeginScope`/`EndScope`; no new VM instructions
 - **Break and continue** (M9C): both desugar to `EndScope × N + Jump`; jump targets patched by `LoopContext`; no new VM instructions
+- **For/range loops** (M9D): `for i in range(start, end) { ... }` — outer `BeginScope` holds loop var + sentinel; condition, body, increment, `Jump`; `continue` jumps to increment; `break` jumps to `EndScope(outer)`; no new VM instructions
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk

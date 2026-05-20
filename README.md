@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-879_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-944_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-9C-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-9D-informational?style=flat-square)
 
 </div>
 
@@ -211,8 +211,9 @@ simulate duration step dt {
 - Time units: `seconds`/`s`, `milliseconds`/`ms`, `minutes`/`min`, `hours`/`h`
 - Outer mutable variables and state transitions persist across iterations
 
-### While loops and loop control
+### Loops and loop control
 
+**While loops:**
 ```
 let mut x: Number = 0
 
@@ -225,10 +226,28 @@ while x < 10 {
 // 1 2 4 5 6 7
 ```
 
-- Condition must be `Bool`; any other type → TypeError
-- `break`: exits the nearest enclosing while loop
-- `continue`: skips the rest of the body and re-evaluates the condition
-- Both target the **nearest** enclosing while only; no labels
+**For/range loops:**
+```
+// Prints 0 1 2 3 4
+for i in range(0, 5) {
+    print(i)
+}
+
+// Sum 1 through 10
+let mut total: Number = 0
+for i in range(1, 11) {
+    total += i
+}
+print(total)  // 55
+```
+
+- `while`: condition must be `Bool`; any other type → TypeError
+- `for i in range(start, end)`: iterates `i` from `start` (inclusive) to `end` (exclusive) by 1
+  - `start` and `end` must be `Number`; loop variable is immutable and loop-local
+  - Zero iterations if `start >= end`
+- `break`: exits the nearest enclosing loop
+- `continue`: skips the rest of the body; in for loops, jumps to the increment step
+- Both target the **nearest** enclosing loop only; no labels
 - Neither crosses function or simulate boundaries (loop context resets on entry)
 
 ### Bytecode backend
@@ -409,7 +428,7 @@ TypeError at line 7, col 1:  invalid transition for Door: closed -> closed
 TypeError at line 6, col 18: unknown variant 'locked' for state machine 'Door'
 TypeError at line 1, col 1:  function 'add' expected 2 arguments but got 1
 TypeError at line 2, col 5:  cannot assign to immutable variable 'x'
-TypeError at line 4, col 1:  'break' used outside of a while loop
+TypeError at line 4, col 1:  'break' used outside of a loop
 TypeError:                   while condition must be Bool, got Number
 ParseError at line 2, col 5: expected expression
 LexError  at line 3, col 7:  unexpected character '@'
@@ -422,8 +441,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | Limitation | Notes |
 |---|---|
 | No anonymous functions | No lambda syntax |
-| No `for` loops | Iteration via `while` and `simulate` only |
-| No labeled `break`/`continue` | Targets nearest enclosing while only |
+| No labeled `break`/`continue` | Targets nearest enclosing while/for only; no label syntax |
 | No mutable function parameters | Parameters are always immutable |
 | No compound unit annotations | `let v: meters/seconds = x` is a ParseError — inference only |
 | No derived unit aliases | `kg*m/s²` does not reduce to `newtons`; no named derived units |
@@ -461,6 +479,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 9A | Compound assignment operators (`+=`, `-=`, `*=`, `/=`) | ✅ |
 | 9B | While loops | ✅ |
 | 9C | `break` and `continue` | ✅ |
+| 9D | `for i in range(start, end)` loops | ✅ |
 
 ---
 
@@ -468,7 +487,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 879 passed, 0 failed
+# 944 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -495,7 +514,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        879 unit tests
+  tests.rs        944 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -519,11 +538,13 @@ examples/
   while_function.kimin              while_state.kimin
   while_errors.kimin                break_continue.kimin
   break_continue_nested.kimin       break_continue_function.kimin
-  break_continue_errors.kimin       bytecode_demo.kimin
-  bytecode_functions.kimin          vm_demo.kimin
-  vm_recursion.kimin                vm_simulate_state.kimin
-  vm_closure_capture.kimin          vm_dynamic_calls.kimin
-  vm_dynamic_adder.kimin
+  break_continue_errors.kimin       for_range.kimin
+  for_range_sum.kimin               for_range_break_continue.kimin
+  for_range_function.kimin          for_range_errors.kimin
+  bytecode_demo.kimin               bytecode_functions.kimin
+  vm_demo.kimin                     vm_recursion.kimin
+  vm_simulate_state.kimin           vm_closure_capture.kimin
+  vm_dynamic_calls.kimin            vm_dynamic_adder.kimin
 ```
 
 <details>
@@ -655,5 +676,12 @@ examples/
   - Both are valid only inside a `while` loop; using either outside → `TypeError`
   - `break`/`continue` do not cross function or simulate boundaries
   - Bytecode: `EndScope × N + Jump` with `LoopContext` patch tracking — no new VM instructions
+
+### Milestone 9D
+- **For/range loops** (`for i in range(start, end) { ... }`)
+  - Iterates `i` from `start` (inclusive) to `end` (exclusive) by 1; zero iterations if `start >= end`
+  - Loop variable is immutable and loop-local; `start`/`end` must be `Number`
+  - `break` and `continue` work inside for loops; `continue` jumps to the increment step (not the condition)
+  - Bytecode: outer `BeginScope` holds loop var + sentinel; increment emitted after body; no new VM instructions
 
 </details>
