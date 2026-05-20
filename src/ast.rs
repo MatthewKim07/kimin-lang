@@ -31,6 +31,17 @@ pub enum Expr {
         variant_name: String,
         span: Span,
     },
+    /// A fixed-size homogeneous array literal: `[e1, e2, e3]`
+    ArrayLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// Array index expression: `array[index]`
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

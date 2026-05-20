@@ -641,6 +641,19 @@ impl Parser {
                     args,
                     span,
                 };
+            } else if matches!(self.current_kind(), TokenKind::LBracket) {
+                let span = self.current_span();
+                self.advance(); // consume `[`
+                if matches!(self.current_kind(), TokenKind::RBracket) {
+                    return Err(self.error("index expression requires an index value"));
+                }
+                let index = self.parse_expr()?;
+                self.expect_kind(TokenKind::RBracket, "expected ']' after index")?;
+                expr = Expr::Index {
+                    array: Box::new(expr),
+                    index: Box::new(index),
+                    span,
+                };
             } else {
                 break;
             }
@@ -706,6 +719,24 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.expect_kind(TokenKind::RParen, "expected ')' after expression")?;
                 Ok(Expr::Grouping(Box::new(expr)))
+            }
+            TokenKind::LBracket => {
+                self.advance(); // consume `[`
+                if matches!(self.current_kind(), TokenKind::RBracket) {
+                    return Err(self.error(
+                        "empty array literals are not supported; provide at least one element",
+                    ));
+                }
+                let mut elements = vec![self.parse_expr()?];
+                while matches!(self.current_kind(), TokenKind::Comma) {
+                    self.advance(); // consume `,`
+                    if matches!(self.current_kind(), TokenKind::RBracket) {
+                        break; // allow trailing comma
+                    }
+                    elements.push(self.parse_expr()?);
+                }
+                self.expect_kind(TokenKind::RBracket, "expected ']' after array elements")?;
+                Ok(Expr::ArrayLiteral { elements, span })
             }
             _ => Err(self.error("expected expression")),
         }
