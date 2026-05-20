@@ -764,6 +764,46 @@ impl TypeChecker {
                 Ok(())
             }
 
+            Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                span,
+            } => {
+                let start_ty = self.check_expr(start, *span)?;
+                if !start_ty.is_unknown() && start_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("range start must be Number, got {}", start_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let end_ty = self.check_expr(end, *span)?;
+                if !end_ty.is_unknown() && end_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("range end must be Number, got {}", end_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                // Loop variable is immutable Number, scoped to the loop body.
+                self.env.push_scope();
+                self.env.define_with_variant(
+                    var_name.clone(),
+                    Type::Number,
+                    None,
+                    false, // immutable
+                );
+                self.loop_depth += 1;
+                let result = self.check_stmt_list(body);
+                self.loop_depth -= 1;
+                self.env.pop_scope();
+                result
+            }
+
             Stmt::Simulate {
                 duration,
                 step,

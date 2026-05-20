@@ -198,6 +198,81 @@ impl Interpreter {
 
             Stmt::Continue { .. } => Ok(ExecFlow::Continue),
 
+            Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                let start_val = self.eval_expr(start)?;
+                let end_val = self.eval_expr(end)?;
+
+                let start_num = match start_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("range start must be a Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+                let end_num = match end_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("range end must be a Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+
+                // Create a loop-level env that holds the loop variable.
+                // A fresh body env is created per iteration as a child.
+                let loop_env = Env::new_child(Rc::clone(&self.env));
+                let outer = Rc::clone(&self.env);
+                self.env = Rc::clone(&loop_env);
+                self.env
+                    .borrow_mut()
+                    .define(var_name.clone(), Value::Number(start_num));
+
+                let mut i = start_num;
+                let mut loop_result = ExecFlow::Normal;
+
+                while i < end_num {
+                    // Update loop variable for this iteration.
+                    loop_env
+                        .borrow_mut()
+                        .assign_existing(var_name, Value::Number(i));
+
+                    // Execute body in a fresh child of the loop env.
+                    let body_env = Env::new_child(Rc::clone(&loop_env));
+                    self.env = Rc::clone(&body_env);
+                    let result = self.exec_stmts(body);
+                    self.env = Rc::clone(&loop_env);
+
+                    match result? {
+                        ExecFlow::Normal => {}
+                        ExecFlow::Break => {
+                            loop_result = ExecFlow::Normal;
+                            break;
+                        }
+                        ExecFlow::Continue => {
+                            // Fall through to increment.
+                        }
+                        flow @ ExecFlow::Return(_) => {
+                            loop_result = flow;
+                            break;
+                        }
+                    }
+
+                    i += 1.0;
+                }
+
+                // Restore the enclosing environment.
+                self.env = outer;
+
+                Ok(loop_result)
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
