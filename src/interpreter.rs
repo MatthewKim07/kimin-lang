@@ -622,6 +622,100 @@ impl Interpreter {
                             }),
                         };
                     }
+
+                    if name == "push" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("push() expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let arr_name = match &args[0] {
+                            Expr::Variable { name, .. } => name.clone(),
+                            _ => {
+                                return Err(RuntimeError {
+                                    msg: "push() first argument must be a mutable array variable"
+                                        .into(),
+                                })
+                            }
+                        };
+                        let new_elem = self.eval_expr(&args[1])?;
+                        let current =
+                            self.env
+                                .borrow()
+                                .get(&arr_name)
+                                .ok_or_else(|| RuntimeError {
+                                    msg: format!("undefined variable '{}'", arr_name),
+                                })?;
+                        let mut elems = match current {
+                            Value::Array(v) => v,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "push() requires Array, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        elems.push(new_elem);
+                        if !self
+                            .env
+                            .borrow_mut()
+                            .assign_existing(&arr_name, Value::Array(elems))
+                        {
+                            return Err(RuntimeError {
+                                msg: format!("undefined variable '{}'", arr_name),
+                            });
+                        }
+                        return Ok(Value::Nil);
+                    }
+
+                    if name == "pop" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("pop() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let arr_name = match &args[0] {
+                            Expr::Variable { name, .. } => name.clone(),
+                            _ => {
+                                return Err(RuntimeError {
+                                    msg: "pop() argument must be a mutable array variable".into(),
+                                })
+                            }
+                        };
+                        let current =
+                            self.env
+                                .borrow()
+                                .get(&arr_name)
+                                .ok_or_else(|| RuntimeError {
+                                    msg: format!("undefined variable '{}'", arr_name),
+                                })?;
+                        let mut elems = match current {
+                            Value::Array(v) => v,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!("pop() requires Array, got {}", other.type_name()),
+                                })
+                            }
+                        };
+                        if elems.is_empty() {
+                            return Err(RuntimeError {
+                                msg: "cannot pop from empty array".into(),
+                            });
+                        }
+                        let popped = elems.pop().unwrap();
+                        if !self
+                            .env
+                            .borrow_mut()
+                            .assign_existing(&arr_name, Value::Array(elems))
+                        {
+                            return Err(RuntimeError {
+                                msg: format!("undefined variable '{}'", arr_name),
+                            });
+                        }
+                        return Ok(popped);
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;

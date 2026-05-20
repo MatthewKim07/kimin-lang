@@ -1151,6 +1151,122 @@ impl TypeChecker {
                             }
                         }
                     }
+
+                    // `push` builtin: push(arr, value) -> Nil
+                    if name == "push" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("push() expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arr_name = match &args[0] {
+                            Expr::Variable { name, .. } => name.clone(),
+                            _ => {
+                                return Err(TypeError {
+                                    msg: "push() first argument must be a mutable array variable"
+                                        .into(),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        };
+                        let (arr_ty, arr_mutable) = self
+                            .env
+                            .get(&arr_name)
+                            .map(|vi| (vi.ty.clone(), vi.mutable))
+                            .ok_or_else(|| TypeError {
+                                msg: format!("undefined variable '{}'", arr_name),
+                                line: span.line,
+                                col: span.col,
+                            })?;
+                        if !arr_mutable {
+                            return Err(TypeError {
+                                msg: format!("cannot mutate immutable variable '{}'", arr_name),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let elem_ty = match arr_ty {
+                            Type::Array(elem) => *elem,
+                            Type::Unknown => Type::Unknown,
+                            other => {
+                                return Err(TypeError {
+                                    msg: format!("push() requires Array, got {}", other.name()),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        };
+                        let val_ty = self.check_expr(&args[1], *span)?;
+                        let compatible = val_ty.is_unknown()
+                            || elem_ty.is_unknown()
+                            || val_ty == elem_ty
+                            || (matches!(&elem_ty, Type::NumberWithUnit(_))
+                                && val_ty == Type::Number);
+                        if !compatible {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "push() value has type {} but array element type is {}",
+                                    val_ty.name(),
+                                    elem_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Nil);
+                    }
+
+                    // `pop` builtin: pop(arr) -> T
+                    if name == "pop" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("pop() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arr_name = match &args[0] {
+                            Expr::Variable { name, .. } => name.clone(),
+                            _ => {
+                                return Err(TypeError {
+                                    msg: "pop() argument must be a mutable array variable".into(),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        };
+                        let (arr_ty, arr_mutable) = self
+                            .env
+                            .get(&arr_name)
+                            .map(|vi| (vi.ty.clone(), vi.mutable))
+                            .ok_or_else(|| TypeError {
+                                msg: format!("undefined variable '{}'", arr_name),
+                                line: span.line,
+                                col: span.col,
+                            })?;
+                        if !arr_mutable {
+                            return Err(TypeError {
+                                msg: format!("cannot mutate immutable variable '{}'", arr_name),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let elem_ty = match arr_ty {
+                            Type::Array(elem) => *elem,
+                            Type::Unknown => Type::Unknown,
+                            other => {
+                                return Err(TypeError {
+                                    msg: format!("pop() requires Array, got {}", other.name()),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        };
+                        return Ok(elem_ty);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;
