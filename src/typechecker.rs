@@ -682,6 +682,82 @@ impl TypeChecker {
                 Ok(())
             }
 
+            Stmt::IndexCompoundAssign {
+                name,
+                index,
+                op,
+                value,
+                span,
+            } => {
+                let (var_ty, var_mutable) = self
+                    .env
+                    .get(name)
+                    .map(|vi| (vi.ty.clone(), vi.mutable))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                if !var_mutable {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let elem_ty = match var_ty {
+                    Type::Array(elem) => *elem,
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        return Err(TypeError {
+                            msg: format!(
+                                "index compound assignment target '{}' is not an array, got {}",
+                                name,
+                                other.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                };
+
+                let idx_ty = self.check_expr(index, *span)?;
+                if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("array index must be Number, got {}", idx_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let rhs_ty = self.check_expr(value, *span)?;
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+                let result_ty = self.check_binary(&binary_op, elem_ty.clone(), rhs_ty, *span)?;
+                let compatible = result_ty.is_unknown()
+                    || elem_ty.is_unknown()
+                    || result_ty == elem_ty
+                    || (matches!(&elem_ty, Type::NumberWithUnit(_)) && result_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "array element has type {} but compound assignment result has type {}",
+                            elem_ty.name(),
+                            result_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
+
             Stmt::Print { value } => {
                 let ty = self.check_expr(value, Span { line: 0, col: 0 })?;
                 if matches!(ty, Type::Function { .. }) {

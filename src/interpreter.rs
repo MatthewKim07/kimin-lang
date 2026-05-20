@@ -164,6 +164,83 @@ impl Interpreter {
                 Ok(ExecFlow::Normal)
             }
 
+            Stmt::IndexCompoundAssign {
+                name,
+                index,
+                op,
+                value,
+                ..
+            } => {
+                // Evaluate index first, then read array, then evaluate rhs.
+                let idx_val = self.eval_expr(index)?;
+
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+                let mut elems = match current {
+                    Value::Array(v) => v,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "index compound assignment target '{}' is not an array, got {}",
+                                name,
+                                other.type_name()
+                            ),
+                        })
+                    }
+                };
+
+                let n = match idx_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("array index must be Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("array index must be an integer, got {}", n),
+                    });
+                }
+                if n < 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("array index out of bounds: index {} is negative", n as i64),
+                    });
+                }
+                let i = n as usize;
+                if i >= elems.len() {
+                    return Err(RuntimeError {
+                        msg: format!(
+                            "array index out of bounds: index {} but length is {}",
+                            i,
+                            elems.len()
+                        ),
+                    });
+                }
+
+                let old_elem = elems[i].clone();
+                let rhs = self.eval_expr(value)?;
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+                let new_elem = eval_binary(&binary_op, old_elem, rhs)?;
+                elems[i] = new_elem;
+                let found = self
+                    .env
+                    .borrow_mut()
+                    .assign_existing(name, Value::Array(elems));
+                if !found {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", name),
+                    });
+                }
+                Ok(ExecFlow::Normal)
+            }
+
             Stmt::Print { value } => {
                 let v = self.eval_expr(value)?;
                 println!("{}", v);
