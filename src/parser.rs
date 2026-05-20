@@ -490,8 +490,9 @@ impl Parser {
         Ok(Stmt::Assign { name, value, span })
     }
 
-    /// Try to parse `name[index] = value` as `Stmt::IndexAssign`.
-    /// If after `]` there is no `=`, backtrack and parse as a plain expression statement.
+    /// Try to parse `name[index] = value` as `Stmt::IndexAssign`,
+    /// or `name[index] op= value` as `Stmt::IndexCompoundAssign`.
+    /// If after `]` there is no assignment operator, backtrack and parse as a plain expression statement.
     fn parse_index_assign_or_expr(&mut self) -> Result<Stmt, ParseError> {
         let saved_pos = self.pos;
         let span = self.current_span();
@@ -515,6 +516,29 @@ impl Parser {
             Ok(Stmt::IndexAssign {
                 name,
                 index,
+                value,
+                span,
+            })
+        } else if matches!(
+            self.current_kind(),
+            TokenKind::PlusEqual
+                | TokenKind::MinusEqual
+                | TokenKind::StarEqual
+                | TokenKind::SlashEqual
+        ) {
+            let op = match self.current_kind() {
+                TokenKind::PlusEqual => CompoundAssignOp::Add,
+                TokenKind::MinusEqual => CompoundAssignOp::Subtract,
+                TokenKind::StarEqual => CompoundAssignOp::Multiply,
+                TokenKind::SlashEqual => CompoundAssignOp::Divide,
+                _ => unreachable!(),
+            };
+            self.advance(); // consume op=
+            let value = self.parse_expr()?;
+            Ok(Stmt::IndexCompoundAssign {
+                name,
+                index,
+                op,
                 value,
                 span,
             })

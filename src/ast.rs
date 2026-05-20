@@ -210,4 +210,13 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// Array element compound assignment: `arr[index] op= value`. Sugar for `arr[i] = arr[i] op value`.
+    /// Only valid for `let mut` arrays. Index is evaluated once.
+    IndexCompoundAssign {
+        name: String,
+        index: Expr,
+        op: CompoundAssignOp,
+        value: Expr,
+        span: Span,
+    },
 }
