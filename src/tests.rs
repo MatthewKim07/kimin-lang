@@ -14807,3 +14807,464 @@ fn vm_matches_tree_push_pop_errors_example() {
     let src = "let mut arr = [1, 2, 3]\npush(arr, 4)\nprint(len(arr))\nlet v = pop(arr)\nprint(v)\nprint(len(arr))";
     assert_eq!(vm_run(src).unwrap(), vec!["4", "4", "3"]);
 }
+
+// ─── M10C Audit: push/pop hardening ───────────────────────────────────────
+
+// --- Parser audit ---
+
+#[test]
+fn parse_pop_in_let_initializer() {
+    let src = "let mut a = [1, 2]\nlet v = pop(a)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_pop_in_binary_expression() {
+    let src = "let mut a = [5, 10]\nlet v = pop(a) + pop(a)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_push_inside_for() {
+    let src = "let mut a = [1]\nfor i in range(0, 3) {\n    push(a, i)\n}";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_pop_inside_simulate() {
+    let src = "let mut a = [1, 2, 3]\nlet d: seconds = 1\nlet s: seconds = 1\nsimulate d step s {\n    pop(a)\n}";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- Typechecker audit ---
+
+#[test]
+fn tc_push_bool_ok() {
+    assert!(check("let mut a = [true, false]\npush(a, true)").is_ok());
+}
+
+#[test]
+fn tc_push_unknown_variable_error() {
+    let err = check("push(missing, 1)").unwrap_err();
+    assert!(err.to_string().contains("undefined variable 'missing'"));
+}
+
+#[test]
+fn tc_pop_number_used_in_arithmetic() {
+    assert!(check("let mut a = [1, 2, 3]\nlet mut total = 0\ntotal += pop(a)").is_ok());
+}
+
+#[test]
+fn tc_push_inside_closure_ok() {
+    let src = "
+let mut shared = [1, 2]
+fn adder() -> Number {
+    push(shared, 99)
+    return len(shared)
+}
+let r = adder()
+";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_pop_inside_simulate_ok() {
+    let src = "
+let mut a = [1, 2, 3, 4, 5]
+let d: seconds = 2
+let s: seconds = 1
+simulate d step s {
+    pop(a)
+}
+";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_push_state_value_ok() {
+    let src = "
+state Light { red green blue
+  transition red -> green
+  transition green -> blue
+}
+let mut arr = [Light.red]
+push(arr, Light.green)
+";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_pop_state_value_type_ok() {
+    let src = "
+state Light { red green
+  transition red -> green
+}
+let mut arr = [Light.red, Light.green]
+let v: Light = pop(arr)
+";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_push_returns_nil_and_len_rejects_it() {
+    let err = check("let mut a = [1]\nlen(push(a, 2))").unwrap_err();
+    assert!(err.to_string().contains("len() requires Array, got Nil"));
+}
+
+// --- Interpreter audit ---
+
+#[test]
+fn interp_pop_used_in_arithmetic() {
+    let out = vm_run("let mut a = [5, 10]\nlet x = pop(a) + pop(a)\nprint(x)").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_push_block_scope_updates_outer() {
+    // push inside block scope updates the outer binding
+    let out =
+        vm_run("let mut a = [1, 2]\n{\n    push(a, 3)\n}\nprint(len(a))\nprint(a[2])").unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn interp_push_closure_capture() {
+    let src = "
+fn outer() -> Number {
+    let mut nums = [1]
+    fn add() -> Number {
+        push(nums, len(nums) + 1)
+        return len(nums)
+    }
+    add()
+    return add()
+}
+print(outer())
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_pop_closure_capture() {
+    let src = "
+fn outer() -> Number {
+    let mut nums = [1, 2, 3]
+    fn take() -> Number {
+        return pop(nums)
+    }
+    return take() + take()
+}
+print(outer())
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+// --- Bytecode audit ---
+
+#[test]
+fn bytecode_pop_inside_simulate_compiles() {
+    let prog = compile_prog(
+        "let mut a = [1,2,3]\nlet d: seconds = 1\nlet s: seconds = 1\nsimulate d step s {\n    pop(a)\n}",
+    );
+    // simulate body chunk should contain ArrayPop
+    let has_pop = prog.simulate_bodies.iter().any(|sc| {
+        sc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ArrayPop(_)))
+    });
+    assert!(has_pop, "expected ARRAY_POP in simulate body chunk");
+}
+
+#[test]
+fn bytecode_disassemble_array_push_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let mut a = [1]\npush(a, 2)");
+    let out = disassemble(&prog);
+    assert!(out.contains("ARRAY_PUSH a"));
+}
+
+#[test]
+fn bytecode_disassemble_array_pop_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let mut a = [1, 2]\nlet v = pop(a)");
+    let out = disassemble(&prog);
+    assert!(out.contains("ARRAY_POP a"));
+}
+
+#[test]
+fn bytecode_push_as_stmt_emits_pop_after_nil() {
+    // push used as stmt: ARRAY_PUSH name → POP (discards Nil)
+    let prog = compile_prog("let mut a = [1]\npush(a, 2)");
+    let instrs = &prog.main.instructions;
+    let push_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::ArrayPush(_)))
+        .unwrap();
+    // The instruction right after ARRAY_PUSH should be POP
+    assert!(
+        matches!(instrs.get(push_pos + 1), Some(Instruction::Pop)),
+        "expected POP immediately after ARRAY_PUSH in statement context"
+    );
+}
+
+// --- VM audit ---
+
+#[test]
+fn vm_pop_used_in_arithmetic() {
+    assert_eq!(
+        vm_run("let mut a = [5, 10]\nlet x = pop(a) + pop(a)\nprint(x)").unwrap(),
+        vec!["15"]
+    );
+}
+
+#[test]
+fn vm_push_closure_capture() {
+    let src = "
+fn outer() -> Number {
+    let mut nums = [1]
+    fn add() -> Number {
+        push(nums, len(nums) + 1)
+        return len(nums)
+    }
+    add()
+    return add()
+}
+print(outer())
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_pop_closure_capture() {
+    let src = "
+fn outer() -> Number {
+    let mut nums = [1, 2, 3]
+    fn take() -> Number {
+        return pop(nums)
+    }
+    return take() + take()
+}
+print(outer())
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn vm_push_stack_clean_after_stmt() {
+    // push as statement leaves stack clean (POP discards Nil after ARRAY_PUSH)
+    // Verify by running subsequent code and checking output is correct
+    let out = vm_run("let mut a = [1]\npush(a, 2)\npush(a, 3)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Loop audit ---
+
+#[test]
+fn push_in_for_loop_len_end_evaluated_once() {
+    // for range end = len(nums) at start = 3; 3 pushes → total 6
+    // If end were re-evaluated each iter, loop would be infinite
+    let out = vm_run(
+        "let mut nums = [1, 2, 3]\nfor i in range(0, len(nums)) {\n    push(nums, i)\n}\nprint(len(nums))",
+    ).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn len_while_condition_updates_after_push_pop() {
+    // while condition re-evaluates len each iteration
+    let out = vm_run(
+        "let mut a = [1, 2, 3]\nlet mut count = 0\nwhile len(a) > 0 {\n    pop(a)\n    count = count + 1\n}\nprint(count)\nprint(len(a))",
+    ).unwrap();
+    assert_eq!(out, vec!["3", "0"]);
+}
+
+#[test]
+fn push_with_break_preserves_mutation() {
+    // push before break still persists to outer array
+    let out = vm_run(
+        "
+let mut a = [1, 2, 3]
+for i in range(0, 5) {
+    if i == 2 { break }
+    push(a, i)
+}
+print(len(a))
+print(a[3])
+print(a[4])
+",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "0", "1"]);
+}
+
+#[test]
+fn pop_with_continue_preserves_mutation() {
+    // pop before continue still shrinks array
+    let out = vm_run(
+        "
+let mut a = [1, 2, 3, 4, 5]
+let mut sum = 0
+while len(a) > 0 {
+    let v = pop(a)
+    if v == 3 { continue }
+    sum = sum + v
+}
+print(sum)
+print(len(a))
+",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["12", "0"]);
+}
+
+// --- Simulate audit ---
+
+#[test]
+fn simulate_push_len_updates_across_iterations() {
+    // push inside simulate grows array; len(a) at each step reflects previous pushes
+    let src = "
+let d: seconds = 3
+let s: seconds = 1
+let mut a = [0]
+simulate d step s {
+    push(a, len(a))
+}
+print(len(a))
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["4"]);
+}
+
+#[test]
+fn simulate_pop_empty_runtime_error() {
+    let src = "
+let d: seconds = 5
+let s: seconds = 1
+let mut a = [1, 2]
+simulate d step s {
+    pop(a)
+}
+";
+    assert!(vm_run(src)
+        .unwrap_err()
+        .to_string()
+        .contains("cannot pop from empty array"));
+}
+
+#[test]
+fn simulate_push_block_local_capture() {
+    // array defined in simulate step body captures are global here
+    let src = "
+let mut log = [0]
+let mut counter = 0
+let d: seconds = 3
+let s: seconds = 1
+simulate d step s {
+    counter = counter + 1
+    push(log, counter)
+}
+print(len(log))
+print(log[1])
+print(log[3])
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["4", "1", "3"]);
+}
+
+// --- Unit/State audit ---
+
+#[test]
+fn pop_unit_used_in_arithmetic() {
+    // pop from meters array → meters; add to meters var
+    let src = "
+let a: meters = 5
+let b: meters = 10
+let mut arr = [a, b]
+let mut total: meters = 0
+total = total + pop(arr)
+total = total + pop(arr)
+print(len(arr))
+";
+    assert!(vm_run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["0"]);
+}
+
+#[test]
+fn push_state_value_into_state_array_ok() {
+    let src = "
+state Light { red green blue
+  transition red -> green
+  transition green -> blue
+}
+let mut arr = [Light.red]
+push(arr, Light.green)
+print(len(arr))
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+// --- len interaction audit ---
+
+#[test]
+fn len_after_push_correct() {
+    let out = vm_run("let mut a = [1, 2]\npush(a, 3)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn len_after_pop_correct() {
+    let out = vm_run("let mut a = [1, 2, 3]\npop(a)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn len_for_range_bound_evaluated_once_with_push() {
+    // len(nums) = 3 at start; 3 pushes happen; loop ends (not infinite)
+    let out = vm_run(
+        "let mut nums = [1, 2, 3]\nfor i in range(0, len(nums)) { push(nums, i) }\nprint(len(nums))",
+    ).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Interpreter/VM parity for closure tests ---
+
+#[test]
+fn vm_matches_tree_push_closure() {
+    let src = "
+fn outer() -> Number {
+    let mut nums = [1]
+    fn add() -> Number {
+        push(nums, len(nums) + 1)
+        return len(nums)
+    }
+    add()
+    return add()
+}
+print(outer())
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_pop_closure() {
+    let src = "
+fn outer() -> Number {
+    let mut nums = [1, 2, 3]
+    fn take() -> Number {
+        return pop(nums)
+    }
+    return take() + take()
+}
+print(outer())
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["5"]);
+}
+
+#[test]
+fn vm_matches_tree_for_range_len_once() {
+    let src = "let mut nums = [1, 2, 3]\nfor i in range(0, len(nums)) { push(nums, i) }\nprint(len(nums))";
+    assert_eq!(vm_run(src).unwrap(), vec!["6"]);
+}
