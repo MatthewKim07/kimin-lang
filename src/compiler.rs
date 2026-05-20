@@ -181,6 +181,15 @@ impl BytecodeCompiler {
                 }
             }
 
+            Stmt::IndexAssign {
+                name, index, value, ..
+            } => {
+                // Stack layout before SetIndex: [..., index_value, new_value]
+                self.compile_expr(index)?;
+                self.compile_expr(value)?;
+                self.chunk.emit(Instruction::SetIndex(name.clone()));
+            }
+
             Stmt::Print { value } => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Instruction::Print);

@@ -98,6 +98,11 @@ pub enum Instruction {
     Index,
     /// Return the length of an array. Stack: [..., array] → Number.
     Len,
+    /// Assign to an array element by index.
+    /// Stack before: [..., index_value, new_value]
+    /// Pops both; looks up `name` in the env chain; validates and clones the array;
+    /// updates the element; assigns the updated array back to the existing binding.
+    SetIndex(String),
 
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),

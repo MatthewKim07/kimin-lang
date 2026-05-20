@@ -126,6 +126,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Array { count } => format!("ARRAY {}", count),
         Instruction::Index => "INDEX".to_string(),
         Instruction::Len => "LEN".to_string(),
+        Instruction::SetIndex(n) => format!("SET_INDEX {}", n),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

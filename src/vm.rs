@@ -547,6 +547,54 @@ impl Vm {
                     }
                 }
 
+                Instruction::SetIndex(name) => {
+                    // Stack before: [..., index_value, new_value]
+                    let new_elem = pop(stack)?;
+                    let idx_val = pop(stack)?;
+
+                    // Read current array; end borrow before mutable assign.
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    let mut elems = match current {
+                        Value::Array(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "index assignment target '{}' is not an array, got {}",
+                                name,
+                                other.type_name()
+                            )))
+                        }
+                    };
+
+                    let n = match idx_val {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("array index must be a Number")),
+                    };
+                    if n.fract() != 0.0 {
+                        return Err(runtime_err("array index must be an integer"));
+                    }
+                    if n < 0.0 {
+                        return Err(runtime_err("array index out of bounds: index is negative"));
+                    }
+                    let i = n as usize;
+                    if i >= elems.len() {
+                        return Err(runtime_err(&format!(
+                            "array index out of bounds: index {} but length is {}",
+                            i,
+                            elems.len()
+                        )));
+                    }
+                    elems[i] = new_elem;
+                    if !current_env
+                        .borrow_mut()
+                        .assign_existing(&name, Value::Array(elems))
+                    {
+                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    }
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",
