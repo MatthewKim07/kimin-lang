@@ -1,0 +1,38 @@
+// Valid: push and pop work on mutable arrays
+let mut arr = [1, 2, 3]
+push(arr, 4)
+print(len(arr))    // 4
+let v = pop(arr)
+print(v)           // 4
+print(len(arr))    // 3
+
+// Errors (commented out — each causes a type or runtime error):
+
+// push to immutable array:
+//   let arr2 = [1, 2, 3]
+//   push(arr2, 4)           // TypeError: cannot mutate immutable variable 'arr2'
+
+// pop from immutable array:
+//   let arr3 = [1, 2]
+//   pop(arr3)               // TypeError: cannot mutate immutable variable 'arr3'
+
+// wrong arg count for push:
+//   push(arr)               // TypeError: push() expects 2 arguments, got 1
+//   push(arr, 1, 2)         // TypeError: push() expects 2 arguments, got 3
+
+// wrong arg count for pop:
+//   pop()                   // TypeError: pop() expects 1 argument, got 0
+//   pop(arr, arr)           // TypeError: pop() expects 1 argument, got 2
+
+// pop from empty array:
+//   let mut empty = [1]
+//   pop(empty)
+//   pop(empty)              // RuntimeError: cannot pop from empty array
+
+// push to non-array:
+//   let mut n = 5
+//   push(n, 1)              // TypeError: push() requires Array, got Number
+
+// type mismatch:
+//   let mut strs = ["a", "b"]
+//   push(strs, 99)          // TypeError: push() value has type Number but array element type is Text

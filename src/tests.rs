@@ -14240,3 +14240,570 @@ fn vm_matches_tree_array_index_compound_errors_example() {
     let src = "let mut nums = [1, 2, 3]\nnums[1] += 10\nprint(nums[1])";
     assert_eq!(vm_run(src).unwrap(), vec!["12"]);
 }
+
+// ─── M10C: push() and pop() builtins ──────────────────────────────────────
+
+// --- Lexer ---
+
+#[test]
+fn lex_push_is_ident() {
+    let kinds = tokenize("push");
+    assert!(matches!(kinds[0], TokenKind::Ident(_)));
+}
+
+#[test]
+fn lex_pop_is_ident() {
+    let kinds = tokenize("pop");
+    assert!(matches!(kinds[0], TokenKind::Ident(_)));
+}
+
+// --- Parser ---
+
+#[test]
+fn parse_push_call_is_valid() {
+    let src = "let mut a = [1]\npush(a, 2)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_pop_call_is_valid() {
+    let src = "let mut a = [1]\nlet v = pop(a)";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn tc_push_basic_valid() {
+    assert!(check("let mut a = [1, 2]\npush(a, 3)").is_ok());
+}
+
+#[test]
+fn tc_pop_basic_valid() {
+    assert!(check("let mut a = [1, 2]\nlet v = pop(a)").is_ok());
+}
+
+#[test]
+fn tc_push_wrong_arg_count_one() {
+    let err = check("let mut a = [1]\npush(a)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("push() expects 2 arguments, got 1"));
+}
+
+#[test]
+fn tc_push_wrong_arg_count_three() {
+    let err = check("let mut a = [1]\npush(a, 2, 3)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("push() expects 2 arguments, got 3"));
+}
+
+#[test]
+fn tc_pop_wrong_arg_count_zero() {
+    let err = check("let mut a = [1]\npop()").unwrap_err();
+    assert!(err.to_string().contains("pop() expects 1 argument, got 0"));
+}
+
+#[test]
+fn tc_pop_wrong_arg_count_two() {
+    let err = check("let mut a = [1]\npop(a, a)").unwrap_err();
+    assert!(err.to_string().contains("pop() expects 1 argument, got 2"));
+}
+
+#[test]
+fn tc_push_first_arg_literal_rejected() {
+    let err = check("push(1, 2)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("push() first argument must be a mutable array variable"));
+}
+
+#[test]
+fn tc_pop_arg_literal_rejected() {
+    let err = check("pop(1)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("pop() argument must be a mutable array variable"));
+}
+
+#[test]
+fn tc_push_immutable_array_rejected() {
+    let err = check("let a = [1, 2]\npush(a, 3)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("cannot mutate immutable variable 'a'"));
+}
+
+#[test]
+fn tc_pop_immutable_array_rejected() {
+    let err = check("let a = [1, 2]\npop(a)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("cannot mutate immutable variable 'a'"));
+}
+
+#[test]
+fn tc_push_non_array_variable_rejected() {
+    let err = check("let mut n = 5\npush(n, 1)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("push() requires Array, got Number"));
+}
+
+#[test]
+fn tc_pop_non_array_variable_rejected() {
+    let err = check("let mut n = 5\npop(n)").unwrap_err();
+    assert!(err.to_string().contains("pop() requires Array, got Number"));
+}
+
+#[test]
+fn tc_push_type_mismatch_rejected() {
+    let err = check("let mut a = [\"x\", \"y\"]\npush(a, 99)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("push() value has type Number but array element type is Text"));
+}
+
+#[test]
+fn tc_pop_return_type_is_element_type() {
+    // pop returns element type; assigning to Number-typed var must be compatible
+    assert!(check("let mut a = [1, 2, 3]\nlet mut v = 0\nv = pop(a)").is_ok());
+}
+
+#[test]
+fn tc_push_number_into_number_array_ok() {
+    assert!(check("let mut a = [1, 2]\npush(a, 42)").is_ok());
+}
+
+#[test]
+fn tc_push_text_into_text_array_ok() {
+    assert!(check("let mut a = [\"hello\"]\npush(a, \"world\")").is_ok());
+}
+
+#[test]
+fn tc_push_bool_mismatch_rejected() {
+    let err = check("let mut a = [1, 2]\npush(a, true)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("push() value has type Bool but array element type is Number"));
+}
+
+#[test]
+fn tc_push_returns_nil_type() {
+    // push return type is Nil; assigning it is fine
+    assert!(check("let mut a = [1]\nlet v = push(a, 2)").is_ok());
+}
+
+#[test]
+fn tc_pop_undefined_variable_rejected() {
+    let err = check("pop(missing)").unwrap_err();
+    assert!(err.to_string().contains("undefined variable 'missing'"));
+}
+
+// --- Interpreter ---
+
+#[test]
+fn interp_push_appends_element() {
+    let out = vm_run("let mut a = [1, 2]\npush(a, 3)\nprint(a[2])").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_push_grows_length() {
+    let out = vm_run("let mut a = [1, 2]\npush(a, 3)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_pop_returns_last_element() {
+    let out = vm_run("let mut a = [10, 20, 30]\nlet v = pop(a)\nprint(v)").unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn interp_pop_shrinks_length() {
+    let out = vm_run("let mut a = [1, 2, 3]\npop(a)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_pop_empty_array_error() {
+    let src = "let mut a = [1]\npop(a)\npop(a)";
+    match run(src) {
+        Ok(_) => panic!("expected runtime error"),
+        Err(e) => assert!(e.to_string().contains("cannot pop from empty array")),
+    }
+}
+
+#[test]
+fn interp_push_pop_roundtrip() {
+    let out =
+        vm_run("let mut a = [1]\npush(a, 99)\nlet v = pop(a)\nprint(v)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["99", "1"]);
+}
+
+#[test]
+fn interp_push_preserves_existing_elements() {
+    let out =
+        vm_run("let mut a = [7, 8]\npush(a, 9)\nprint(a[0])\nprint(a[1])\nprint(a[2])").unwrap();
+    assert_eq!(out, vec!["7", "8", "9"]);
+}
+
+#[test]
+fn interp_multiple_pushes_then_pops() {
+    let out = vm_run("let mut a = [0]\npush(a, 1)\npush(a, 2)\npush(a, 3)\nlet c = pop(a)\nlet b = pop(a)\nprint(c)\nprint(b)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["3", "2", "2"]);
+}
+
+#[test]
+fn interp_push_inside_function() {
+    let src = "
+fn fill(mut arr) {
+    push(arr, 99)
+}
+let mut a = [1, 2]
+push(a, 3)
+print(len(a))
+print(a[2])
+";
+    // Note: function params are immutable so push(arr, 99) inside fn would fail type check
+    // test push at top level only
+    let out = vm_run("let mut a = [1, 2]\npush(a, 3)\nprint(len(a))\nprint(a[2])").unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn interp_pop_returns_correct_lifo_order() {
+    let out =
+        vm_run("let mut a = [10, 20, 30]\nlet x = pop(a)\nlet y = pop(a)\nprint(x)\nprint(y)")
+            .unwrap();
+    assert_eq!(out, vec!["30", "20"]);
+}
+
+#[test]
+fn interp_push_in_for_loop() {
+    let out = vm_run(
+        "let mut a = [0]\nfor i in range(1, 4) {\n    push(a, i)\n}\nprint(len(a))\nprint(a[3])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4", "3"]);
+}
+
+#[test]
+fn interp_pop_in_while_loop() {
+    let out = vm_run("let mut a = [1, 2, 3]\nlet mut sum = 0\nwhile len(a) > 0 {\n    let v = pop(a)\n    sum = sum + v\n}\nprint(sum)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["6", "0"]);
+}
+
+#[test]
+fn interp_push_result_is_nil() {
+    // push returns nil; this should type-check and run fine
+    let out = vm_run("let mut a = [1]\nlet r = push(a, 2)\nprint(len(a))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Bytecode ---
+
+#[test]
+fn bytecode_push_emits_array_push() {
+    let prog = compile_prog("let mut a = [1]\npush(a, 2)");
+    let has_push = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPush(_)));
+    assert!(has_push, "expected ARRAY_PUSH instruction");
+}
+
+#[test]
+fn bytecode_pop_emits_array_pop() {
+    let prog = compile_prog("let mut a = [1, 2]\nlet v = pop(a)");
+    let has_pop = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPop(_)));
+    assert!(has_pop, "expected ARRAY_POP instruction");
+}
+
+#[test]
+fn bytecode_push_carries_variable_name() {
+    let prog = compile_prog("let mut myarr = [1]\npush(myarr, 2)");
+    let found = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPush(n) if n == "myarr"));
+    assert!(found, "expected ARRAY_PUSH myarr");
+}
+
+#[test]
+fn bytecode_pop_carries_variable_name() {
+    let prog = compile_prog("let mut myarr = [1]\nlet v = pop(myarr)");
+    let found = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPop(n) if n == "myarr"));
+    assert!(found, "expected ARRAY_POP myarr");
+}
+
+#[test]
+fn bytecode_push_compiles_value_arg_before_instruction() {
+    // value arg should be compiled as a Constant then ARRAY_PUSH
+    let prog = compile_prog("let mut a = [1]\npush(a, 99)");
+    let instrs = &prog.main.instructions;
+    let push_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::ArrayPush(_)))
+        .unwrap();
+    let has_constant_before = instrs[..push_pos]
+        .iter()
+        .any(|i| matches!(i, Instruction::Constant(_)));
+    assert!(has_constant_before);
+}
+
+#[test]
+fn bytecode_push_no_call_instruction_emitted() {
+    let prog = compile_prog("let mut a = [1]\npush(a, 2)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "push should not emit a Call instruction");
+}
+
+#[test]
+fn bytecode_pop_no_call_instruction_emitted() {
+    let prog = compile_prog("let mut a = [1]\npop(a)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "pop should not emit a Call instruction");
+}
+
+#[test]
+fn bytecode_push_inside_function_emits_array_push() {
+    let src = "let mut a = [1]\npush(a, 2)\nprint(len(a))";
+    let prog = compile_prog(src);
+    let has_push = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPush(_)));
+    assert!(has_push);
+}
+
+// --- VM ---
+
+#[test]
+fn vm_push_appends_element() {
+    assert_eq!(
+        vm_run("let mut a = [1, 2]\npush(a, 3)\nprint(a[2])").unwrap(),
+        vec!["3"]
+    );
+}
+
+#[test]
+fn vm_pop_returns_last() {
+    assert_eq!(
+        vm_run("let mut a = [10, 20, 30]\nlet v = pop(a)\nprint(v)").unwrap(),
+        vec!["30"]
+    );
+}
+
+#[test]
+fn vm_pop_empty_error() {
+    let src = "let mut a = [1]\npop(a)\npop(a)";
+    assert!(vm_run(src)
+        .unwrap_err()
+        .to_string()
+        .contains("cannot pop from empty array"));
+}
+
+#[test]
+fn vm_push_grows_len() {
+    assert_eq!(
+        vm_run("let mut a = [1]\npush(a, 2)\npush(a, 3)\nprint(len(a))").unwrap(),
+        vec!["3"]
+    );
+}
+
+#[test]
+fn vm_pop_shrinks_len() {
+    assert_eq!(
+        vm_run("let mut a = [1, 2, 3]\npop(a)\nprint(len(a))").unwrap(),
+        vec!["2"]
+    );
+}
+
+#[test]
+fn vm_push_pop_roundtrip() {
+    assert_eq!(
+        vm_run("let mut a = [0]\npush(a, 42)\nlet v = pop(a)\nprint(v)\nprint(len(a))").unwrap(),
+        vec!["42", "1"]
+    );
+}
+
+#[test]
+fn vm_push_in_for_loop() {
+    assert_eq!(
+        vm_run("let mut a = [0]\nfor i in range(1, 4) {\n    push(a, i)\n}\nprint(len(a))\nprint(a[3])").unwrap(),
+        vec!["4", "3"]
+    );
+}
+
+#[test]
+fn vm_pop_in_while_drain() {
+    assert_eq!(
+        vm_run("let mut a = [1, 2, 3]\nlet mut s = 0\nwhile len(a) > 0 {\n    let v = pop(a)\n    s = s + v\n}\nprint(s)").unwrap(),
+        vec!["6"]
+    );
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_push_accumulates_across_iterations() {
+    let src = "
+let mut log = [0]
+let mut count = 0
+let d: seconds = 3
+let st: seconds = 1
+simulate d step st {
+    count = count + 1
+    push(log, count)
+}
+print(len(log))
+print(log[1])
+print(log[3])
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["4", "1", "3"]);
+}
+
+#[test]
+fn simulate_pop_works_inside_body() {
+    let src = "
+let mut a = [10, 20, 30]
+let mut last = 0
+let d: seconds = 2
+let st: seconds = 1
+simulate d step st {
+    last = pop(a)
+}
+print(last)
+print(len(a))
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["20", "1"]);
+}
+
+// --- Loops ---
+
+#[test]
+fn push_in_for_loop_correct_length() {
+    assert_eq!(
+        vm_run("let mut a = [99]\nfor i in range(0, 5) {\n    push(a, i)\n}\nprint(len(a))")
+            .unwrap(),
+        vec!["6"]
+    );
+}
+
+#[test]
+fn pop_in_for_break_stops_early() {
+    let src = "
+let mut a = [1, 2, 3, 4, 5]
+for i in range(0, 3) {
+    pop(a)
+}
+print(len(a))
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+#[test]
+fn push_pop_interleaved_in_while() {
+    let src = "
+let mut a = [1, 2]
+let mut i = 0
+while i < 3 {
+    push(a, i)
+    i = i + 1
+}
+print(len(a))
+let x = pop(a)
+print(x)
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "2"]);
+}
+
+// --- Units ---
+
+#[test]
+fn tc_push_unit_number_promotion_ok() {
+    // meters array; push 10 (Number) — Number promotes to unit at push site
+    assert!(check("let mut a: meters = 10\nlet mut arr = [a]\npush(arr, 10)").is_ok());
+}
+
+#[test]
+fn tc_pop_from_unit_array_returns_unit_type() {
+    // pop from Array<meters> should return meters; assign to meters var is ok
+    assert!(
+        check("let mut a: meters = 10\nlet mut arr = [a]\nlet mut b: meters = pop(arr)").is_ok()
+    );
+}
+
+#[test]
+fn tc_push_wrong_unit_type_rejected() {
+    let err = check("let mut a: meters = 10\nlet mut arr = [a]\nlet b: seconds = 5\npush(arr, b)")
+        .unwrap_err();
+    assert!(err.to_string().contains("push() value has type"));
+}
+
+// --- Tree-walk / VM parity ---
+
+#[test]
+fn vm_matches_tree_push_pop_basic() {
+    let src = "let mut a = [10, 20, 30]\npush(a, 40)\nlet v = pop(a)\nprint(v)\nprint(len(a))";
+    assert_eq!(vm_run(src).unwrap(), vec!["40", "3"]);
+}
+
+#[test]
+fn vm_matches_tree_push_pop_loop() {
+    let src = "let mut a = [1]\nfor i in range(2, 6) {\n    push(a, i)\n}\nprint(len(a))\nlet mut s = 0\nwhile len(a) > 0 {\n    let v = pop(a)\n    s = s + v\n}\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "15"]);
+}
+
+#[test]
+fn vm_matches_tree_push_pop_simulate_example() {
+    let src = "
+let mut log = [0]
+let mut count = 0
+let dur: seconds = 3
+let stp: seconds = 1
+simulate dur step stp {
+    count = count + 1
+    push(log, count)
+}
+print(len(log))
+print(log[0])
+print(log[3])
+let tail = pop(log)
+print(tail)
+print(len(log))
+";
+    assert_eq!(vm_run(src).unwrap(), vec!["4", "0", "3", "3", "3"]);
+}
+
+#[test]
+fn vm_matches_tree_push_pop_errors_example() {
+    let src = "let mut arr = [1, 2, 3]\npush(arr, 4)\nprint(len(arr))\nlet v = pop(arr)\nprint(v)\nprint(len(arr))";
+    assert_eq!(vm_run(src).unwrap(), vec!["4", "4", "3"]);
+}

@@ -1,0 +1,21 @@
+// push and pop inside simulate
+let mut log = [0]
+let mut count = 0
+let dur: seconds = 3
+let stp: seconds = 1
+
+simulate dur step stp {
+    count = count + 1
+    push(log, count)
+}
+
+print(len(log))    // 4 (initial 0 plus 3 pushes)
+print(log[0])      // 0
+print(log[1])      // 1
+print(log[2])      // 2
+print(log[3])      // 3
+
+// pop the last entry
+let tail = pop(log)
+print(tail)        // 3
+print(len(log))    // 3

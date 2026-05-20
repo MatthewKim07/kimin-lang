@@ -1,0 +1,29 @@
+// push and pop in loops
+let mut stack = [1]
+
+for i in range(2, 6) {
+    push(stack, i)
+}
+print(len(stack))  // 5
+print(stack[0])    // 1
+print(stack[4])    // 5
+
+// drain with pop
+let mut sum = 0
+while len(stack) > 0 {
+    let v = pop(stack)
+    sum = sum + v
+}
+print(sum)         // 15
+print(len(stack))  // 0
+
+// push inside while
+let mut acc = [0]
+let mut i = 1
+while i <= 3 {
+    push(acc, i)
+    i = i + 1
+}
+print(len(acc))    // 4
+print(acc[1])      // 1
+print(acc[3])      // 3

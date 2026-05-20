@@ -1,0 +1,22 @@
+// push and pop builtins
+let mut nums = [10, 20, 30]
+
+push(nums, 40)
+print(len(nums))   // 4
+print(nums[3])     // 40
+
+let last = pop(nums)
+print(last)        // 40
+print(len(nums))   // 3
+
+push(nums, 99)
+push(nums, 100)
+print(len(nums))   // 5
+print(nums[3])     // 99
+print(nums[4])     // 100
+
+let a = pop(nums)
+let b = pop(nums)
+print(a)           // 100
+print(b)           // 99
+print(len(nums))   // 3
