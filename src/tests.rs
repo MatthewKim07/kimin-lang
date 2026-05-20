@@ -11761,3 +11761,511 @@ fn vm_matches_tree_len_in_for_range() {
     assert!(run(src).is_ok());
     assert_eq!(vm_run(src).unwrap(), vec!["10", "20", "30"]);
 }
+
+// ─── M9E Audit: Lexer ─────────────────────────────────────────────────────────
+
+#[test]
+fn lex_braces_unaffected_by_brackets() {
+    let kinds = tokenize("{ [ ] }");
+    assert_eq!(kinds[0], TokenKind::LBrace);
+    assert_eq!(kinds[1], TokenKind::LBracket);
+    assert_eq!(kinds[2], TokenKind::RBracket);
+    assert_eq!(kinds[3], TokenKind::RBrace);
+}
+
+#[test]
+fn lex_parens_unaffected_by_brackets() {
+    let kinds = tokenize("( [ ] )");
+    assert_eq!(kinds[0], TokenKind::LParen);
+    assert_eq!(kinds[1], TokenKind::LBracket);
+    assert_eq!(kinds[2], TokenKind::RBracket);
+    assert_eq!(kinds[3], TokenKind::RParen);
+}
+
+// ─── M9E Audit: Parser ────────────────────────────────────────────────────────
+
+#[test]
+fn parse_array_literal_text_strings() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new(r#"["a", "b", "c"]"#).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(
+        matches!(&stmts[0], Stmt::Expr(Expr::ArrayLiteral { elements, .. }) if elements.len() == 3)
+    );
+}
+
+#[test]
+fn parse_array_literal_bools() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("[true, false, true]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(
+        matches!(&stmts[0], Stmt::Expr(Expr::ArrayLiteral { elements, .. }) if elements.len() == 3)
+    );
+}
+
+#[test]
+fn parse_array_literal_variables() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("[x, y, z]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(
+        matches!(&stmts[0], Stmt::Expr(Expr::ArrayLiteral { elements, .. }) if elements.len() == 3)
+    );
+}
+
+#[test]
+fn parse_index_on_array_literal() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("[1, 2, 3][1]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // Should parse as Index { array: ArrayLiteral, index: 1 }
+    assert!(matches!(&stmts[0], Stmt::Expr(Expr::Index { .. })));
+}
+
+#[test]
+fn parse_index_after_call_parses() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("foo()[0]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[0], Stmt::Expr(Expr::Index { .. })));
+}
+
+#[test]
+fn parse_chained_index_parses() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("a[0][1]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[0], Stmt::Expr(Expr::Index { .. })));
+}
+
+#[test]
+fn parse_array_literal_in_function_call_arg() {
+    use crate::ast::{Expr, Stmt};
+    let tokens = Lexer::new("foo([1, 2, 3])").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // Should parse as Call { args: [ArrayLiteral] }
+    assert!(matches!(&stmts[0], Stmt::Expr(Expr::Call { .. })));
+}
+
+#[test]
+fn parse_index_assignment_is_parse_error() {
+    // arr[0] = 5 is not supported syntax
+    let tokens = Lexer::new("let mut arr = [1, 2, 3]\narr[0] = 5")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err(), "index assignment should be a parse error");
+}
+
+#[test]
+fn parse_return_array_literal_parses() {
+    // Bug fix regression: return [expr] should parse as Return(ArrayLiteral), not bare return
+    use crate::ast::{Expr, Stmt};
+    let src = "fn f(n: Number) {\nreturn [n, n]\n}";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    let body = match &stmts[0] {
+        Stmt::FnDecl { body, .. } => body,
+        _ => panic!("expected FnDecl"),
+    };
+    assert!(
+        matches!(
+            &body[0],
+            Stmt::Return {
+                value: Some(Expr::ArrayLiteral { .. }),
+                ..
+            }
+        ),
+        "return [expr] should parse as Return(ArrayLiteral)"
+    );
+}
+
+// ─── M9E Audit: Typechecker ──────────────────────────────────────────────────
+
+#[test]
+fn type_index_text_index_error() {
+    let result = check("let arr = [1, 2]\nlet idx = \"x\"\nlet _ = arr[idx]");
+    assert!(result.is_err());
+    if let Err(KiminError::Type(e)) = result {
+        assert!(e.msg.contains("Number"));
+    }
+}
+
+#[test]
+fn type_index_bool_index_error() {
+    let result = check("let arr = [1, 2]\nlet _ = arr[true]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_index_unit_index_error() {
+    let result = check("let arr = [1, 2]\nlet idx: seconds = 1\nlet _ = arr[idx]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_array_state_values_ok() {
+    assert!(check("state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet arr = [d1, d2]").is_ok());
+}
+
+#[test]
+fn type_array_closure_capture_ok() {
+    assert!(check("let a = [1, 2, 3]\nfn get(i: Number) -> Number { return a[i] }").is_ok());
+}
+
+#[test]
+fn type_array_inside_simulate_ok() {
+    assert!(check("let dur: seconds = 3\nlet stp: seconds = 1\nlet a = [10, 20, 30]\nsimulate dur step stp { let x: Number = a[0] }").is_ok());
+}
+
+#[test]
+fn type_array_for_range_len_ok() {
+    assert!(check("let a = [1, 2, 3]\nfor i in range(0, len(a)) { let x: Number = a[i] }").is_ok());
+}
+
+#[test]
+fn type_nested_array_typechecks_as_array_of_array() {
+    // Nested arrays are technically supported by the type system
+    // (inner arrays have type Array<Number>, outer becomes Array<Array<Number>>)
+    assert!(check("let a = [[1, 2], [3, 4]]").is_ok());
+}
+
+#[test]
+fn type_string_index_error() {
+    let result = check("let s = \"hello\"\nlet _ = s[0]");
+    assert!(result.is_err());
+}
+
+// ─── M9E Audit: Interpreter ───────────────────────────────────────────────────
+
+#[test]
+fn interp_array_literal_left_to_right_order() {
+    // Elements must be stored in source order, not reversed
+    assert_eq!(
+        vm_run("let a = [10, 20, 30]\nprint(a[0])\nprint(a[1])\nprint(a[2])").unwrap(),
+        vec!["10", "20", "30"]
+    );
+}
+
+#[test]
+fn interp_return_array_literal_directly() {
+    // Regression: return [expr, expr] was silently returning nil before can_start_expr fix
+    let src =
+        "fn pair(n: Number) {\nreturn [n, n + 1]\n}\nlet p = pair(5)\nprint(p[0])\nprint(p[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "6"]);
+}
+
+#[test]
+fn interp_function_returns_array_variable() {
+    let src = "fn make(n: Number) {\nlet a = [n, n + 10]\nreturn a\n}\nlet r = make(3)\nprint(r[0])\nprint(r[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["3", "13"]);
+}
+
+#[test]
+fn interp_closure_captures_outer_array() {
+    let src = "let a = [5, 10, 15]\nfn get(i: Number) -> Number { return a[i] }\nprint(get(0))\nprint(get(2))";
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "15"]);
+}
+
+#[test]
+fn interp_array_index_by_computed_expr() {
+    let src = "let a = [100, 200, 300]\nlet i = 2\nprint(a[i - 1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["200"]);
+}
+
+#[test]
+fn interp_array_inside_simulate_by_counter() {
+    let src = "let a = [10, 20, 30]\nlet mut idx = 0\nlet dur: seconds = 3\nlet stp: seconds = 1\nsimulate dur step stp {\nprint(a[idx])\nidx = idx + 1\n}";
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "20", "30"]);
+}
+
+#[test]
+fn interp_unit_array_elements() {
+    let src =
+        "let d1: meters = 5\nlet d2: meters = 10\nlet ds = [d1, d2]\nprint(ds[0])\nprint(ds[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "10"]);
+}
+
+#[test]
+fn interp_state_array_elements() {
+    let src = "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet doors = [d1, d2]\nprint(doors[0])\nprint(doors[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["Door.closed", "Door.open"]);
+}
+
+#[test]
+fn interp_array_print_displays_all_elements() {
+    let src = "let a = [1, 2, 3]\nprint(a)";
+    assert_eq!(vm_run(src).unwrap(), vec!["[1, 2, 3]"]);
+}
+
+// ─── M9E Audit: Bytecode ──────────────────────────────────────────────────────
+
+#[test]
+fn bytecode_array_in_function_chunk() {
+    let prog =
+        compile_prog("fn f(n: Number) -> Number {\nlet arr = [n, n + 1]\nreturn arr[0]\n}\nf(10)");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    let has_array = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Array { .. }));
+    let has_index = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index));
+    assert!(has_array, "function chunk should have ARRAY instruction");
+    assert!(has_index, "function chunk should have INDEX instruction");
+}
+
+#[test]
+fn bytecode_array_in_simulate_chunk() {
+    let prog = compile_prog("let a = [1, 2, 3]\nlet dur: seconds = 3\nlet stp: seconds = 1\nsimulate dur step stp { let x: Number = a[0] }");
+    // Simulate body should have INDEX but array literal was in main chunk, not simulate
+    let main_has_array = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Array { .. }));
+    let sim_has_index = prog.simulate_bodies.iter().any(|sc| {
+        sc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Index))
+    });
+    assert!(main_has_array);
+    assert!(sim_has_index);
+}
+
+#[test]
+fn bytecode_array_index_inside_for_loop() {
+    let prog =
+        compile_prog("let a = [1, 2, 3]\nfor i in range(0, len(a)) { let x: Number = a[i] }");
+    let has_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index));
+    let has_len = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Len));
+    assert!(has_index);
+    assert!(has_len);
+}
+
+#[test]
+fn bytecode_array_literal_elements_in_order() {
+    // ARRAY 3 must appear AFTER the three element constants are pushed
+    let prog = compile_prog("[10, 20, 30]");
+    let instrs = &prog.main.instructions;
+    // Find position of ARRAY instruction
+    let array_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Array { count: 3 }))
+        .unwrap();
+    // All three constants should appear before it
+    let constants_before = instrs[..array_pos]
+        .iter()
+        .filter(|i| matches!(i, Instruction::Constant(_)))
+        .count();
+    assert_eq!(
+        constants_before, 3,
+        "all 3 element constants must appear before ARRAY 3"
+    );
+}
+
+#[test]
+fn bytecode_disassemble_contains_array_index_len() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let a = [1, 2]\nprint(a[0])\nprint(len(a))");
+    let dis = disassemble(&prog);
+    assert!(dis.contains("ARRAY 2"), "disassembler should print ARRAY 2");
+    assert!(dis.contains("INDEX"), "disassembler should print INDEX");
+    assert!(dis.contains("LEN"), "disassembler should print LEN");
+}
+
+// ─── M9E Audit: VM ────────────────────────────────────────────────────────────
+
+#[test]
+fn vm_array_literal_order_correct() {
+    assert_eq!(vm_run("print([10, 20, 30][0])").unwrap(), vec!["10"]);
+    assert_eq!(vm_run("print([10, 20, 30][2])").unwrap(), vec!["30"]);
+}
+
+#[test]
+fn vm_return_array_literal_directly() {
+    let src =
+        "fn make(n: Number) {\nreturn [n, n + 1]\n}\nlet r = make(7)\nprint(r[0])\nprint(r[1])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["7", "8"]);
+}
+
+#[test]
+fn vm_closure_captures_array_and_indexes() {
+    let src = "let a = [5, 10, 15]\nfn get(i: Number) -> Number { return a[i] }\nprint(get(1))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+#[test]
+fn vm_array_inside_simulate_by_counter() {
+    let src = "let a = [10, 20, 30]\nlet mut idx = 0\nlet dur: seconds = 3\nlet stp: seconds = 1\nsimulate dur step stp {\nprint(a[idx])\nidx = idx + 1\n}";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "20", "30"]);
+}
+
+#[test]
+fn vm_unit_array_elements_correct() {
+    let src =
+        "let d1: meters = 5\nlet d2: meters = 10\nlet ds = [d1, d2]\nprint(ds[0])\nprint(ds[1])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "10"]);
+}
+
+#[test]
+fn vm_state_array_elements_correct() {
+    let src = "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet doors = [d1, d2]\nprint(doors[0])\nprint(doors[1])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["Door.closed", "Door.open"]);
+}
+
+// ─── M9E Audit: len builtin ──────────────────────────────────────────────────
+
+#[test]
+fn len_user_defined_fn_array_arg_builtin_takes_precedence() {
+    // When user defines fn len(x) and calls len(array), the builtin intercepts
+    // and returns array length (not calling user fn)
+    let src =
+        "fn len(x: Number) -> Number { return x + 100 }\nlet arr = [1, 2, 3]\nprint(len(arr))";
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn len_user_defined_fn_non_array_arg_is_type_error() {
+    // When user defines fn len(x: Number) and calls len(number), the builtin
+    // intercept fires and rejects it (builtin always takes precedence for callee named "len")
+    // This is a known limitation — user cannot define a function named "len" that shadows the builtin
+    let result =
+        check("fn len(x: Number) -> Number { return x + 100 }\nlet n: Number = 42\nlen(n)");
+    assert!(
+        result.is_err(),
+        "builtin len intercept rejects non-Array argument even when user fn exists"
+    );
+}
+
+#[test]
+fn len_zero_args_type_error() {
+    let result = check("let arr = [1, 2]\nlen()");
+    assert!(result.is_err());
+}
+
+#[test]
+fn len_two_args_type_error() {
+    let result = check("let arr = [1, 2]\nlen(arr, arr)");
+    assert!(result.is_err());
+}
+
+// ─── M9E Audit: Function / closure interaction ───────────────────────────────
+
+#[test]
+fn function_returns_inline_array_literal() {
+    // Regression test for can_start_expr bug fix
+    let src = "fn triple(n: Number) {\nreturn [n, n + 1, n + 2]\n}\nlet t = triple(10)\nprint(t[0])\nprint(t[1])\nprint(t[2])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "11", "12"]);
+}
+
+#[test]
+fn function_len_on_returned_array() {
+    let src = "fn pair(n: Number) {\nreturn [n, n + 1]\n}\nprint(len(pair(5)))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+// ─── M9E Audit: Simulate interaction ─────────────────────────────────────────
+
+#[test]
+fn simulate_time_is_unit_not_number_cannot_index_array() {
+    // `time` inside simulate has the unit type of the duration (e.g. seconds),
+    // not a plain Number. Using it directly as an array index is a TypeError.
+    let src = "let a = [100, 200, 300]\nlet dur: seconds = 3\nlet stp: seconds = 1\nsimulate dur step stp { let _ = a[time] }";
+    let result = check(src);
+    assert!(
+        result.is_err(),
+        "time is a unit type, not Number — cannot be used as array index"
+    );
+}
+
+#[test]
+fn simulate_out_of_bounds_array_index_errors() {
+    let src = "let a = [1]\nlet dur: seconds = 2\nlet stp: seconds = 1\nsimulate dur step stp {\nlet _ = a[time]\n}";
+    // Second iteration: time = 1, a has length 1, index 1 is out of bounds
+    let result = run(src);
+    assert!(result.is_err());
+}
+
+// ─── M9E Audit: Unit and state interaction ────────────────────────────────────
+
+#[test]
+fn array_units_sum_via_for_loop() {
+    let src = "let d1: meters = 5\nlet d2: meters = 10\nlet d3: meters = 15\nlet ds = [d1, d2, d3]\nlet mut total: meters = 0\nfor i in range(0, len(ds)) { total = total + ds[i] }\nprint(total)";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["30"]);
+}
+
+#[test]
+fn array_index_unit_element_type() {
+    // Indexing a unit array should return unit type, allowing unit ops
+    assert!(check(
+        "let d1: meters = 5\nlet d2: meters = 10\nlet ds = [d1, d2]\nlet x: meters = ds[0]"
+    )
+    .is_ok());
+}
+
+#[test]
+fn array_state_values_index_type() {
+    // Indexing a state array returns state type
+    assert!(check("state Light { on off transition on -> off }\nlet l1 = Light.on\nlet l2 = Light.off\nlet lights = [l1, l2]\ntransition lights[0] -> off").is_err(),
+            "transition into index expression should fail (not a simple variable)");
+}
+
+// ─── M9E Audit: Tree-walk / VM output parity ─────────────────────────────────
+
+#[test]
+fn vm_matches_tree_unit_array() {
+    let src = "let d1: meters = 5\nlet d2: meters = 10\nlet ds = [d1, d2]\nprint(ds[0])\nprint(ds[1])\nprint(len(ds))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "10", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_closure_with_array() {
+    let src = "let a = [5, 10, 15]\nfn get(i: Number) -> Number { return a[i] }\nprint(get(0))\nprint(get(1))\nprint(get(2))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["5", "10", "15"]);
+}
+
+#[test]
+fn vm_matches_tree_return_inline_array() {
+    let src = "fn triple(n: Number) {\nreturn [n, n + 1, n + 2]\n}\nlet t = triple(10)\nprint(t[0])\nprint(t[2])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["10", "12"]);
+}
+
+#[test]
+fn vm_matches_tree_literal_index() {
+    let src = "print([10, 20, 30][1])";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["20"]);
+}
+
+#[test]
+fn vm_matches_tree_state_array() {
+    let src = "state Door { closed open transition closed -> open }\nlet d1 = Door.closed\nlet d2 = Door.open\nlet doors = [d1, d2]\nprint(doors[0])\nprint(len(doors))";
+    assert!(run(src).is_ok());
+    assert_eq!(vm_run(src).unwrap(), vec!["Door.closed", "2"]);
+}

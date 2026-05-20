@@ -784,6 +784,7 @@ impl Parser {
                 | TokenKind::False
                 | TokenKind::Ident(_)
                 | TokenKind::LParen
+                | TokenKind::LBracket
                 | TokenKind::Minus
                 | TokenKind::Bang
         )
