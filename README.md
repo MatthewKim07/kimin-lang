@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1541_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1625_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-10D-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-10E-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1541 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1625 tests passing**.
 
 ---
 
@@ -265,11 +265,18 @@ for i in range(0, len(primes)) {
 print(sum)             // 28
 ```
 
-- Array literal `[e1, e2, e3]` — at least one element; all elements must share the same type
+- Array literal `[e1, e2, e3]` — all elements must share the same type
+- **Explicit array type annotation** `Array<T>` — valid in `let` declarations, function parameters, and return types
+  - `T` can be `Number`, `Text`, `Bool`, a unit name (`meters`, `seconds`, …), or a state machine name
+  - Nested arrays (`Array<Array<T>>`) are not supported
+- **Empty array literal `[]`** — allowed only when the expected type is known from an annotation or return type
+  - `let nums: Array<Number> = []` — OK
+  - `let nums = []` — TypeError (no element type can be inferred)
+  - `fn make() -> Array<Number> { return [] }` — OK
 - Index expression `arr[i]` — `i` must be a `Number`; runtime checks: integer, non-negative, in-bounds
 - Slice expression `arr[start..end]` — returns a new independent `Array<T>` from `start` inclusive to `end` exclusive
   - `start` and `end` must be `Number`; runtime checks: integer, non-negative, `start <= end`, `end <= len(arr)`
-  - Slices can be empty (`arr[2..2]`), but empty array literals are still unsupported
+  - Slices can be empty (`arr[2..2]`)
   - Slice assignment, open-ended slices (`arr[1..]`, `arr[..3]`), step slices, and string slicing are not supported
 - `len(arr)` builtin — returns the number of elements as `Number`
 - **Index assignment `arr[i] = value`** — requires `let mut` array; element type must match; array stays fixed-size
@@ -526,8 +533,9 @@ LexError  at line 3, col 7:  unexpected character '@'
 | No slice assignment | `arr[1..3] = value` and `arr[1..3] += value` are unsupported |
 | No open-ended or stepped slices | `arr[1..]`, `arr[..3]`, and `arr[1..5..2]` are unsupported |
 | No string slicing | Slice syntax is array-only |
-| No nested arrays | `[[1,2],[3,4]]` — technically typechecks as `Array<Array<T>>` but is documented as unsupported |
-| No array type annotations | `let a: Array<Number> = [1,2]` is a ParseError; element type inferred only |
+| No nested arrays | `Array<Array<T>>` is a ParseError; one level of array nesting only |
+| No empty array in call arguments | `fn f(x: Array<Number>) ...` then `f([])` is a TypeError; use `let empty: Array<Number> = []` first |
+| No array type annotation without `<T>` | `let a: Array = [1,2]` is a ParseError — `Array` must always have an element type |
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
@@ -564,6 +572,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 10B | Array index compound assignment (`arr[i] += value`, etc.) | ✅ |
 | 10C | `push(arr, value)` and `pop(arr)` builtins | ✅ |
 | 10D | Array slice expressions (`arr[start..end]`) | ✅ |
+| 10E | Explicit `Array<T>` type annotations; empty array literals with annotation | ✅ |
 
 ---
 
@@ -598,7 +607,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1541 unit tests
+  tests.rs        1625 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -635,6 +644,9 @@ examples/
   array_push_pop_simulate.kimin     array_push_pop_errors.kimin
   array_slices.kimin                array_slices_loop.kimin
   array_slices_mutation.kimin       array_slices_errors.kimin
+  array_annotations.kimin           array_annotations_push.kimin
+  array_annotations_function.kimin  array_annotations_units.kimin
+  array_annotations_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin

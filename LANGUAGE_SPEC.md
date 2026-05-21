@@ -617,6 +617,25 @@ The compiler emits:
 
 A **fixed-size typed array** is a homogeneous sequence of values.
 
+#### Array type annotations
+
+Array types can be written explicitly as `Array<T>` where `T` is one of:
+
+- `Number`, `Text`, `Bool`, `Nil`
+- A unit name: `meters`, `seconds`, `kilograms`, …
+- A state machine name: `Door`, `TrafficLight`, …
+
+Nested arrays (`Array<Array<T>>`) are a `ParseError`.
+
+```kimin
+let nums: Array<Number> = [1, 2, 3]
+let words: Array<Text> = ["a", "b"]
+let flags: Array<Bool> = [true, false]
+
+fn sum(nums: Array<Number>) -> Number { ... }
+fn make() -> Array<Number> { return [1, 2, 3] }
+```
+
 #### Array literals
 
 ```kimin
@@ -625,13 +644,30 @@ let words = ["hello", "world"]
 let flags = [true, false, true]
 ```
 
-- At least one element is required; empty array literals are a `ParseError`.
 - Trailing commas are allowed: `[1, 2,]` is valid.
 - All elements must have the same type. Mixed types are a `TypeError`:
 
 ```kimin
 [1, "two"]   // TypeError: array elements must have the same type
 ```
+
+#### Empty array literals
+
+An empty array literal `[]` is allowed only when the expected element type is known from context:
+
+```kimin
+let nums: Array<Number> = []          // OK — annotation provides type
+fn make() -> Array<Number> { return [] }  // OK — return type provides type
+
+let nums = []   // TypeError: element type cannot be inferred
+```
+
+The expected-type context is:
+- `let x: Array<T> = []` — annotation provides `T`
+- `return []` inside a function with `-> Array<T>` return type
+- `x = []` where `x` is already typed as `Array<T>`
+
+Empty arrays in function call arguments are not supported yet; use a named variable instead.
 
 #### Indexing
 
@@ -668,7 +704,7 @@ print(len(middle)) // 2
   - Start must be less than or equal to end.
   - End must be less than or equal to `len(array)`.
 - Slices create a new independent array value. Mutating the original does not mutate the slice, and mutating a mutable slice binding does not mutate the original.
-- Empty array literals remain unsupported, but slices may produce empty arrays at runtime, e.g. `arr[2..2]`.
+- Slices may produce empty arrays at runtime, e.g. `arr[2..2]`.
 - Slice assignment, slice compound assignment, open-ended slices, step slices, and string slicing are unsupported.
 
 #### `len` builtin
