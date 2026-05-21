@@ -20080,3 +20080,258 @@ fn trim_wrong_arity_message() {
         msg
     );
 }
+
+// ==========================================================================
+// M11C audit — additional coverage
+// ==========================================================================
+
+// --- parser: extra coverage ---
+
+#[test]
+fn parse_string_transform_in_if_condition() {
+    let src = "if contains(to_lower(\"HELLO\"), \"hello\") { print(true) }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_utils_still_parse_after_m11c() {
+    let src = "contains(\"hello\", \"ell\")\nstarts_with(\"hello\", \"he\")\nends_with(\"hello\", \"lo\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- typechecker: extra coverage ---
+
+#[test]
+fn type_transform_function_return_ok() {
+    assert!(check("fn shout(s: Text) -> Text { return to_upper(s) }").is_ok());
+    assert!(check("fn whisper(s: Text) -> Text { return to_lower(s) }").is_ok());
+    assert!(check("fn clean(s: Text) -> Text { return trim(s) }").is_ok());
+}
+
+#[test]
+fn type_transform_in_array_text_ok() {
+    assert!(
+        check("let xs: Array<Text> = [to_upper(\"a\"), to_lower(\"B\"), trim(\" c \")]").is_ok()
+    );
+}
+
+#[test]
+fn type_transform_then_index_ok() {
+    assert!(check("let c: Text = to_upper(\"hello\")[0]").is_ok());
+}
+
+#[test]
+fn type_transform_then_slice_ok() {
+    assert!(check("let sub: Text = to_upper(\"hello\")[0..3]").is_ok());
+}
+
+// --- interpreter: extra coverage ---
+
+#[test]
+fn interp_transform_original_unchanged() {
+    let src = "let s = \"  hello  \"\nlet t = trim(s)\nlet u = to_upper(s)\nlet l = to_lower(s)";
+    let i = run(src).unwrap();
+    assert_eq!(i.get_var("s"), Some(Value::Str("  hello  ".into())));
+    assert_eq!(i.get_var("t"), Some(Value::Str("hello".into())));
+    assert_eq!(i.get_var("u"), Some(Value::Str("  HELLO  ".into())));
+    assert_eq!(i.get_var("l"), Some(Value::Str("  hello  ".into())));
+}
+
+#[test]
+fn interp_to_upper_length_changing_unicode() {
+    // Rust to_uppercase: "ß" -> "SS" (length change, correct Unicode behavior)
+    let interp = run("let s = to_upper(\"straße\")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("STRASSE".into())));
+}
+
+#[test]
+fn trim_spaces_only_to_empty() {
+    let interp = run("let s = trim(\"   \")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("".into())));
+}
+
+// --- function/closure: extra coverage ---
+
+#[test]
+fn interp_fn_to_lower_param() {
+    let src = "fn whisper(s: Text) -> Text { return to_lower(s) }\nlet r = whisper(\"HELLO\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_closure_to_upper_captured_text() {
+    let src = "let raw = \"hello\"\nfn shout() -> Text { return to_upper(raw) }\nlet r = shout()";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("HELLO".into())));
+}
+
+// --- loop: extra coverage ---
+
+#[test]
+fn interp_string_transform_loop_break_continue() {
+    // Skip words that don't start with space; break when WORLD encountered.
+    let src = "let words = [\" hello \", \"skip\", \" world \"]\nlet mut found: Number = 0\nfor i in range(0, len(words)) { if !starts_with(words[i], \" \") { continue }\nlet w = to_upper(trim(words[i]))\nif ends_with(w, \"WORLD\") { found += 1\nbreak }\nfound += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("found"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_string_transform_with_contains_condition() {
+    let src = "let words = [\"hello\", \"world\", \"help\"]\nlet mut count: Number = 0\nfor i in range(0, len(words)) { if contains(to_upper(words[i]), \"H\") { count += 1 } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("count"), Some(Value::Number(2.0)));
+}
+
+// --- simulate: extra coverage ---
+
+#[test]
+fn interp_simulate_transform_then_contains() {
+    let src = "let words = [\"hello\", \"world\"]\nlet mut i: Number = 0\nlet dur: seconds = 2\nlet dt: seconds = 1\nlet mut found: Number = 0\nsimulate dur step dt { if contains(to_upper(words[i]), \"WORLD\") { found += 1 }\ni += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("found"), Some(Value::Number(1.0)));
+}
+
+// --- bytecode: extra coverage ---
+
+#[test]
+fn bytecode_string_utils_unchanged_after_m11c() {
+    let prog =
+        compile_prog("contains(\"a\",\"a\")\nstarts_with(\"a\",\"a\")\nends_with(\"a\",\"a\")");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Contains)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::StartsWith)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::EndsWith)));
+}
+
+#[test]
+fn bytecode_len_index_slice_unchanged_after_m11c() {
+    let prog = compile_prog("len(\"hi\")\n\"hi\"[0]\n\"hi\"[0..2]");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Len)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Index)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Slice)));
+}
+
+// --- VM: extra coverage ---
+
+#[test]
+fn vm_transform_original_unchanged() {
+    let src = "let s = \"  hello  \"\nprint(trim(s))\nprint(s)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["hello", "  hello  "]);
+}
+
+#[test]
+fn vm_transform_then_contains() {
+    let out = vm_run("print(contains(to_lower(\"HELLO\"), \"ell\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_transform_then_len() {
+    let out = vm_run("print(len(trim(\"  hi  \")))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_transform_then_index() {
+    let out = vm_run("print(to_upper(\"hello\")[0])").unwrap();
+    assert_eq!(out, vec!["H"]);
+}
+
+#[test]
+fn vm_transform_then_slice() {
+    let out = vm_run("print(to_upper(\"hello\")[0..3])").unwrap();
+    assert_eq!(out, vec!["HEL"]);
+}
+
+#[test]
+fn vm_to_upper_length_changing_unicode() {
+    let out = vm_run("print(to_upper(\"straße\"))").unwrap();
+    assert_eq!(out, vec!["STRASSE"]);
+}
+
+#[test]
+fn vm_string_utils_still_work_after_m11c() {
+    let out = vm_run(
+        "print(contains(\"hello\", \"ell\"))\nprint(starts_with(\"hello\", \"he\"))\nprint(ends_with(\"hello\", \"lo\"))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "true", "true"]);
+}
+
+#[test]
+fn vm_len_index_slice_still_work_after_m11c() {
+    let out = vm_run("print(len(\"hello\"))\nprint(\"hello\"[0])\nprint(\"hello\"[0..3])").unwrap();
+    assert_eq!(out, vec!["5", "h", "hel"]);
+}
+
+// --- array interaction ---
+
+#[test]
+fn transform_array_text_index_ok() {
+    let interp = run("let b = contains(to_upper([\"hello\"][0]), \"HELLO\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn len_array_still_ok_after_m11c() {
+    let interp = run("let n = len([1, 2, 3])").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn array_index_slice_still_ok_after_m11c() {
+    let interp = run("let a = [10, 20, 30]\nlet x = a[1]\nlet s = a[0..2]").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(20.0)));
+    assert_eq!(
+        interp.get_var("s"),
+        Some(Value::Array(vec![Value::Number(10.0), Value::Number(20.0)]))
+    );
+}
+
+#[test]
+fn push_pop_still_ok_after_m11c() {
+    let interp = run("let mut a = [1, 2]\npush(a, 3)\nlet x = pop(a)").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn array_text_expected_call_still_ok_after_m11c() {
+    let src = "fn first(arr: Array<Text>) -> Text { return arr[0] }\nlet r = first([\"hello\"])";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("hello".into())));
+}
+
+// --- error messages: extra coverage ---
+
+#[test]
+fn to_lower_wrong_arity_message() {
+    let err = check("to_lower()").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("to_lower") && msg.contains("1") && msg.contains("0"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn trim_arg_error_message() {
+    let err = check("trim(42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
