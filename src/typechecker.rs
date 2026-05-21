@@ -139,6 +139,9 @@ pub enum Type {
     State(String),
     /// A fixed-size homogeneous array. The inner type is the element type.
     Array(Box<Type>),
+    /// A map with Text keys and homogeneous values. First type is key (always Text in M12A),
+    /// second type is value element type.
+    Map(Box<Type>, Box<Type>),
     /// Inferred or unannotated type — skips type checking on operations involving it.
     Unknown,
 }
@@ -154,6 +157,7 @@ impl Type {
             Type::Function { .. } => "Function".into(),
             Type::State(s) => s.clone(),
             Type::Array(elem) => format!("Array<{}>", elem.name()),
+            Type::Map(k, v) => format!("Map<{}, {}>", k.name(), v.name()),
             Type::Unknown => "Unknown".into(),
         }
     }
@@ -1118,16 +1122,37 @@ impl TypeChecker {
             Expr::Index { array, index, span } => {
                 let arr_ty = self.check_expr(array, *span)?;
                 let idx_ty = self.check_expr(index, *span)?;
-                if !idx_ty.is_unknown() && idx_ty != Type::Number {
-                    return Err(TypeError {
-                        msg: format!("index must be Number, got {}", idx_ty.name()),
-                        line: span.line,
-                        col: span.col,
-                    });
-                }
                 match arr_ty {
-                    Type::Array(elem) => Ok(*elem),
-                    Type::Text => Ok(Type::Text),
+                    Type::Map(_, val_ty) => {
+                        if !idx_ty.is_unknown() && idx_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("map key must be Text, got {}", idx_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        Ok(*val_ty)
+                    }
+                    Type::Array(elem) => {
+                        if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("index must be Number, got {}", idx_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        Ok(*elem)
+                    }
+                    Type::Text => {
+                        if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("index must be Number, got {}", idx_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        Ok(Type::Text)
+                    }
                     Type::Unknown => Ok(Type::Unknown),
                     other => Err(TypeError {
                         msg: format!("cannot index into value of type {}", other.name()),
@@ -1135,6 +1160,57 @@ impl TypeChecker {
                         col: span.col,
                     }),
                 }
+            }
+
+            Expr::MapLiteral { entries, span } => {
+                if entries.is_empty() {
+                    return Err(TypeError {
+                        msg: "empty map literal requires an explicit Map type annotation"
+                            .to_string(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                let mut val_ty: Option<Type> = None;
+                for (key_expr, val_expr) in entries {
+                    let k = self.check_expr(key_expr, *span)?;
+                    if !k.is_unknown() && k != Type::Text {
+                        return Err(TypeError {
+                            msg: format!("map key must be Text, got {}", k.name()),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                    let v = self.check_expr(val_expr, *span)?;
+                    if matches!(v, Type::Map(..)) {
+                        return Err(TypeError {
+                            msg: "nested maps are not supported yet".to_string(),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                    match &val_ty {
+                        None => val_ty = Some(v),
+                        Some(existing) => {
+                            if !v.is_unknown() && !existing.is_unknown() && &v != existing {
+                                return Err(TypeError {
+                                    msg: format!(
+                                        "map values must be homogeneous: expected {}, got {}",
+                                        existing.name(),
+                                        v.name()
+                                    ),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                            if existing.is_unknown() && !v.is_unknown() {
+                                val_ty = Some(v);
+                            }
+                        }
+                    }
+                }
+                let vt = val_ty.unwrap_or(Type::Unknown);
+                Ok(Type::Map(Box::new(Type::Text), Box::new(vt)))
             }
 
             Expr::Slice {

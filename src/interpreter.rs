@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::ast::{BinaryOp, CompoundAssignOp, Expr, Stmt, UnaryOp};
@@ -566,52 +567,91 @@ impl Interpreter {
                 Ok(Value::Array(vals))
             }
 
+            Expr::MapLiteral { entries, .. } => {
+                let mut map = BTreeMap::new();
+                for (key_expr, val_expr) in entries {
+                    let key = match self.eval_expr(key_expr)? {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(RuntimeError {
+                                msg: format!("map key must be Text, got {}", other.type_name()),
+                            })
+                        }
+                    };
+                    let val = self.eval_expr(val_expr)?;
+                    map.insert(key, val);
+                }
+                Ok(Value::Map(map))
+            }
+
             Expr::Index { array, index, .. } => {
                 let arr_val = self.eval_expr(array)?;
                 let idx_val = self.eval_expr(index)?;
-                let n = match idx_val {
-                    Value::Number(n) => n,
-                    other => {
-                        return Err(RuntimeError {
-                            msg: format!("index must be Number, got {}", other.type_name()),
+                match arr_val {
+                    Value::Map(map) => {
+                        let key = match idx_val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!("map key must be Text, got {}", other.type_name()),
+                                })
+                            }
+                        };
+                        map.get(&key).cloned().ok_or_else(|| RuntimeError {
+                            msg: format!("map key '{}' not found", key),
                         })
                     }
-                };
-                if n.fract() != 0.0 {
-                    return Err(RuntimeError {
-                        msg: format!("index must be an integer, got {}", n),
-                    });
-                }
-                if n < 0.0 {
-                    return Err(RuntimeError {
-                        msg: format!("index out of bounds: index {} is negative", n as i64),
-                    });
-                }
-                let i = n as usize;
-                match arr_val {
-                    Value::Array(elems) => elems.get(i).cloned().ok_or_else(|| RuntimeError {
-                        msg: format!(
-                            "array index out of bounds: index {} but length is {}",
-                            i,
-                            elems.len()
-                        ),
-                    }),
-                    Value::Str(s) => {
-                        let chars: Vec<char> = s.chars().collect();
-                        chars
-                            .get(i)
-                            .map(|c| Value::Str(c.to_string()))
-                            .ok_or_else(|| RuntimeError {
+                    arr_val => {
+                        let n = match idx_val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!("index must be Number, got {}", other.type_name()),
+                                })
+                            }
+                        };
+                        if n.fract() != 0.0 {
+                            return Err(RuntimeError {
+                                msg: format!("index must be an integer, got {}", n),
+                            });
+                        }
+                        if n < 0.0 {
+                            return Err(RuntimeError {
+                                msg: format!("index out of bounds: index {} is negative", n as i64),
+                            });
+                        }
+                        let i = n as usize;
+                        match arr_val {
+                            Value::Array(elems) => {
+                                elems.get(i).cloned().ok_or_else(|| RuntimeError {
+                                    msg: format!(
+                                        "array index out of bounds: index {} but length is {}",
+                                        i,
+                                        elems.len()
+                                    ),
+                                })
+                            }
+                            Value::Str(s) => {
+                                let chars: Vec<char> = s.chars().collect();
+                                chars
+                                    .get(i)
+                                    .map(|c| Value::Str(c.to_string()))
+                                    .ok_or_else(|| RuntimeError {
+                                        msg: format!(
+                                            "string index out of bounds: index {} but length is {}",
+                                            i,
+                                            chars.len()
+                                        ),
+                                    })
+                            }
+                            other => Err(RuntimeError {
                                 msg: format!(
-                                    "string index out of bounds: index {} but length is {}",
-                                    i,
-                                    chars.len()
+                                    "cannot index into value of type {}",
+                                    other.type_name()
                                 ),
-                            })
+                            }),
+                        }
                     }
-                    other => Err(RuntimeError {
-                        msg: format!("cannot index into value of type {}", other.type_name()),
-                    }),
                 }
             }
 

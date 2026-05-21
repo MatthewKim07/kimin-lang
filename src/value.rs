@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::ast::Stmt;
@@ -42,6 +43,9 @@ pub enum Value {
     },
     /// A fixed-size homogeneous array.
     Array(Vec<Value>),
+    /// A map with Text keys and homogeneous values.
+    /// BTreeMap gives deterministic alphabetical key ordering for display and equality.
+    Map(BTreeMap<String, Value>),
 }
 
 impl Value {
@@ -55,6 +59,7 @@ impl Value {
             Value::BytecodeFunction { .. } => "Function",
             Value::StateValue { .. } => "StateValue",
             Value::Array(_) => "Array",
+            Value::Map(_) => "Map",
         }
     }
 }
@@ -80,6 +85,7 @@ impl PartialEq for Value {
                 },
             ) => s1 == s2 && v1 == v2,
             (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
             _ => false,
         }
     }
@@ -106,6 +112,10 @@ impl fmt::Display for Value {
             Value::Array(elems) => {
                 let parts: Vec<String> = elems.iter().map(|v| format!("{}", v)).collect();
                 write!(f, "[{}]", parts.join(", "))
+            }
+            Value::Map(map) => {
+                let parts: Vec<String> = map.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+                write!(f, "{{{}}}", parts.join(", "))
             }
         }
     }
