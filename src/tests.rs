@@ -22557,11 +22557,89 @@ fn parse_missing_closing_brace_error() {
     assert!(result.is_err());
 }
 
+#[test]
+fn parse_function_block_unaffected() {
+    // Function body `{` is still parsed as a block, not a map literal.
+    assert!(check("fn f() -> Number {\n  return 42\n}").is_ok());
+}
+
+#[test]
+fn parse_missing_map_value_error() {
+    // Missing value after colon is a parse error.
+    let result = check("let m = {\"a\":}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn return_map_literal_now_parses() {
+    // LBrace added to can_start_expr() so map literals are valid in return position.
+    assert!(check("fn f() -> Number {\n  return {\"a\": 1}[\"a\"]\n}").is_ok());
+}
+
+#[test]
+fn parse_map_literal_inside_return() {
+    // Map literal is valid as a return expression.
+    assert!(check("fn f() -> Number {\n  return {\"x\": 42}[\"x\"]\n}").is_ok());
+}
+
+#[test]
+fn fn_return_map_literal_if_supported() {
+    // Function returns a map-indexed Number value.
+    let output =
+        vm_run("fn f() -> Number {\n  return {\"a\": 10, \"b\": 20}[\"a\"]\n}\nprint(f())")
+            .unwrap();
+    assert_eq!(output, vec!["10"]);
+}
+
+#[test]
+fn vm_function_returns_map_index() {
+    let output =
+        vm_run("fn f() -> Number {\n  return {\"a\": 10, \"b\": 20}[\"a\"]\n}\nprint(f())")
+            .unwrap();
+    assert_eq!(output, vec!["10"]);
+}
+
+#[test]
+fn type_return_map_literal_ok() {
+    // Typechecker accepts map literal in return position when return type matches.
+    assert!(check("fn f() -> Number {\n  return {\"x\": 42}[\"x\"]\n}").is_ok());
+}
+
+#[test]
+fn parse_while_map_condition() {
+    // Map literal with bool value in while condition now parses.
+    assert!(
+        check("let mut i: Number = 0\nwhile {\"go\": true}[\"go\"] {\n  i += 1\n  break\n}")
+            .is_ok()
+    );
+}
+
 // --- Typechecker ---
 
 #[test]
 fn type_map_number_values_ok() {
     assert!(check("let m = {\"a\": 1, \"b\": 2}").is_ok());
+}
+
+#[test]
+fn type_map_key_must_be_text_error() {
+    // Non-Text key in map literal is a TypeError.
+    let err = check("let m = {1: \"a\"}").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Text") || msg.contains("map key"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_map_duplicate_keys_ok() {
+    // Duplicate keys in a map literal are allowed by the typechecker (last wins at runtime).
+    assert!(check("let m = {\"a\": 1, \"a\": 2}").is_ok());
 }
 
 #[test]
@@ -22678,6 +22756,17 @@ fn interp_map_literal_text_values() {
 }
 
 #[test]
+fn interp_map_literal_bool_values() {
+    let interp = run("let m = {\"ready\": true, \"done\": false}").unwrap();
+    if let Value::Map(map) = interp.get_var("m").unwrap() {
+        assert_eq!(map.get("ready"), Some(&Value::Bool(true)));
+        assert_eq!(map.get("done"), Some(&Value::Bool(false)));
+    } else {
+        panic!("expected Map");
+    }
+}
+
+#[test]
 fn interp_map_index_number() {
     let interp = run("let m = {\"alice\": 10, \"bob\": 20}\nlet v = m[\"alice\"]").unwrap();
     assert_eq!(interp.get_var("v").unwrap(), Value::Number(10.0));
@@ -22767,6 +22856,21 @@ fn bytecode_map_literal_emits_map() {
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::Map { .. })));
+}
+
+#[test]
+fn bytecode_map_literal_count_correct() {
+    // MAP instruction count must match the number of key-value pairs.
+    let prog = compile_prog("let m = {\"a\": 1, \"b\": 2, \"c\": 3}");
+    let map_instr = prog
+        .main
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Map { .. }));
+    assert!(map_instr.is_some());
+    if let Some(Instruction::Map { count }) = map_instr {
+        assert_eq!(*count, 3, "MAP count should match 3 key-value pairs");
+    }
 }
 
 #[test]
