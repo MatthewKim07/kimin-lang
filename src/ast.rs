@@ -85,6 +85,8 @@ pub enum TypeAnnotation {
     /// An identifier that is not a built-in type or known unit.
     /// Resolved to a state machine type by the type checker.
     Named(String),
+    /// A homogeneous array type annotation: `Array<T>`.
+    Array(Box<TypeAnnotation>),
 }
 
 /// A typed function parameter.
