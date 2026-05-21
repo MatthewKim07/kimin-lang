@@ -605,6 +605,75 @@ impl Interpreter {
                 })
             }
 
+            Expr::Slice {
+                array, start, end, ..
+            } => {
+                let arr_val = self.eval_expr(array)?;
+                let start_val = self.eval_expr(start)?;
+                let end_val = self.eval_expr(end)?;
+                let elems = match arr_val {
+                    Value::Array(v) => v,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("slice target must be Array, got {}", other.type_name()),
+                        })
+                    }
+                };
+                let s = match start_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("slice start must be Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+                if s.fract() != 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("slice start must be an integer, got {}", s),
+                    });
+                }
+                if s < 0.0 {
+                    return Err(RuntimeError {
+                        msg: "slice start must be non-negative".into(),
+                    });
+                }
+                let e = match end_val {
+                    Value::Number(n) => n,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("slice end must be Number, got {}", other.type_name()),
+                        })
+                    }
+                };
+                if e.fract() != 0.0 {
+                    return Err(RuntimeError {
+                        msg: format!("slice end must be an integer, got {}", e),
+                    });
+                }
+                if e < 0.0 {
+                    return Err(RuntimeError {
+                        msg: "slice end must be non-negative".into(),
+                    });
+                }
+                let si = s as usize;
+                let ei = e as usize;
+                if si > ei {
+                    return Err(RuntimeError {
+                        msg: format!("slice start {} is greater than end {}", si, ei),
+                    });
+                }
+                if ei > elems.len() {
+                    return Err(RuntimeError {
+                        msg: format!(
+                            "slice end {} is out of bounds for array of length {}",
+                            ei,
+                            elems.len()
+                        ),
+                    });
+                }
+                Ok(Value::Array(elems[si..ei].to_vec()))
+            }
+
             Expr::Call { callee, args, .. } => {
                 // `len` builtin: len(array) -> Number
                 if let Expr::Variable { name, .. } = callee.as_ref() {

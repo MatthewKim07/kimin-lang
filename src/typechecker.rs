@@ -1128,6 +1128,43 @@ impl TypeChecker {
                 }
             }
 
+            Expr::Slice {
+                array,
+                start,
+                end,
+                span,
+            } => {
+                let arr_ty = self.check_expr(array, *span)?;
+                let elem_ty = match arr_ty {
+                    Type::Array(elem) => *elem,
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        return Err(TypeError {
+                            msg: format!("slice target must be Array, got {}", other.name()),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                };
+                let start_ty = self.check_expr(start, *span)?;
+                if !start_ty.is_unknown() && start_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("slice start must be Number, got {}", start_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                let end_ty = self.check_expr(end, *span)?;
+                if !end_ty.is_unknown() && end_ty != Type::Number {
+                    return Err(TypeError {
+                        msg: format!("slice end must be Number, got {}", end_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(Type::Array(Box::new(elem_ty)))
+            }
+
             Expr::Call { callee, args, span } => {
                 // `len` builtin: len(array) -> Number
                 if let Expr::Variable { name, .. } = callee.as_ref() {
