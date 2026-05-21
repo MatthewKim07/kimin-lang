@@ -1346,7 +1346,8 @@ impl TypeChecker {
                         }
                         for (i, (arg, expected)) in args.iter().zip(param_types.iter()).enumerate()
                         {
-                            let arg_ty = self.check_expr(arg, *span)?;
+                            let arg_ty =
+                                self.check_expr_with_expected(arg, Some(expected), *span)?;
                             let compatible = arg_ty.is_unknown()
                                 || expected.is_unknown()
                                 || arg_ty == *expected
