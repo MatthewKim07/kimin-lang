@@ -1,0 +1,10 @@
+let d1: meters = 5
+let d2: meters = 10
+
+let mut distances: Array<meters> = []
+push(distances, d1)
+push(distances, d2)
+
+print(len(distances))
+print(distances[0])
+print(distances[1])

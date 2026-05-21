@@ -1,0 +1,18 @@
+fn sum(nums: Array<Number>) -> Number {
+    let mut total: Number = 0
+    for i in range(0, len(nums)) {
+        total += nums[i]
+    }
+    return total
+}
+
+fn make_nums() -> Array<Number> {
+    return [1, 2, 3, 4]
+}
+
+fn make_empty() -> Array<Number> {
+    return []
+}
+
+print(sum(make_nums()))
+print(len(make_empty()))

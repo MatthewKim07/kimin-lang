@@ -1,0 +1,17 @@
+// Runnable by default. Uncomment lines to test error cases.
+
+let mut nums: Array<Number> = []
+push(nums, 1)
+print(nums[0])
+
+// Uncomment to test wrong element type:
+// let bad: Array<Number> = ["hello"]
+
+// Uncomment to test unannotated empty array:
+// let empty = []
+
+// Uncomment to test wrong push type:
+// push(nums, "hello")
+
+// Uncomment to test nested arrays (ParseError):
+// let nested: Array<Array<Number>> = []

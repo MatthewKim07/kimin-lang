@@ -1,0 +1,6 @@
+let nums: Array<Number> = [1, 2, 3]
+print(nums[0])
+print(len(nums))
+
+let empty: Array<Number> = []
+print(len(empty))
