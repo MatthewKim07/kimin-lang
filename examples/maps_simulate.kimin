@@ -1,0 +1,22 @@
+// Map reads inside a simulate body.
+
+let coefficients = {"drag": 0.1, "thrust": 1.5}
+
+let mut vel = 0.0
+let dt: seconds = 1
+let dur: seconds = 5
+simulate dur step dt {
+    vel = vel + coefficients["thrust"] - coefficients["drag"] * vel
+}
+print(vel)
+
+// Map used to look up step multipliers per phase.
+let multiplier = {"slow": 0.5, "fast": 2.0}
+
+let mut pos = 0.0
+let dt2: seconds = 1
+let dur2: seconds = 3
+simulate dur2 step dt2 {
+    pos = pos + multiplier["fast"]
+}
+print(pos)

@@ -1,0 +1,25 @@
+// Maps with Text values combined with string builtins.
+
+let greetings = {"en": "hello", "es": "hola", "fr": "bonjour"}
+print(greetings["en"])
+print(greetings["es"])
+print(greetings["fr"])
+
+// to_upper on a map value.
+let upper = to_upper(greetings["en"])
+print(upper)
+
+// contains check on a map value.
+let sentence = greetings["fr"]
+print(contains(sentence, "bon"))
+
+// starts_with / ends_with on map value.
+print(starts_with(greetings["es"], "h"))
+print(ends_with(greetings["fr"], "jour"))
+
+// Len of a map value.
+print(len(greetings["en"]))
+
+// trim on a map value.
+let padded = {"key": "  trimmed  "}
+print(trim(padded["key"]))

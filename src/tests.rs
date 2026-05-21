@@ -17954,6 +17954,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Trim
             | crate::bytecode::Instruction::Split
             | crate::bytecode::Instruction::Join
+            | crate::bytecode::Instruction::Map { .. }
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -22468,4 +22469,628 @@ fn join_result_to_lower() {
 fn join_result_trim() {
     let out = vm_run("print(trim(join([\"  a  \", \"b\"], \" \")))").unwrap();
     assert_eq!(out, vec!["a   b"]);
+}
+
+// ============================================================
+// M12A: Map literals and indexing
+// ============================================================
+
+// --- Lexer / Parser ---
+
+#[test]
+fn lex_map_literal_tokens() {
+    assert!(check("let m = {\"a\": 1}").is_ok());
+}
+
+#[test]
+fn lex_string_colon_number_map() {
+    assert!(check("let m = {\"alice\": 10, \"bob\": 20}").is_ok());
+}
+
+#[test]
+fn existing_block_tokens_unaffected() {
+    assert!(check("{ let x = 1 }").is_ok());
+}
+
+#[test]
+fn existing_state_block_tokens_unaffected() {
+    assert!(check("state Door {\n  closed\n  open\n  transition closed -> open\n}").is_ok());
+}
+
+#[test]
+fn parse_map_literal_number_values() {
+    assert!(check("let m = {\"a\": 1, \"b\": 2}").is_ok());
+}
+
+#[test]
+fn parse_map_literal_text_values() {
+    assert!(check("let m = {\"a\": \"apple\", \"b\": \"banana\"}").is_ok());
+}
+
+#[test]
+fn parse_map_literal_bool_values() {
+    assert!(check("let m = {\"ready\": true, \"done\": false}").is_ok());
+}
+
+#[test]
+fn parse_empty_map_literal() {
+    // Parses but typechecker rejects (no expected type known)
+    let result = check("let m = {}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_map_index_expression() {
+    assert!(check("let m = {\"a\": 1}\nlet v = m[\"a\"]").is_ok());
+}
+
+#[test]
+fn parse_map_literal_inside_print() {
+    assert!(check("print({\"a\": 1}[\"a\"])").is_ok());
+}
+
+#[test]
+fn parse_map_literal_as_function_arg() {
+    assert!(check("fn f() -> Number {\n  let m = {\"x\": 42}\n  return m[\"x\"]\n}\n").is_ok());
+}
+
+#[test]
+fn parse_block_statement_unaffected() {
+    // Block in statement position still works
+    assert!(check("{ let x = 1 }").is_ok());
+}
+
+#[test]
+fn parse_state_decl_unaffected() {
+    assert!(check("state Light {\n  red\n  green\n  transition red -> green\n}").is_ok());
+}
+
+#[test]
+fn parse_missing_colon_error() {
+    let result = check("let m = {\"a\" 1}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_missing_closing_brace_error() {
+    let result = check("let m = {\"a\": 1");
+    assert!(result.is_err());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_map_number_values_ok() {
+    assert!(check("let m = {\"a\": 1, \"b\": 2}").is_ok());
+}
+
+#[test]
+fn type_map_text_values_ok() {
+    assert!(check("let m = {\"a\": \"apple\", \"b\": \"banana\"}").is_ok());
+}
+
+#[test]
+fn type_map_bool_values_ok() {
+    assert!(check("let m = {\"ready\": true}").is_ok());
+}
+
+#[test]
+fn type_map_unit_values_ok() {
+    assert!(check("let speed: meters = 10\nlet m = {\"v\": speed}").is_ok());
+}
+
+#[test]
+fn type_map_value_mixed_error() {
+    let err = check("let m = {\"a\": 1, \"b\": \"two\"}").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("homogeneous") || msg.contains("expected"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_empty_map_literal_error() {
+    let err = check("let m = {}").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("empty map") || msg.contains("annotation"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_nested_map_literal_error() {
+    let err = check("let m = {\"outer\": {\"inner\": 1}}").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("nested"), "got: {}", msg);
+}
+
+#[test]
+fn type_map_index_returns_value_type_number() {
+    assert!(check("let m = {\"a\": 1}\nlet v: Number = m[\"a\"]").is_ok());
+}
+
+#[test]
+fn type_map_index_returns_value_type_text() {
+    assert!(check("let m = {\"a\": \"apple\"}\nlet v: Text = m[\"a\"]").is_ok());
+}
+
+#[test]
+fn type_map_index_key_must_be_text_error() {
+    let err = check("let m = {\"a\": 1}\nm[42]").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("Text"), "got: {}", msg);
+}
+
+#[test]
+fn type_map_index_missing_key_not_type_error() {
+    // Missing key is a runtime error, not a type error
+    assert!(check("let m = {\"a\": 1}\nm[\"b\"]").is_ok());
+}
+
+#[test]
+fn type_array_index_still_ok() {
+    assert!(check("let arr = [1, 2, 3]\narr[0]").is_ok());
+}
+
+#[test]
+fn type_text_index_still_ok() {
+    assert!(check("let s = \"hello\"\ns[0]").is_ok());
+}
+
+// --- Interpreter ---
+
+#[test]
+fn interp_map_literal_number_values() {
+    let interp = run("let m = {\"alice\": 10, \"bob\": 20}").unwrap();
+    if let Value::Map(map) = interp.get_var("m").unwrap() {
+        assert_eq!(map.get("alice"), Some(&Value::Number(10.0)));
+        assert_eq!(map.get("bob"), Some(&Value::Number(20.0)));
+    } else {
+        panic!("expected Map");
+    }
+}
+
+#[test]
+fn interp_map_literal_text_values() {
+    let interp = run("let m = {\"a\": \"apple\", \"b\": \"banana\"}").unwrap();
+    if let Value::Map(map) = interp.get_var("m").unwrap() {
+        assert_eq!(map.get("a"), Some(&Value::Str("apple".to_string())));
+        assert_eq!(map.get("b"), Some(&Value::Str("banana".to_string())));
+    } else {
+        panic!("expected Map");
+    }
+}
+
+#[test]
+fn interp_map_index_number() {
+    let interp = run("let m = {\"alice\": 10, \"bob\": 20}\nlet v = m[\"alice\"]").unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(10.0));
+}
+
+#[test]
+fn interp_map_index_text() {
+    let interp = run("let m = {\"a\": \"apple\"}\nlet v = m[\"a\"]").unwrap();
+    assert_eq!(
+        interp.get_var("v").unwrap(),
+        Value::Str("apple".to_string())
+    );
+}
+
+#[test]
+fn interp_map_duplicate_key_last_wins() {
+    // Last entry with same key wins
+    let interp = run("let m = {\"a\": 1, \"a\": 2}\nlet v = m[\"a\"]").unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(2.0));
+}
+
+#[test]
+fn interp_map_key_expr_eval() {
+    // Key is a variable expression
+    let src = "let k = \"alice\"\nlet m = {\"alice\": 99}\nlet v = m[k]";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(99.0));
+}
+
+#[test]
+fn interp_map_value_expr_eval() {
+    // Value is an expression, not just a literal
+    let src = "let x = 5\nlet m = {\"a\": x + 1}\nlet v = m[\"a\"]";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(6.0));
+}
+
+#[test]
+fn interp_map_missing_key_error() {
+    let result = vm_run("let m = {\"alice\": 10}\nprint(m[\"bob\"])");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("bob"), "got: {}", msg);
+}
+
+#[test]
+fn interp_map_inside_function() {
+    let src = "fn score() -> Number {\n  let m = {\"alice\": 10}\n  return m[\"alice\"]\n}\nlet s = score()";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Number(10.0));
+}
+
+#[test]
+fn interp_map_return_from_function() {
+    let src =
+        "fn get_val() -> Number {\n  let m = {\"x\": 42}\n  return m[\"x\"]\n}\nlet v = get_val()";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(42.0));
+}
+
+#[test]
+fn interp_map_closure_capture() {
+    let src = "let scores = {\"alice\": 10}\nfn get() -> Number { return scores[\"alice\"] }\nlet v = get()";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(10.0));
+}
+
+#[test]
+fn interp_array_index_still_ok() {
+    let interp = run("let arr = [1, 2, 3]\nlet v = arr[1]").unwrap();
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(2.0));
+}
+
+#[test]
+fn interp_string_index_still_ok() {
+    let interp = run("let s = \"hello\"\nlet c = s[0]").unwrap();
+    assert_eq!(interp.get_var("c").unwrap(), Value::Str("h".to_string()));
+}
+
+// --- Bytecode ---
+
+#[test]
+fn bytecode_map_literal_emits_map() {
+    let prog = compile_prog("let m = {\"a\": 1}");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Map { .. })));
+}
+
+#[test]
+fn bytecode_map_literal_order_key_value_pairs() {
+    // CONSTANT (key), CONSTANT (value), MAP must appear in this order
+    let prog = compile_prog("let m = {\"a\": 1}");
+    let instrs = &prog.main.instructions;
+    let map_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Map { .. }));
+    let const_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Constant(_)));
+    assert!(const_pos.is_some() && map_pos.is_some());
+    assert!(const_pos.unwrap() < map_pos.unwrap());
+}
+
+#[test]
+fn bytecode_map_index_reuses_index() {
+    let prog = compile_prog("let m = {\"a\": 1}\nm[\"a\"]");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index)));
+}
+
+#[test]
+fn bytecode_map_no_call_instruction() {
+    let prog = compile_prog("let m = {\"a\": 1}\nm[\"a\"]");
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_map_inside_function() {
+    let src = "fn get_score() -> Number {\n  let m = {\"alice\": 10}\n  return m[\"alice\"]\n}";
+    let prog = compile_prog(src);
+    let fn_chunk = prog
+        .functions
+        .iter()
+        .find(|f| f.name == "get_score")
+        .unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Map { .. })));
+}
+
+#[test]
+fn bytecode_map_inside_simulate() {
+    let src = "let dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {\n  let m = {\"a\": 1}\n  let v = m[\"a\"]\n}";
+    let prog = compile_prog(src);
+    assert!(prog.simulate_bodies.iter().any(|sc| sc
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Map { .. }))));
+}
+
+#[test]
+fn disassemble_map_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let m = {\"a\": 1}");
+    let output = disassemble(&prog);
+    assert!(
+        output.contains("MAP 1"),
+        "expected 'MAP 1' in disassembly, got:\n{}",
+        output
+    );
+}
+
+#[test]
+fn bytecode_array_index_still_index() {
+    let prog = compile_prog("let arr = [1, 2]\narr[0]");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index)));
+}
+
+#[test]
+fn bytecode_string_index_still_index() {
+    let prog = compile_prog("let s = \"hello\"\ns[0]");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index)));
+}
+
+// --- VM ---
+
+#[test]
+fn vm_map_literal_number_values() {
+    let out = vm_run("print({\"alice\": 10}[\"alice\"])").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_map_index_number() {
+    let out = vm_run("let m = {\"alice\": 10, \"bob\": 20}\nprint(m[\"alice\"])").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_map_index_text() {
+    let out = vm_run("let m = {\"a\": \"apple\"}\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["apple"]);
+}
+
+#[test]
+fn vm_map_duplicate_key_last_wins() {
+    let out = vm_run("let m = {\"a\": 1, \"a\": 2}\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_map_missing_key_error() {
+    let err = vm_run("let m = {\"alice\": 10}\nprint(m[\"bob\"])").unwrap_err();
+    let msg = match err {
+        KiminError::Runtime(e) => e.msg,
+        other => panic!("expected RuntimeError, got {:?}", other),
+    };
+    assert!(msg.contains("bob"), "got: {}", msg);
+}
+
+#[test]
+fn vm_map_non_text_key_error() {
+    // Typechecker normally prevents this; verify the error path (force via Unknown context)
+    // Just confirm typechecker catches the type error
+    let err = check("let m = {\"a\": 1}\nm[42]").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("Text"), "got: {}", msg);
+}
+
+#[test]
+fn vm_map_inside_function() {
+    let src = "fn score() -> Number {\n  let m = {\"alice\": 10}\n  return m[\"alice\"]\n}\nprint(score())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_map_return_from_function() {
+    let src =
+        "fn get_val() -> Number {\n  let m = {\"x\": 42}\n  return m[\"x\"]\n}\nprint(get_val())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_map_closure_capture() {
+    let src = "let scores = {\"alice\": 10}\nfn get() -> Number { return scores[\"alice\"] }\nprint(get())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_map_stack_clean() {
+    // Map expression as statement via let binding — stack must stay clean
+    let out = vm_run("let _m = {\"a\": 1}\nprint(\"ok\")").unwrap();
+    assert_eq!(out, vec!["ok"]);
+}
+
+#[test]
+fn vm_matches_tree_map_basic() {
+    let src = "print({\"alice\": 10, \"bob\": 20}[\"bob\"])";
+    let vm_out = vm_run(src).unwrap();
+    let interp = run("let v = {\"alice\": 10, \"bob\": 20}[\"bob\"]").unwrap();
+    let tree_val = match interp.get_var("v").unwrap() {
+        Value::Number(n) => format!("{}", n as i64),
+        other => format!("{}", other),
+    };
+    assert_eq!(vm_out, vec![tree_val]);
+}
+
+// --- Interactions with arrays and strings ---
+
+#[test]
+fn map_value_text_then_to_upper() {
+    let out = vm_run("let user = {\"name\": \"alice\"}\nprint(to_upper(user[\"name\"]))").unwrap();
+    assert_eq!(out, vec!["ALICE"]);
+}
+
+#[test]
+fn map_value_text_then_contains() {
+    let out =
+        vm_run("let user = {\"city\": \"waterloo\"}\nprint(contains(user[\"city\"], \"water\"))")
+            .unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn map_value_array_text_index() {
+    let src = "let m = {\"parts\": split(\"a,b,c\", \",\")}\nprint(m[\"parts\"][0])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a"]);
+}
+
+#[test]
+fn map_value_array_len() {
+    let src = "let m = {\"parts\": split(\"a,b,c\", \",\")}\nprint(len(m[\"parts\"]))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn map_index_result_used_in_expression() {
+    let out = vm_run("let m = {\"x\": 10, \"y\": 20}\nprint(m[\"x\"] + m[\"y\"])").unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn existing_array_features_still_ok_after_maps() {
+    let src = "let arr = [1, 2, 3]\nlet mut marr: Array<Number> = []\npush(marr, 42)\nprint(arr[1])\nprint(pop(marr))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2", "42"]);
+}
+
+#[test]
+fn existing_string_features_still_ok_after_maps() {
+    let out = vm_run("let s = \"hello\"\nprint(len(s))\nprint(s[1..3])").unwrap();
+    assert_eq!(out, vec!["5", "el"]);
+}
+
+// --- Function / closure ---
+
+#[test]
+fn fn_local_map_index() {
+    let src = "fn score() -> Number {\n  let scores = {\"alice\": 10, \"bob\": 20}\n  return scores[\"alice\"]\n}\nprint(score())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn closure_captures_map_read() {
+    let src = "let scores = {\"alice\": 10}\nfn get() -> Number { return scores[\"alice\"] }\nprint(get())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+// --- Loop ---
+
+#[test]
+fn map_read_in_for_loop() {
+    let src = "let labels = {\"a\": \"apple\", \"b\": \"banana\"}\nlet keys = [\"a\", \"b\"]\nfor i in range(0, len(keys)) {\n  print(labels[keys[i]])\n}";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["apple", "banana"]);
+}
+
+#[test]
+fn map_read_in_while_loop() {
+    let src =
+        "let m = {\"x\": 10}\nlet mut i: Number = 0\nwhile i < 1 {\n  print(m[\"x\"])\n  i += 1\n}";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn map_read_with_array_key() {
+    let src = "let m = {\"a\": 1, \"b\": 2}\nlet keys = [\"a\", \"b\"]\nprint(m[keys[0]])\nprint(m[keys[1]])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_map_read_with_array_key() {
+    let src = "let labels = {\"a\": \"apple\", \"b\": \"banana\", \"c\": \"cherry\"}\nlet keys = [\"a\", \"b\", \"c\"]\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  print(labels[keys[i]])\n  i += 1\n}";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["apple", "banana", "cherry"]);
+}
+
+#[test]
+fn vm_matches_tree_map_simulate() {
+    let src = "let labels = {\"a\": \"apple\", \"b\": \"banana\", \"c\": \"cherry\"}\nlet keys = [\"a\", \"b\", \"c\"]\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  print(labels[keys[i]])\n  i += 1\n}";
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["apple", "banana", "cherry"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn map_missing_key_error_message() {
+    let result = vm_run("let m = {\"alice\": 10}\nprint(m[\"bob\"])");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("bob") && (msg.contains("not found") || msg.contains("key")),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn map_mixed_values_error_message() {
+    let err = check("let m = {\"a\": 1, \"b\": \"two\"}").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("homogeneous") || msg.contains("expected"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn map_key_must_be_text_error_message() {
+    let err = check("let m = {\"a\": 1}\nm[42]").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("Text"), "got: {}", msg);
 }

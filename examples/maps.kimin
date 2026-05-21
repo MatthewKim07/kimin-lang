@@ -1,0 +1,25 @@
+// Basic map literals and indexing.
+
+let scores = {"alice": 10, "bob": 20, "carol": 15}
+print(scores["alice"])
+print(scores["bob"])
+print(scores["carol"])
+
+// Map with boolean values.
+let flags = {"debug": true, "verbose": false}
+print(flags["debug"])
+print(flags["verbose"])
+
+// Map used in expression.
+let base = 100
+let offsets = {"x": 5, "y": 10}
+let result = base + offsets["x"]
+print(result)
+
+// Printing the whole map.
+let m = {"a": 1, "b": 2}
+print(m)
+
+// Duplicate key: last value wins.
+let d = {"k": 1, "k": 99}
+print(d["k"])

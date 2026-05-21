@@ -1,0 +1,25 @@
+// Runnable file demonstrating valid map behavior.
+// Commented-out lines are type errors or runtime errors.
+
+// Valid: map literal with Text keys and Number values.
+let m = {"x": 10, "y": 20}
+print(m["x"])
+
+// --- Type errors (uncomment one at a time to see error) ---
+
+// Non-Text key → TypeError: map key must be Text, got Number
+// let bad_key = {1: "a"}
+
+// Mixed value types → TypeError: map values must be homogeneous
+// let mixed = {"a": 1, "b": "two"}
+
+// Empty map literal → TypeError: empty map literal requires an explicit Map type annotation
+// let empty = {}
+
+// Number key on map → TypeError: map key must be Text, got Number
+// print(m[0])
+
+// --- Runtime errors (uncomment one at a time to see error) ---
+
+// Missing key → RuntimeError: map key 'z' not found
+// print(m["z"])

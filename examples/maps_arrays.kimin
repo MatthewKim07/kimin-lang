@@ -1,0 +1,25 @@
+// Maps whose values are arrays (via split), combined with array builtins.
+
+// Map value used directly with len.
+let csv_data = {"row1": "a,b,c", "row2": "x,y"}
+let parts1 = split(csv_data["row1"], ",")
+let parts2 = split(csv_data["row2"], ",")
+print(len(parts1))
+print(len(parts2))
+
+// Indexing into a split map value.
+print(parts1[0])
+print(parts1[2])
+
+// join a map value.
+let joined = join(parts1, " | ")
+print(joined)
+
+// Slice of a map value array.
+let slice = parts1[0..2]
+print(slice[0])
+print(slice[1])
+
+// Map with a pre-built array value is not yet supported (arrays as values
+// require type annotations that will be added in a future milestone).
+// This example uses string-valued maps and produces arrays via split.
