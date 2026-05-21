@@ -107,21 +107,50 @@ impl Interpreter {
                 let idx_val = self.eval_expr(index)?;
                 let new_elem = self.eval_expr(value)?;
 
-                // Read current array value, clone its Vec, update, assign back.
+                // Read current variable, dispatch on Array vs Map.
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+
+                match current {
+                    Value::Map(mut map) => {
+                        let key = match idx_val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "map index key must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        map.insert(key, new_elem);
+                        if !self.env.borrow_mut().assign_existing(name, Value::Map(map)) {
+                            return Err(RuntimeError {
+                                msg: format!("undefined variable '{}'", name),
+                            });
+                        }
+                        return Ok(ExecFlow::Normal);
+                    }
+                    Value::Array(_) => {}
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "cannot index-assign into value of type {}",
+                                other.type_name()
+                            ),
+                        })
+                    }
+                }
+
+                // Array path: re-read to get Vec.
                 let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
                     msg: format!("undefined variable '{}'", name),
                 })?;
                 let mut elems = match current {
                     Value::Array(v) => v,
-                    other => {
-                        return Err(RuntimeError {
-                            msg: format!(
-                                "index assignment target '{}' is not an array, got {}",
-                                name,
-                                other.type_name()
-                            ),
-                        })
-                    }
+                    _ => unreachable!("already checked above"),
                 };
 
                 let n = match idx_val {

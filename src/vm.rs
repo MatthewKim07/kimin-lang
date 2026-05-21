@@ -684,46 +684,74 @@ impl Vm {
                     let new_elem = pop(stack)?;
                     let idx_val = pop(stack)?;
 
-                    // Read current array; end borrow before mutable assign.
+                    // Read current variable; dispatch on Array vs Map.
                     let current = current_env
                         .borrow()
                         .get(&name)
                         .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
-                    let mut elems = match current {
-                        Value::Array(v) => v,
+
+                    match current {
+                        Value::Map(mut map) => {
+                            let key = match idx_val {
+                                Value::Str(s) => s,
+                                other => {
+                                    return Err(runtime_err(&format!(
+                                        "map index key must be Text, got {}",
+                                        other.type_name()
+                                    )))
+                                }
+                            };
+                            map.insert(key, new_elem);
+                            if !current_env
+                                .borrow_mut()
+                                .assign_existing(&name, Value::Map(map))
+                            {
+                                return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                            }
+                        }
+                        Value::Array(_) => {
+                            // Re-read to get the Vec (borrow already dropped above).
+                            let current2 = current_env.borrow().get(&name).ok_or_else(|| {
+                                runtime_err(&format!("undefined variable '{}'", name))
+                            })?;
+                            let mut elems = match current2 {
+                                Value::Array(v) => v,
+                                _ => unreachable!(),
+                            };
+                            let n = match idx_val {
+                                Value::Number(n) => n,
+                                _ => return Err(runtime_err("array index must be a Number")),
+                            };
+                            if n.fract() != 0.0 {
+                                return Err(runtime_err("array index must be an integer"));
+                            }
+                            if n < 0.0 {
+                                return Err(runtime_err(
+                                    "array index out of bounds: index is negative",
+                                ));
+                            }
+                            let i = n as usize;
+                            if i >= elems.len() {
+                                return Err(runtime_err(&format!(
+                                    "array index out of bounds: index {} but length is {}",
+                                    i,
+                                    elems.len()
+                                )));
+                            }
+                            elems[i] = new_elem;
+                            if !current_env
+                                .borrow_mut()
+                                .assign_existing(&name, Value::Array(elems))
+                            {
+                                return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                            }
+                        }
                         other => {
                             return Err(runtime_err(&format!(
-                                "index assignment target '{}' is not an array, got {}",
-                                name,
+                                "cannot index-assign into value of type {}",
                                 other.type_name()
-                            )))
+                            )));
                         }
-                    };
-
-                    let n = match idx_val {
-                        Value::Number(n) => n,
-                        _ => return Err(runtime_err("array index must be a Number")),
-                    };
-                    if n.fract() != 0.0 {
-                        return Err(runtime_err("array index must be an integer"));
-                    }
-                    if n < 0.0 {
-                        return Err(runtime_err("array index out of bounds: index is negative"));
-                    }
-                    let i = n as usize;
-                    if i >= elems.len() {
-                        return Err(runtime_err(&format!(
-                            "array index out of bounds: index {} but length is {}",
-                            i,
-                            elems.len()
-                        )));
-                    }
-                    elems[i] = new_elem;
-                    if !current_env
-                        .borrow_mut()
-                        .assign_existing(&name, Value::Array(elems))
-                    {
-                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
                     }
                 }
 
