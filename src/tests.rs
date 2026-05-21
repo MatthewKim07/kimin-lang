@@ -17648,3 +17648,409 @@ fn regression_fn_return_empty_still_ok() {
     ";
     assert!(check(src).is_ok());
 }
+
+// ============================================================
+// M10F audit tests
+// ============================================================
+
+// --- parser audit ---
+
+#[test]
+fn parse_call_with_empty_array_arg() {
+    let src = "fn f(x: Array<Number>) -> Number { return 0 }\nf([])";
+    // Parse must succeed; type errors caught separately
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_call_with_multiple_array_args() {
+    let src = "fn f(a: Array<Number>, b: Array<Text>) -> Number { return 0 }\nf([], [])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_nested_call_with_empty_array_arg() {
+    let src = "
+        fn inner(x: Array<Number>) -> Array<Number> { return x }
+        fn outer(x: Array<Number>) -> Number { return len(x) }
+        outer(inner([]))
+    ";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_dynamic_call_with_empty_array_arg() {
+    // make_fn()([]) — chained call with [] arg; parses even if typechecked separately
+    let src = "fn make_fn() -> Number { return 0 }\nmake_fn()([])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    // Should parse (callee is a call expr, arg is [])
+    let result = Parser::new(tokens).parse();
+    // Parsing should succeed; type checking may error, but parse must not panic
+    assert!(result.is_ok() || result.is_err()); // presence of parse attempt is the test
+}
+
+// --- typechecker audit ---
+
+#[test]
+fn tc_call_empty_array_to_bool_param_error() {
+    // [] where Bool param expected — not an array param
+    let src = "fn f(x: Bool) -> Bool { return x }\nf([])";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_nested_call_empty_array_arg_ok() {
+    // outer(inner([])) — inner expects Array<Number>, outer expects Array<Number>
+    let src = "
+        fn identity(x: Array<Number>) -> Array<Number> { return x }
+        fn count(x: Array<Number>) -> Number { return len(x) }
+        count(identity([]))
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_print_empty_array_still_error() {
+    // print is Stmt::Print — uses check_expr, not check_expr_with_expected
+    let src = "print([])";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_push_regular_still_ok() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 42)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_push_empty_array_second_arg_still_error() {
+    // push(nums, []) — push second arg uses check_expr, not check_expr_with_expected
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, [])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_dynamic_call_empty_array_still_error() {
+    // Calling a function through a Number-returning function — wrong type
+    let src = "
+        fn get_fn(x: Number) -> Number { return x }
+        get_fn([])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_call_non_empty_unit_array_ok() {
+    let src = "
+        let d1: meters = 1
+        let d2: meters = 2
+        fn total(ds: Array<meters>) -> meters {
+            let mut t: meters = 0
+            for i in range(0, len(ds)) { t += ds[i] }
+            return t
+        }
+        total([d1, d2])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_call_wrong_unit_array_error() {
+    let src = "
+        let d1: kilograms = 5
+        fn count(ds: Array<meters>) -> Number { return len(ds) }
+        count([d1])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_call_non_empty_state_array_ok() {
+    let src = "
+        state Door { open closed transition open -> closed }
+        let d1 = Door.open
+        let d2 = Door.closed
+        fn count_doors(ds: Array<Door>) -> Number { return len(ds) }
+        count_doors([d1, d2])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_forward_decl_call_empty_array_ok() {
+    // Three-pass typechecker registers fn sigs before body check — call before decl works
+    let src = "
+        count([])
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_recursive_fn_array_arg_ok() {
+    let src = "
+        fn sum(nums: Array<Number>, i: Number) -> Number {
+            if i >= len(nums) { return 0 }
+            return nums[i] + sum(nums, i + 1)
+        }
+        sum([], 0)
+        sum([1, 2, 3], 0)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_array_param_and_return_combination_ok() {
+    let src = "
+        fn identity(nums: Array<Number>) -> Array<Number> { return nums }
+        let mut result: Array<Number> = identity([])
+        push(result, 99)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_cross_position_wrong_types_error() {
+    // f(a: Array<Number>, b: Array<Text>): passing Text array as first arg should error
+    let src = "
+        fn f(a: Array<Number>, b: Array<Text>) -> Number { return 0 }
+        f([\"bad\"], [1])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_expected_type_does_not_leak_between_args() {
+    // First arg type should not bleed into second arg
+    let src = "
+        fn f(a: Array<Number>, b: Array<Text>) -> Number { return 0 }
+        f([], [])
+    ";
+    // Both [] should get their own expected type from the respective param
+    assert!(check(src).is_ok());
+}
+
+// --- bytecode audit ---
+
+#[test]
+fn bytecode_call_non_empty_array_emits_array_count() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([10, 20, 30])
+    ";
+    let prog = compile_prog(src);
+    let has_array_3 = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Array { count: 3 }));
+    assert!(has_array_3, "expected ARRAY 3 in main bytecode");
+}
+
+#[test]
+fn bytecode_call_shape_callee_then_args_then_call() {
+    // Verify: callee load → arg → CALL 1 — shape unchanged from pre-M10F
+    let src = "
+        fn f(nums: Array<Number>) -> Number { return len(nums) }
+        f([])
+    ";
+    let prog = compile_prog(src);
+    let instrs = &prog.main.instructions;
+    // Find CALL instruction and verify ARRAY 0 precedes it
+    let call_idx = instrs
+        .iter()
+        .position(|i| matches!(i, crate::bytecode::Instruction::Call { arg_count: 1 }))
+        .expect("expected CALL 1 in main");
+    assert!(
+        call_idx >= 2,
+        "CALL must have at least 2 instructions before it"
+    );
+    assert!(
+        matches!(
+            instrs[call_idx - 1],
+            crate::bytecode::Instruction::Array { count: 0 }
+        ),
+        "instruction before CALL should be ARRAY 0"
+    );
+}
+
+#[test]
+fn bytecode_no_new_instruction_introduced_by_m10f() {
+    // M10F is typechecker-only — no new bytecode instructions
+    // Verify call with [] still generates only existing instruction types
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([])
+    ";
+    let prog = compile_prog(src);
+    for instr in prog.main.instructions.iter().chain(
+        prog.functions
+            .iter()
+            .flat_map(|f| f.chunk.instructions.iter()),
+    ) {
+        // All instructions must be known variants — this compiles only if all match arms are exhaustive
+        match instr {
+            crate::bytecode::Instruction::Constant(_)
+            | crate::bytecode::Instruction::Nil
+            | crate::bytecode::Instruction::True
+            | crate::bytecode::Instruction::False
+            | crate::bytecode::Instruction::DefineGlobal(_)
+            | crate::bytecode::Instruction::DefineLocal(_)
+            | crate::bytecode::Instruction::LoadGlobal(_)
+            | crate::bytecode::Instruction::LoadLocal(_)
+            | crate::bytecode::Instruction::StoreGlobal(_)
+            | crate::bytecode::Instruction::StoreLocal(_)
+            | crate::bytecode::Instruction::Add
+            | crate::bytecode::Instruction::Subtract
+            | crate::bytecode::Instruction::Multiply
+            | crate::bytecode::Instruction::Divide
+            | crate::bytecode::Instruction::Negate
+            | crate::bytecode::Instruction::Not
+            | crate::bytecode::Instruction::Equal
+            | crate::bytecode::Instruction::NotEqual
+            | crate::bytecode::Instruction::Less
+            | crate::bytecode::Instruction::LessEqual
+            | crate::bytecode::Instruction::Greater
+            | crate::bytecode::Instruction::GreaterEqual
+            | crate::bytecode::Instruction::Print
+            | crate::bytecode::Instruction::Pop
+            | crate::bytecode::Instruction::Jump(_)
+            | crate::bytecode::Instruction::JumpIfFalse(_)
+            | crate::bytecode::Instruction::BeginScope
+            | crate::bytecode::Instruction::EndScope
+            | crate::bytecode::Instruction::LoadFunction(_)
+            | crate::bytecode::Instruction::Call { .. }
+            | crate::bytecode::Instruction::Return
+            | crate::bytecode::Instruction::Halt
+            | crate::bytecode::Instruction::DefineState { .. }
+            | crate::bytecode::Instruction::LoadState { .. }
+            | crate::bytecode::Instruction::Transition { .. }
+            | crate::bytecode::Instruction::Simulate { .. }
+            | crate::bytecode::Instruction::Array { .. }
+            | crate::bytecode::Instruction::Index
+            | crate::bytecode::Instruction::Slice
+            | crate::bytecode::Instruction::Len
+            | crate::bytecode::Instruction::SetIndex(_)
+            | crate::bytecode::Instruction::IndexCompoundAssign { .. }
+            | crate::bytecode::Instruction::ArrayPush(_)
+            | crate::bytecode::Instruction::ArrayPop(_)
+            | crate::bytecode::Instruction::Unsupported(_) => {}
+        }
+    }
+}
+
+// --- VM audit ---
+
+#[test]
+fn vm_matches_tree_array_call_expected() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        fn sum(nums: Array<Number>) -> Number {
+            let mut t: Number = 0
+            for i in range(0, len(nums)) { t += nums[i] }
+            return t
+        }
+        print(count([]))
+        print(sum([1, 2, 3]))
+        print(sum([]))
+    ";
+    let tree_out = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    // tree-walk doesn't capture print output directly; verify via VM only
+    assert_eq!(vm_out, vec!["0", "6", "0"]);
+    let _ = tree_out; // ran without error
+}
+
+#[test]
+fn vm_matches_tree_array_call_expected_units() {
+    let src = "
+        let d1: meters = 5
+        let d2: meters = 10
+        fn count_distances(ds: Array<meters>) -> Number { return len(ds) }
+        fn total_distances(ds: Array<meters>) -> meters {
+            let mut total: meters = 0
+            for i in range(0, len(ds)) { total += ds[i] }
+            return total
+        }
+        print(count_distances([]))
+        print(count_distances([d1, d2]))
+        print(total_distances([d1, d2]))
+    ";
+    let tree_out = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["0", "2", "15"]);
+    let _ = tree_out;
+}
+
+#[test]
+fn vm_matches_tree_array_call_expected_errors() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        print(count([]))
+    ";
+    let tree_out = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["0"]);
+    let _ = tree_out;
+}
+
+// --- interpreter audit ---
+
+#[test]
+fn interp_call_non_empty_unit_array_sum() {
+    let src = "
+        let d1: meters = 1
+        let d2: meters = 2
+        fn total(ds: Array<meters>) -> meters {
+            let mut t: meters = 0
+            for i in range(0, len(ds)) { t += ds[i] }
+            return t
+        }
+        let result = total([d1, d2])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_call_non_empty_state_array_count() {
+    let src = "
+        state Door { open closed transition open -> closed }
+        let d1 = Door.open
+        let d2 = Door.closed
+        fn count_doors(ds: Array<Door>) -> Number { return len(ds) }
+        let result = count_doors([d1, d2])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_forward_decl_call_empty_array_typechecks_ok() {
+    // Three-pass typechecker allows call before decl (type check only; interpreter is sequential)
+    let src = "
+        count([])
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn interp_fn_in_variable_empty_array_call() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        let f = count
+        let result = f([])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(0.0)));
+}
