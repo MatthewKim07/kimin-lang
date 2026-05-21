@@ -924,6 +924,40 @@ impl Vm {
                     stack.push(Value::Array(parts));
                 }
 
+                Instruction::Join => {
+                    let delim_val = pop(stack)?;
+                    let parts_val = pop(stack)?;
+                    let delimiter = match delim_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "join() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let parts = match parts_val {
+                        Value::Array(elems) => elems,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "join() first argument must be Array<Text>, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let strs: Result<Vec<String>, KiminError> = parts
+                        .iter()
+                        .map(|v| match v {
+                            Value::Str(s) => Ok(s.clone()),
+                            other => Err(runtime_err(&format!(
+                                "join() array element must be Text, got {}",
+                                other.type_name()
+                            ))),
+                        })
+                        .collect();
+                    stack.push(Value::Str(strs?.join(delimiter.as_str())));
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

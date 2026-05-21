@@ -136,6 +136,10 @@ pub enum Instruction {
     /// Empty delimiter splits into individual characters.
     Split,
 
+    /// Join an Array<Text> with a delimiter. Stack: [..., parts, delimiter] → Text.
+    /// Empty array → ""; empty delimiter → concatenation.
+    Join,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }
