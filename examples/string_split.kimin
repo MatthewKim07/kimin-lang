@@ -1,0 +1,15 @@
+// string_split.kimin — basic split usage
+let csv = "apple,banana,cherry"
+let parts = split(csv, ",")
+print(len(parts))
+print(parts[0])
+print(parts[1])
+print(parts[2])
+
+let sentence = "hello world foo"
+let words = split(sentence, " ")
+print(len(words))
+print(words[0])
+
+let joined_result = to_upper(parts[0])
+print(joined_result)

@@ -1,0 +1,11 @@
+// string_split_simulate.kimin — split combined with simulate
+let labels = "a,b,c"
+let parts = split(labels, ",")
+let mut idx: Number = 0
+let dur: seconds = 3
+let dt: seconds = 1
+
+simulate dur step dt {
+    print(parts[idx])
+    idx += 1
+}

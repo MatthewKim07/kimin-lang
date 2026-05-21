@@ -1,0 +1,17 @@
+// string_split_functions.kimin — split used inside functions
+fn first_word(s: Text) -> Text {
+    let parts = split(s, " ")
+    return parts[0]
+}
+
+fn word_count(s: Text) -> Number {
+    return len(split(s, " "))
+}
+
+fn csv_first(row: Text) -> Text {
+    return trim(split(row, ",")[0])
+}
+
+print(first_word("hello world"))
+print(word_count("one two three four"))
+print(csv_first("  apple , banana , cherry"))

@@ -17952,6 +17952,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::ToUpper
             | crate::bytecode::Instruction::ToLower
             | crate::bytecode::Instruction::Trim
+            | crate::bytecode::Instruction::Split
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -20334,4 +20335,585 @@ fn trim_arg_error_message() {
         "got: {}",
         msg
     );
+}
+
+// =============================================================================
+// M11D: split(text, delimiter) -> Array<Text>
+// =============================================================================
+
+// --- Lexer: no new tokens for split (uses existing identifiers) ---
+
+#[test]
+fn split_name_is_not_a_keyword() {
+    // `split` is a builtin, not a reserved keyword — can appear as a call expression
+    let src = "let s = split(\"a,b\", \",\")";
+    assert!(check(src).is_ok());
+}
+
+// --- Parser: split parses as a call with two arguments ---
+
+#[test]
+fn split_parses_two_args() {
+    let src = "let parts = split(\"a,b,c\", \",\")";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_parses_empty_delimiter() {
+    let src = "let parts = split(\"abc\", \"\")";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_result_indexable() {
+    let src = "let parts = split(\"a,b\", \",\")\nlet first = parts[0]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_result_len_ok() {
+    let src = "let parts = split(\"a,b\", \",\")\nlet n = len(parts)";
+    assert!(check(src).is_ok());
+}
+
+// --- Typechecker: return type is Array<Text> ---
+
+#[test]
+fn split_returns_array_text() {
+    // Array<Text> can be stored in Array<Text> annotation
+    let src = "let parts: Array<Text> = split(\"a,b\", \",\")";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_result_element_is_text() {
+    let src = "let parts = split(\"a,b\", \",\")\nlet s: Text = parts[0]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_first_arg_must_be_text() {
+    let err = check("split(42, \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_second_arg_must_be_text() {
+    let err = check("split(\"hello\", 42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_wrong_arity_zero() {
+    let err = check("split()").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("2") && msg.contains("0"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_wrong_arity_one() {
+    let err = check("split(\"hello\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("2") && msg.contains("1"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_wrong_arity_three() {
+    let err = check("split(\"hello\", \",\", \"extra\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("2") && msg.contains("3"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_in_function_signature() {
+    let src = "fn words(s: Text) -> Array<Text> { return split(s, \" \") }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_result_len_type_is_number() {
+    let src = "let parts = split(\"a b c\", \" \")\nlet n: Number = len(parts)";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn split_result_push_ok() {
+    let src = "let mut parts: Array<Text> = split(\"a,b\", \",\")\npush(parts, \"c\")";
+    assert!(check(src).is_ok());
+}
+
+// --- Interpreter: correct runtime behavior ---
+
+#[test]
+fn interp_split_basic_comma() {
+    let interp = run("let parts = split(\"a,b,c\", \",\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+            assert_eq!(elems[2], Value::Str("c".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_space_delimiter() {
+    let interp = run("let parts = split(\"hello world foo\", \" \")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("hello".to_string()));
+            assert_eq!(elems[1], Value::Str("world".to_string()));
+            assert_eq!(elems[2], Value::Str("foo".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_empty_delimiter_chars() {
+    let interp = run("let parts = split(\"abc\", \"\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+            assert_eq!(elems[2], Value::Str("c".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_empty_string_empty_delimiter() {
+    let interp = run("let parts = split(\"\", \"\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => assert_eq!(elems.len(), 0),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_empty_string_nonempty_delimiter() {
+    let interp = run("let parts = split(\"\", \",\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            // str::split("") on "" yields one empty string part
+            assert_eq!(elems.len(), 1);
+            assert_eq!(elems[0], Value::Str("".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_no_delimiter_found() {
+    let interp = run("let parts = split(\"hello\", \",\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 1);
+            assert_eq!(elems[0], Value::Str("hello".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_consecutive_delimiters() {
+    let interp = run("let parts = split(\"a,,b\", \",\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("".to_string()));
+            assert_eq!(elems[2], Value::Str("b".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_len_matches() {
+    let interp = run("let parts = split(\"a,b,c\", \",\")\nlet n = len(parts)").unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(3.0));
+}
+
+#[test]
+fn interp_split_index_first_element() {
+    let interp = run("let parts = split(\"hello world\", \" \")\nlet w = parts[0]").unwrap();
+    assert_eq!(
+        interp.get_var("w").unwrap(),
+        Value::Str("hello".to_string())
+    );
+}
+
+#[test]
+fn interp_split_index_last_element() {
+    let interp = run("let parts = split(\"a,b,c\", \",\")\nlet last = parts[2]").unwrap();
+    assert_eq!(interp.get_var("last").unwrap(), Value::Str("c".to_string()));
+}
+
+#[test]
+fn interp_split_result_slice() {
+    let interp = run("let parts = split(\"a,b,c\", \",\")\nlet sub = parts[0..2]").unwrap();
+    match interp.get_var("sub").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_in_function() {
+    let src = "fn words(s: Text) -> Array<Text> { return split(s, \" \") }\nlet r = words(\"hello world\")";
+    let interp = run(src).unwrap();
+    match interp.get_var("r").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0], Value::Str("hello".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_then_to_upper_each() {
+    let src = "let parts = split(\"a,b,c\", \",\")\nlet first = to_upper(parts[0])";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("first").unwrap(),
+        Value::Str("A".to_string())
+    );
+}
+
+#[test]
+fn interp_split_combined_with_contains() {
+    let src = "let parts = split(\"hello,world\", \",\")\nlet found = contains(parts[0], \"ell\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("found").unwrap(), Value::Bool(true));
+}
+
+#[test]
+fn interp_split_combined_with_starts_with() {
+    let src = "let parts = split(\"hello world\", \" \")\nlet b = starts_with(parts[1], \"w\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b").unwrap(), Value::Bool(true));
+}
+
+#[test]
+fn interp_split_combined_with_ends_with() {
+    let src = "let parts = split(\"hello world\", \" \")\nlet b = ends_with(parts[0], \"lo\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b").unwrap(), Value::Bool(true));
+}
+
+#[test]
+fn interp_split_combined_with_trim() {
+    let src = "let parts = split(\"  hello  , world  \", \",\")\nlet first = trim(parts[0])";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("first").unwrap(),
+        Value::Str("hello".to_string())
+    );
+}
+
+#[test]
+fn interp_split_push_extra_element() {
+    let src = "let mut parts: Array<Text> = split(\"a,b\", \",\")\npush(parts, \"c\")\nlet n = len(parts)";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(3.0));
+}
+
+#[test]
+fn interp_split_in_for_loop() {
+    let src = "let parts = split(\"a,b,c\", \",\")\nlet mut count: Number = 0\nfor i in range(0, len(parts)) { count += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("count").unwrap(), Value::Number(3.0));
+}
+
+#[test]
+fn interp_split_unicode_chars() {
+    let interp = run("let parts = split(\"abc\", \"\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => assert_eq!(elems.len(), 3),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_multichar_delimiter() {
+    let interp = run("let parts = split(\"a::b::c\", \"::\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+            assert_eq!(elems[2], Value::Str("c".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_delimiter_at_start() {
+    let interp = run("let parts = split(\",a,b\", \",\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_delimiter_at_end() {
+    let interp = run("let parts = split(\"a,b,\", \",\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[2], Value::Str("".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+// --- Bytecode: Split instruction emitted ---
+
+#[test]
+fn bytecode_split_emits_split_instruction() {
+    let prog = compile_prog("split(\"a,b\", \",\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Split)));
+}
+
+#[test]
+fn bytecode_split_no_call_instruction() {
+    let prog = compile_prog("split(\"a,b\", \",\")");
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_split_emits_two_constants() {
+    let prog = compile_prog("split(\"a,b\", \",\")");
+    let text_constants: Vec<_> = prog
+        .main
+        .constants
+        .iter()
+        .filter(|c| matches!(c, Constant::Text(_)))
+        .collect();
+    assert!(text_constants.len() >= 2);
+}
+
+// --- VM: correct runtime behavior via vm_run ---
+
+#[test]
+fn vm_split_basic_comma() {
+    let out = vm_run(
+        "let parts = split(\"a,b,c\", \",\")\nprint(parts[0])\nprint(parts[1])\nprint(parts[2])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_split_empty_delimiter() {
+    let out = vm_run(
+        "let parts = split(\"abc\", \"\")\nprint(parts[0])\nprint(parts[1])\nprint(parts[2])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_split_len() {
+    let out = vm_run("print(len(split(\"a,b,c\", \",\")))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_split_no_delimiter_found() {
+    let out = vm_run("print(len(split(\"hello\", \",\")))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_split_empty_string_empty_delimiter() {
+    let out = vm_run("print(len(split(\"\", \"\")))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_split_combined_to_upper() {
+    let out = vm_run("let parts = split(\"a,b\", \",\")\nprint(to_upper(parts[0]))").unwrap();
+    assert_eq!(out, vec!["A"]);
+}
+
+#[test]
+fn vm_split_combined_contains() {
+    let out =
+        vm_run("let parts = split(\"hello,world\", \",\")\nprint(contains(parts[0], \"ell\"))")
+            .unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_split_combined_trim() {
+    let out = vm_run("let parts = split(\" a , b \", \",\")\nprint(trim(parts[0]))").unwrap();
+    assert_eq!(out, vec!["a"]);
+}
+
+#[test]
+fn vm_split_in_function() {
+    let src = "fn words(s: Text) -> Array<Text> { return split(s, \" \") }\nprint(words(\"hi there\")[0])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["hi"]);
+}
+
+#[test]
+fn vm_split_parity_with_interp() {
+    // Both tree-walk and VM must produce identical output.
+    let src =
+        "let parts = split(\"x,y,z\", \",\")\nprint(parts[0])\nprint(parts[1])\nprint(parts[2])";
+    let interp = run(src).unwrap();
+    // Verify tree-walk result by variable state.
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems[0], Value::Str("x".to_string()));
+            assert_eq!(elems[1], Value::Str("y".to_string()));
+            assert_eq!(elems[2], Value::Str("z".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+    // Verify VM output matches expected.
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["x", "y", "z"]);
+}
+
+// --- Regression: prior string builtins still work after M11D ---
+
+#[test]
+fn contains_still_ok_after_m11d() {
+    let out = vm_run("print(contains(\"hello\", \"ell\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn to_upper_still_ok_after_m11d() {
+    let out = vm_run("print(to_upper(\"hello\"))").unwrap();
+    assert_eq!(out, vec!["HELLO"]);
+}
+
+#[test]
+fn trim_still_ok_after_m11d() {
+    let out = vm_run("print(trim(\"  hi  \"))").unwrap();
+    assert_eq!(out, vec!["hi"]);
+}
+
+#[test]
+fn array_push_pop_still_ok_after_m11d() {
+    let src = "let mut arr: Array<Text> = []\npush(arr, \"a\")\npush(arr, \"b\")\nprint(pop(arr))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["b"]);
+}
+
+#[test]
+fn string_index_slice_still_ok_after_m11d() {
+    let out = vm_run("let s = \"hello\"\nprint(s[0])\nprint(s[1..3])").unwrap();
+    assert_eq!(out, vec!["h", "el"]);
+}
+
+#[test]
+fn array_slices_still_ok_after_m11d() {
+    let out = vm_run("let arr = [1, 2, 3, 4]\nprint(arr[1..3][0])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn split_first_arg_error_message() {
+    let err = check("split(42, \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_second_arg_error_message() {
+    let err = check("split(\"hello\", 42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn split_arity_error_message() {
+    let err = check("split(\"hello\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("split"), "got: {}", msg);
 }

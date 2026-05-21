@@ -1,0 +1,10 @@
+// string_split_empty_delim.kimin — empty delimiter splits into individual characters
+let word = "hello"
+let chars = split(word, "")
+print(len(chars))
+print(chars[0])
+print(chars[1])
+print(chars[4])
+
+let empty = split("", "")
+print(len(empty))

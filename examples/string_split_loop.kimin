@@ -1,0 +1,18 @@
+// string_split_loop.kimin — iterate over split results
+let data = "10,20,30,40,50"
+let parts = split(data, ",")
+let mut i: Number = 0
+for i in range(0, len(parts)) {
+    print(parts[i])
+}
+
+// count words in a sentence
+let sentence = "the quick brown fox"
+let words = split(sentence, " ")
+let mut count: Number = 0
+for i in range(0, len(words)) {
+    if starts_with(words[i], "t") {
+        count += 1
+    }
+}
+print(count)

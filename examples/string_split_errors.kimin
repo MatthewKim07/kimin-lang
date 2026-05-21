@@ -1,0 +1,23 @@
+// string_split_errors.kimin — type errors caught by the type checker
+// Uncomment one line at a time to see the error.
+
+// split first argument must be Text, not Number:
+// let parts = split(42, ",")
+
+// split second argument must be Text, not Number:
+// let parts = split("hello", 42)
+
+// split requires 2 arguments, not 1:
+// let parts = split("hello")
+
+// split requires 2 arguments, not 3:
+// let parts = split("hello", ",", "extra")
+
+// Element type is Text; assigning to Number is a type error:
+// let parts = split("a,b", ",")
+// let n: Number = parts[0]
+
+// Valid usage for reference:
+let parts = split("a,b,c", ",")
+print(len(parts))
+print(parts[0])
