@@ -1,0 +1,12 @@
+let nums = [10, 20, 30, 40]
+
+let middle = nums[1..3]
+print(middle[0])
+print(middle[1])
+print(len(middle))
+
+let full = nums[0..4]
+print(len(full))
+
+let empty = nums[2..2]
+print(len(empty))

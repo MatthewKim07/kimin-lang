@@ -1,0 +1,17 @@
+// Keep runnable by default.
+
+let nums = [1, 2, 3]
+let s = nums[0..2]
+print(len(s))
+
+// Uncomment to test out of bounds:
+// let bad = nums[0..99]
+
+// Uncomment to test negative:
+// let bad = nums[-1..2]
+
+// Uncomment to test start > end:
+// let bad = nums[2..1]
+
+// Uncomment to test non-number bound:
+// let bad = nums["0"..2]

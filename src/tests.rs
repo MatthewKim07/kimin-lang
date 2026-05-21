@@ -4273,6 +4273,16 @@ fn vm_run_unchecked(source: &str) -> Result<Vec<String>, KiminError> {
     Ok(vm.take_output())
 }
 
+/// Parse and execute through the tree-walk interpreter without type-checking.
+/// Use only when a runtime path is intentionally unreachable after static checking.
+fn run_unchecked(source: &str) -> Result<Interpreter, KiminError> {
+    let tokens = Lexer::new(source).tokenize()?;
+    let stmts = Parser::new(tokens).parse()?;
+    let mut interp = Interpreter::new();
+    interp.run(&stmts)?;
+    Ok(interp)
+}
+
 // ─── VM tests ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -14462,15 +14472,6 @@ fn interp_multiple_pushes_then_pops() {
 
 #[test]
 fn interp_push_inside_function() {
-    let src = "
-fn fill(mut arr) {
-    push(arr, 99)
-}
-let mut a = [1, 2]
-push(a, 3)
-print(len(a))
-print(a[2])
-";
     // Note: function params are immutable so push(arr, 99) inside fn would fail type check
     // test push at top level only
     let out = vm_run("let mut a = [1, 2]\npush(a, 3)\nprint(len(a))\nprint(a[2])").unwrap();
@@ -15267,4 +15268,704 @@ print(outer())
 fn vm_matches_tree_for_range_len_once() {
     let src = "let mut nums = [1, 2, 3]\nfor i in range(0, len(nums)) { push(nums, i) }\nprint(len(nums))";
     assert_eq!(vm_run(src).unwrap(), vec!["6"]);
+}
+
+// ============================================================
+// M10D — Array slice expressions: arr[start..end]
+// ============================================================
+
+// --- Lexer ---
+
+#[test]
+fn lexer_dotdot_tokenizes() {
+    let kinds = tokenize("1..3");
+    assert!(matches!(kinds[0], TokenKind::Number(_)));
+    assert_eq!(kinds[1], TokenKind::DotDot);
+    assert!(matches!(kinds[2], TokenKind::Number(_)));
+}
+
+#[test]
+fn lexer_dotdot_in_bracket_context() {
+    let kinds = tokenize("arr[1..3]");
+    assert!(matches!(kinds[0], TokenKind::Ident(_)));
+    assert_eq!(kinds[1], TokenKind::LBracket);
+    assert!(matches!(kinds[2], TokenKind::Number(_)));
+    assert_eq!(kinds[3], TokenKind::DotDot);
+    assert!(matches!(kinds[4], TokenKind::Number(_)));
+    assert_eq!(kinds[5], TokenKind::RBracket);
+}
+
+#[test]
+fn lexer_dot_and_dotdot_distinct() {
+    let kinds = tokenize(". ..");
+    assert_eq!(kinds[0], TokenKind::Dot);
+    assert_eq!(kinds[1], TokenKind::DotDot);
+}
+
+#[test]
+fn lexer_decimal_number_still_works_with_dotdot() {
+    let kinds = tokenize("1.5 1..3");
+    assert!(matches!(kinds[0], TokenKind::Number(n) if (n - 1.5).abs() < 1e-10));
+    assert!(matches!(kinds[1], TokenKind::Number(n) if (n - 1.0).abs() < 1e-10));
+    assert_eq!(kinds[2], TokenKind::DotDot);
+    assert!(matches!(kinds[3], TokenKind::Number(n) if (n - 3.0).abs() < 1e-10));
+}
+
+// --- Parser ---
+
+#[test]
+fn parser_slice_parses_to_slice_node() {
+    use crate::ast::Expr;
+    let tokens = Lexer::new("arr[1..3]").tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 1);
+    if let crate::ast::Stmt::Expr(Expr::Slice { .. }) = &stmts[0] {
+    } else {
+        panic!("expected Stmt::Expr(Expr::Slice)");
+    }
+}
+
+#[test]
+fn parser_open_ended_start_rejected() {
+    let src = "arr[..3]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().msg.contains("open-ended"));
+}
+
+#[test]
+fn parser_open_ended_end_rejected() {
+    let src = "arr[1..]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().msg.contains("open-ended"));
+}
+
+#[test]
+fn parser_slice_in_stmt_position_backtrack() {
+    let src = "let arr = [1, 2, 3, 4, 5]\nprint(arr[1..3])";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parser_slice_on_literal() {
+    let src = "print([1, 2, 3][0..2])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parser_slice_after_call() {
+    let src = "fn make() { return [1, 2, 3] }\nprint(make()[0..2])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parser_index_still_works_after_slice_support() {
+    assert!(check("let a = [1, 2, 3]\nprint(a[1])").is_ok());
+}
+
+#[test]
+fn parser_missing_slice_bracket_error() {
+    let tokens = Lexer::new("let a = [1, 2, 3]\nlet s = a[1..2")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .msg
+        .contains("expected ']' after slice end"));
+}
+
+#[test]
+fn parser_slice_assignment_rejected() {
+    let tokens = Lexer::new("let a = [1, 2, 3]\na[0..2] = [9, 9]")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parser_slice_compound_assignment_rejected() {
+    let tokens = Lexer::new("let a = [1, 2, 3]\na[0..2] += [9]")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn typechecker_slice_valid() {
+    assert!(check("let a = [1, 2, 3, 4, 5]\nlet s = a[1..3]").is_ok());
+}
+
+#[test]
+fn typechecker_slice_returns_array_type() {
+    assert!(check("let a = [1, 2, 3]\nprint(len(a[0..2]))").is_ok());
+}
+
+#[test]
+fn typechecker_slice_non_array_target_rejected() {
+    let src = "let x = 5\nlet s = x[0..2]";
+    match check(src) {
+        Err(KiminError::Type(e)) => assert!(e.msg.contains("slice target must be Array")),
+        _ => panic!("expected TypeError"),
+    }
+}
+
+#[test]
+fn typechecker_slice_non_number_start_rejected() {
+    let src = "let a = [1, 2, 3]\nlet s = a[true..2]";
+    match check(src) {
+        Err(KiminError::Type(e)) => assert!(e.msg.contains("slice start must be Number")),
+        _ => panic!("expected TypeError"),
+    }
+}
+
+#[test]
+fn typechecker_slice_non_number_end_rejected() {
+    let src = "let a = [1, 2, 3]\nlet s = a[1..true]";
+    match check(src) {
+        Err(KiminError::Type(e)) => assert!(e.msg.contains("slice end must be Number")),
+        _ => panic!("expected TypeError"),
+    }
+}
+
+#[test]
+fn typechecker_slice_preserves_element_type() {
+    assert!(check("let a = [10, 20, 30]\nlet s = a[0..2]\nprint(len(s))").is_ok());
+}
+
+#[test]
+fn typechecker_slice_text_array_returns_array_text() {
+    assert!(check("let a = [\"a\", \"b\", \"c\"]\nlet s = a[1..3]\nlet x: Text = s[0]").is_ok());
+}
+
+#[test]
+fn typechecker_slice_unit_array_returns_array_unit() {
+    let src = "let a: meters = 1\nlet b: meters = 2\nlet c: meters = 3\nlet arr = [a, b, c]\nlet s = arr[1..3]\nlet x: meters = s[0]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn typechecker_slice_state_array_returns_array_state() {
+    let src = r#"
+state Door {
+    closed
+    open
+    transition closed -> open
+}
+let doors = [Door.closed, Door.open]
+let s = doors[0..1]
+let d: Door = s[0]
+"#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn typechecker_slice_unit_start_rejected() {
+    let src = "let a = [1, 2, 3]\nlet d: meters = 1\nlet s = a[d..2]";
+    match check(src) {
+        Err(KiminError::Type(e)) => assert!(e.msg.contains("slice start must be Number")),
+        _ => panic!("expected TypeError"),
+    }
+}
+
+#[test]
+fn typechecker_slice_unit_end_rejected() {
+    let src = "let a = [1, 2, 3]\nlet d: meters = 2\nlet s = a[0..d]";
+    match check(src) {
+        Err(KiminError::Type(e)) => assert!(e.msg.contains("slice end must be Number")),
+        _ => panic!("expected TypeError"),
+    }
+}
+
+#[test]
+fn typechecker_slice_used_with_len_and_index_ok() {
+    let src = "let a = [1, 2, 3, 4]\nlet s = a[1..3]\nlet x: Number = s[0]\nprint(len(s))";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn typechecker_slice_in_for_range_len_ok() {
+    let src = r#"
+let a = [1, 2, 3, 4]
+let s = a[1..3]
+for i in range(0, len(s)) {
+    print(s[i])
+}
+"#;
+    assert!(check(src).is_ok());
+}
+
+// --- Interpreter (tree-walk) via vm_run ---
+
+#[test]
+fn interp_slice_basic() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30, 40, 50]\nprint(a[1..3])").unwrap(),
+        vec!["[20, 30]"]
+    );
+}
+
+#[test]
+fn interp_slice_full() {
+    assert_eq!(
+        vm_run("let a = [1, 2, 3]\nprint(a[0..3])").unwrap(),
+        vec!["[1, 2, 3]"]
+    );
+}
+
+#[test]
+fn interp_slice_zero_length() {
+    assert_eq!(
+        vm_run("let a = [1, 2, 3]\nprint(a[2..2])").unwrap(),
+        vec!["[]"]
+    );
+}
+
+#[test]
+fn interp_slice_single_element() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30]\nprint(a[1..2])").unwrap(),
+        vec!["[20]"]
+    );
+}
+
+#[test]
+fn interp_slice_of_slice() {
+    assert_eq!(
+        vm_run("let a = [1, 2, 3, 4, 5]\nlet b = a[1..4]\nprint(b[0..2])").unwrap(),
+        vec!["[2, 3]"]
+    );
+}
+
+#[test]
+fn interp_slice_independence_original_mutation() {
+    let src = "let mut a = [1, 2, 3, 4]\nlet s = a[1..3]\na[1] = 99\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["[2, 3]"]);
+}
+
+#[test]
+fn interp_slice_independence_slice_mutation() {
+    let src = "let a = [1, 2, 3, 4]\nlet mut s = a[0..3]\ns[0] = 777\nprint(a)";
+    assert_eq!(vm_run(src).unwrap(), vec!["[1, 2, 3, 4]"]);
+}
+
+#[test]
+fn interp_slice_len() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30, 40]\nprint(len(a[1..3]))").unwrap(),
+        vec!["2"]
+    );
+}
+
+#[test]
+fn interp_slice_index_into_result() {
+    // a[1..3] = [10, 15]; [0] of that = 10
+    assert_eq!(
+        vm_run("let a = [5, 10, 15, 20]\nprint(a[1..3][0])").unwrap(),
+        vec!["10"]
+    );
+}
+
+#[test]
+fn interp_slice_in_for_loop() {
+    let src = r#"
+let data = [1, 2, 3, 4, 5]
+let seg = data[1..4]
+let mut sm = 0
+for i in range(0, len(seg)) {
+    sm += seg[i]
+}
+print(sm)
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["9"]);
+}
+
+#[test]
+fn interp_slice_in_while_loop() {
+    let src = r#"
+let a = [10, 20, 30, 40]
+let mut idx = 0
+let mut total = 0
+while idx < 3 {
+    let w = a[idx..idx + 2]
+    total += w[0]
+    idx += 1
+}
+print(total)
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["60"]);
+}
+
+#[test]
+fn interp_slice_inside_function() {
+    let src = r#"
+fn mid(a: Number, b: Number) -> Number {
+    let arr = [1, 2, 3, 4, 5]
+    let s = arr[a..b]
+    return s[0]
+}
+print(mid(1, 3))
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["2"]);
+}
+
+#[test]
+fn interp_slice_start_greater_than_end_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[3..1])";
+    match run(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("greater than end")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_end_out_of_bounds_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[0..10])";
+    match run(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("out of bounds")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_negative_start_error() {
+    let src = "let a = [1, 2, 3]\nlet n = 0 - 1\nprint(a[n..2])";
+    match run(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("non-negative")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_negative_end_error() {
+    let src = "let a = [1, 2, 3]\nlet n = 0 - 1\nprint(a[0..n])";
+    match run(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("non-negative")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_fractional_start_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[0.5..2])";
+    match run(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("must be an integer")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_fractional_end_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[0..2.5])";
+    match run(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("must be an integer")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_non_array_runtime_error_without_typecheck() {
+    let src = "let x = 5\nprint(x[0..1])";
+    match run_unchecked(src) {
+        Ok(_) => panic!("expected error"),
+        Err(KiminError::Runtime(e)) => assert!(e.msg.contains("slice target must be Array")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn interp_slice_push_pop_after_binding() {
+    let interp = run("let nums = [1, 2, 3, 4]\nlet mut mid = nums[1..3]\npush(mid, 99)\nlet last = pop(mid)\nlet n = len(mid)").unwrap();
+    assert_eq!(interp.get_var("last"), Some(Value::Number(99.0)));
+    assert_eq!(interp.get_var("n"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_original_mutation_independent_from_slice_values() {
+    let interp = run("let mut nums = [1, 2, 3, 4]\nlet mid = nums[1..3]\nnums[1] = 99\nlet a = mid[0]\nlet b = nums[1]").unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Number(2.0)));
+    assert_eq!(interp.get_var("b"), Some(Value::Number(99.0)));
+}
+
+#[test]
+fn interp_slice_mutation_independent_from_original_values() {
+    let interp = run("let nums = [1, 2, 3, 4]\nlet mut mid = nums[1..3]\nmid[0] = 99\nlet a = mid[0]\nlet b = nums[1]").unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Number(99.0)));
+    assert_eq!(interp.get_var("b"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_slice_inside_closure() {
+    let interp = run("let nums = [10, 20, 30, 40]\nfn first_middle() -> Number { let s = nums[1..3]\nreturn s[0] }\nlet x = first_middle()").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(20.0)));
+}
+
+#[test]
+fn interp_slice_inside_simulate() {
+    let interp = run("let nums = [10, 20, 30, 40]\nlet duration: seconds = 1\nlet dt: seconds = 1\nlet mut x = 0\nsimulate duration step dt { let mid = nums[1..3]\nx = mid[0] }").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(20.0)));
+}
+
+// --- Bytecode ---
+
+#[test]
+fn bytecode_slice_emits_slice_instruction() {
+    let src = "let a = [1, 2, 3, 4, 5]\nprint(a[1..3])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let program = BytecodeCompiler::new().compile(&stmts).unwrap();
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Slice)));
+}
+
+#[test]
+fn bytecode_disassemble_slice_stable() {
+    let src = "let a = [1, 2, 3]\nprint(a[0..2])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let program = BytecodeCompiler::new().compile(&stmts).unwrap();
+    let out = crate::disassemble::disassemble(&program);
+    assert!(out.contains("SLICE"));
+}
+
+#[test]
+fn bytecode_slice_order_array_start_end() {
+    let src = "let a = [1, 2, 3]\nprint(a[0..2])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let program = BytecodeCompiler::new().compile(&stmts).unwrap();
+    let out = crate::disassemble::disassemble(&program);
+    let array_pos = out.find("ARRAY 3").unwrap();
+    let slice_pos = out.find("SLICE").unwrap();
+    assert!(array_pos < slice_pos);
+}
+
+#[test]
+fn bytecode_index_still_emits_index() {
+    let program = compile_prog("let a = [1, 2, 3]\nprint(a[1])");
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index)));
+    assert!(!program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Slice)));
+}
+
+// --- VM ---
+
+#[test]
+fn vm_slice_basic() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30, 40, 50]\nprint(a[1..3])").unwrap(),
+        vec!["[20, 30]"]
+    );
+}
+
+#[test]
+fn vm_slice_full() {
+    assert_eq!(
+        vm_run("let a = [1, 2, 3]\nprint(a[0..3])").unwrap(),
+        vec!["[1, 2, 3]"]
+    );
+}
+
+#[test]
+fn vm_slice_zero_length() {
+    assert_eq!(
+        vm_run("let a = [1, 2, 3]\nprint(a[1..1])").unwrap(),
+        vec!["[]"]
+    );
+}
+
+#[test]
+fn vm_slice_single_element() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30]\nprint(a[2..3])").unwrap(),
+        vec!["[30]"]
+    );
+}
+
+#[test]
+fn vm_slice_of_slice() {
+    assert_eq!(
+        vm_run("let a = [1, 2, 3, 4, 5]\nlet b = a[1..4]\nprint(b[0..2])").unwrap(),
+        vec!["[2, 3]"]
+    );
+}
+
+#[test]
+fn vm_slice_independence() {
+    let src = "let mut a = [1, 2, 3, 4]\nlet s = a[1..3]\na[1] = 99\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["[2, 3]"]);
+}
+
+#[test]
+fn vm_slice_len() {
+    assert_eq!(
+        vm_run("let a = [10, 20, 30, 40]\nprint(len(a[1..3]))").unwrap(),
+        vec!["2"]
+    );
+}
+
+#[test]
+fn vm_slice_in_for_loop() {
+    let src = r#"
+let data = [1, 2, 3, 4, 5]
+let seg = data[1..4]
+let mut sm = 0
+for i in range(0, len(seg)) {
+    sm += seg[i]
+}
+print(sm)
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["9"]);
+}
+
+#[test]
+fn vm_slice_start_greater_than_end_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[2..1])";
+    let result = vm_run(src);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        KiminError::Runtime(e) => assert!(e.msg.contains("greater than end")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn vm_slice_end_out_of_bounds_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[0..10])";
+    let result = vm_run(src);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        KiminError::Runtime(e) => assert!(e.msg.contains("out of bounds")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn vm_slice_negative_error() {
+    let src = "let a = [1, 2, 3]\nlet n = 0 - 1\nprint(a[n..2])";
+    let result = vm_run(src);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        KiminError::Runtime(e) => assert!(e.msg.contains("non-negative")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn vm_slice_fractional_error() {
+    let src = "let a = [1, 2, 3]\nprint(a[0.5..2])";
+    let result = vm_run(src);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        KiminError::Runtime(e) => assert!(e.msg.contains("must be an integer")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn vm_slice_non_array_runtime_error_without_typecheck() {
+    let src = "let x = 5\nprint(x[0..1])";
+    let result = vm_run_unchecked(src);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        KiminError::Runtime(e) => assert!(e.msg.contains("slice target must be Array")),
+        _ => panic!("wrong error variant"),
+    }
+}
+
+#[test]
+fn vm_slice_push_pop_after_binding() {
+    let src = "let nums = [1, 2, 3, 4]\nlet mut mid = nums[1..3]\npush(mid, 99)\nprint(len(mid))\nprint(mid[2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["3", "99"]);
+}
+
+#[test]
+fn vm_original_mutation_independent_from_slice() {
+    let src = "let mut nums = [1, 2, 3, 4]\nlet mid = nums[1..3]\nnums[1] = 99\nprint(mid[0])\nprint(nums[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["2", "99"]);
+}
+
+#[test]
+fn vm_slice_mutation_independent_from_original() {
+    let src = "let nums = [1, 2, 3, 4]\nlet mut mid = nums[1..3]\nmid[0] = 99\nprint(mid[0])\nprint(nums[1])";
+    assert_eq!(vm_run(src).unwrap(), vec!["99", "2"]);
+}
+
+#[test]
+fn vm_slice_inside_function_and_closure() {
+    let src = "let nums = [10, 20, 30, 40]\nfn get_first_middle() -> Number { let s = nums[1..3]\nreturn s[0] }\nprint(get_first_middle())";
+    assert_eq!(vm_run(src).unwrap(), vec!["20"]);
+}
+
+#[test]
+fn vm_slice_inside_simulate() {
+    let src = "let nums = [10, 20, 30, 40]\nlet duration: seconds = 1\nlet dt: seconds = 1\nsimulate duration step dt { let mid = nums[1..3]\nprint(mid[0]) }";
+    assert_eq!(vm_run(src).unwrap(), vec!["20"]);
+}
+
+// --- Tree/VM parity ---
+
+#[test]
+fn vm_matches_tree_slice_basic() {
+    let src = "let a = [10, 20, 30, 40, 50]\nprint(a[1..3])";
+    assert_eq!(vm_run(src).unwrap(), vec!["[20, 30]"]);
+}
+
+#[test]
+fn vm_matches_tree_slice_zero_length() {
+    let src = "let a = [1, 2, 3]\nprint(a[2..2])";
+    assert_eq!(vm_run(src).unwrap(), vec!["[]"]);
+}
+
+#[test]
+fn vm_matches_tree_slice_independence() {
+    let src = "let mut a = [1, 2, 3, 4]\nlet s = a[1..3]\na[1] = 99\nprint(s)";
+    assert_eq!(vm_run(src).unwrap(), vec!["[2, 3]"]);
+}
+
+#[test]
+fn vm_matches_tree_slice_example() {
+    let src = std::fs::read_to_string("examples/array_slices.kimin").unwrap();
+    assert_eq!(vm_run(&src).unwrap(), vec!["20", "30", "2", "4", "0"]);
+}
+
+#[test]
+fn vm_matches_tree_slice_loop_example() {
+    let src = std::fs::read_to_string("examples/array_slices_loop.kimin").unwrap();
+    assert_eq!(vm_run(&src).unwrap(), vec!["9"]);
+}
+
+#[test]
+fn vm_matches_tree_slice_mutation_example() {
+    let src = std::fs::read_to_string("examples/array_slices_mutation.kimin").unwrap();
+    assert_eq!(vm_run(&src).unwrap(), vec!["99", "3", "2", "88"]);
 }

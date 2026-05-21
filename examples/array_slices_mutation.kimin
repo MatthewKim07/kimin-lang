@@ -1,0 +1,10 @@
+let mut nums = [1, 2, 3, 4]
+let mut middle = nums[1..3]
+
+middle[0] = 99
+nums[2] = 88
+
+print(middle[0])
+print(middle[1])
+print(nums[1])
+print(nums[2])
