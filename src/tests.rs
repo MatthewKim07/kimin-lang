@@ -16981,3 +16981,396 @@ fn vm_annotated_array_matches_tree() {
     };
     assert_eq!(tree_out, vec!["3", "2"]);
 }
+
+// ── M10E Audit: additional coverage ─────────────────────────────────────────
+
+// --- Parser audit ---
+
+#[test]
+fn parse_array_multiple_type_args_error() {
+    // Array<Number, Text> — comma after first arg should fail with missing '>'
+    let tokens = Lexer::new("let x: Array<Number, Text> = []")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "expected ParseError for Array<Number, Text>"
+    );
+}
+
+#[test]
+fn parse_let_array_state_annotation() {
+    // Array<StateName> as annotation parses (Named annotation deferred to typechecker)
+    let tokens = Lexer::new("let doors: Array<Door> = []")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok(), "expected Ok for Array<Door> annotation");
+}
+
+#[test]
+fn parse_slice_unaffected_by_array_annotation() {
+    // Slice syntax arr[1..3] must still parse correctly alongside Array<T>
+    let tokens = Lexer::new("let nums = [1, 2, 3, 4]\nlet s = nums[1..3]")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok(), "slice parse failed: {:?}", result);
+}
+
+// --- Typechecker audit ---
+
+#[test]
+fn tc_let_array_annotation_state_ok() {
+    let src = "
+        state Door { closed open transition closed -> open }
+        let mut doors: Array<Door> = []
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_param_array_push_error_params_immutable() {
+    let src = "
+        fn bad(nums: Array<Number>) -> Nil {
+            push(nums, 1)
+        }
+    ";
+    let result = check(src);
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(
+            e.msg.contains("immutable"),
+            "expected immutable error, got: {}",
+            e.msg
+        );
+    }
+}
+
+#[test]
+fn tc_fn_param_array_index_assign_error_params_immutable() {
+    let src = "
+        fn bad(nums: Array<Number>) -> Nil {
+            nums[0] = 99
+        }
+    ";
+    let result = check(src);
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(
+            e.msg.contains("immutable"),
+            "expected immutable error, got: {}",
+            e.msg
+        );
+    }
+}
+
+#[test]
+fn tc_fn_param_array_index_compound_error_params_immutable() {
+    let src = "
+        fn bad(nums: Array<Number>) -> Nil {
+            nums[0] += 1
+        }
+    ";
+    let result = check(src);
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(
+            e.msg.contains("immutable"),
+            "expected immutable error, got: {}",
+            e.msg
+        );
+    }
+}
+
+#[test]
+fn tc_empty_array_in_print_error() {
+    // print([]) has no expected-type context — must remain TypeError
+    let result = check("print([])");
+    assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("Array<T>"), "unexpected message: {}", e.msg);
+    }
+}
+
+#[test]
+fn tc_empty_array_call_arg_still_error() {
+    // sum([]) — call argument position has no expected-type propagation in M10E
+    let src = "
+        fn sum(nums: Array<Number>) -> Number { return nums[0] }
+        sum([])
+    ";
+    let result = check(src);
+    assert!(
+        result.is_err(),
+        "expected TypeError for empty array call arg"
+    );
+}
+
+#[test]
+fn tc_fn_return_array_then_index_ok() {
+    let src = "
+        fn make() -> Array<Number> { return [10, 20, 30] }
+        let arr = make()
+        let x = arr[1]
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_return_array_bound_to_mut_then_push_ok() {
+    let src = "
+        fn make_empty() -> Array<Number> { return [] }
+        let mut arr = make_empty()
+        push(arr, 42)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_annotated_non_empty_wrong_element_error() {
+    // Non-empty annotation with wrong element type
+    let result = check(r#"let nums: Array<Number> = [1, "two", 3]"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn tc_annotated_array_push_state_ok() {
+    let src = "
+        state Door { closed open transition closed -> open }
+        let mut doors: Array<Door> = []
+        push(doors, Door.closed)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_annotated_array_pop_state_type_ok() {
+    let src = "
+        state Door { closed open transition closed -> open }
+        let mut doors: Array<Door> = []
+        push(doors, Door.closed)
+        let d = pop(doors)
+    ";
+    assert!(check(src).is_ok());
+}
+
+// --- Interpreter audit ---
+
+#[test]
+fn interp_annotated_array_index_assign_ok() {
+    let src = "
+        let mut nums: Array<Number> = [1, 2, 3]
+        nums[1] = 99
+    ";
+    let interp = run(src).unwrap();
+    match interp.get_var("nums").unwrap() {
+        Value::Array(v) => {
+            assert_eq!(v[0], Value::Number(1.0));
+            assert_eq!(v[1], Value::Number(99.0));
+            assert_eq!(v[2], Value::Number(3.0));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_annotated_array_index_compound_ok() {
+    let src = "
+        let mut nums: Array<Number> = [10, 20, 30]
+        nums[0] += 5
+    ";
+    let interp = run(src).unwrap();
+    match interp.get_var("nums").unwrap() {
+        Value::Array(v) => assert_eq!(v[0], Value::Number(15.0)),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_annotated_array_slice_ok() {
+    let src = "
+        let nums: Array<Number> = [10, 20, 30, 40]
+        let s = nums[1..3]
+    ";
+    let interp = run(src).unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Array(v) => {
+            assert_eq!(v.len(), 2);
+            assert_eq!(v[0], Value::Number(20.0));
+            assert_eq!(v[1], Value::Number(30.0));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_annotated_unit_array_push_pop() {
+    let src = "
+        let d1: meters = 5
+        let d2: meters = 10
+        let mut distances: Array<meters> = []
+        push(distances, d1)
+        push(distances, d2)
+        let top = pop(distances)
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("top").unwrap(), Value::Number(10.0));
+    match interp.get_var("distances").unwrap() {
+        Value::Array(v) => assert_eq!(v.len(), 1),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_annotated_state_array_push_pop() {
+    let src = "
+        state Door { closed open transition closed -> open }
+        let mut doors: Array<Door> = []
+        push(doors, Door.closed)
+        push(doors, Door.closed)
+        let d = pop(doors)
+    ";
+    let interp = run(src).unwrap();
+    match interp.get_var("d").unwrap() {
+        Value::StateValue {
+            state_name,
+            variant_name,
+        } => {
+            assert_eq!(state_name, "Door");
+            assert_eq!(variant_name, "closed");
+        }
+        other => panic!("expected StateValue, got {:?}", other),
+    }
+    match interp.get_var("doors").unwrap() {
+        Value::Array(v) => assert_eq!(v.len(), 1),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_fn_return_array_bound_to_mut_push_ok() {
+    let src = "
+        fn make_empty() -> Array<Number> { return [] }
+        let mut arr = make_empty()
+        push(arr, 99)
+    ";
+    let interp = run(src).unwrap();
+    match interp.get_var("arr").unwrap() {
+        Value::Array(v) => {
+            assert_eq!(v.len(), 1);
+            assert_eq!(v[0], Value::Number(99.0));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_inferred_array_still_works() {
+    let src = "
+        let nums = [1, 2, 3]
+        let x = nums[0]
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("x").unwrap(), Value::Number(1.0));
+}
+
+// --- Bytecode audit ---
+
+#[test]
+fn bytecode_existing_inferred_array_unaffected() {
+    // Non-annotated array literal must still compile to ARRAY count as before
+    let prog = compile_prog("let nums = [1, 2, 3]");
+    let has_array_3 = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Array { count: 3 }));
+    assert!(has_array_3, "expected ARRAY 3 in main chunk");
+}
+
+#[test]
+fn bytecode_annotated_array_push_pop_compiles() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 1)
+        let x = pop(nums)
+    ";
+    let prog = compile_prog(src);
+    let has_push = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPush(_)));
+    let has_pop = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPop(_)));
+    assert!(has_push, "expected ARRAY_PUSH in main chunk");
+    assert!(has_pop, "expected ARRAY_POP in main chunk");
+}
+
+// --- VM audit ---
+
+#[test]
+fn vm_array_0_stack_clean() {
+    // ARRAY 0 should leave a clean Value::Array on the stack
+    let src = "
+        let nums: Array<Number> = []
+        print(len(nums))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_annotated_array_index_assign() {
+    let src = "
+        let mut nums: Array<Number> = [1, 2, 3]
+        nums[1] = 99
+        print(nums[1])
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_annotated_state_array() {
+    let src = "
+        state Door { closed open transition closed -> open }
+        let mut doors: Array<Door> = []
+        push(doors, Door.closed)
+        print(len(doors))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_fn_return_empty_then_push() {
+    let src = "
+        fn make() -> Array<Number> { return [] }
+        let mut arr = make()
+        push(arr, 7)
+        push(arr, 8)
+        print(len(arr))
+        print(arr[0])
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2", "7"]);
+}
+
+#[test]
+fn vm_annotated_unit_array_push_pop() {
+    let src = "
+        let d1: meters = 5
+        let mut distances: Array<meters> = []
+        push(distances, d1)
+        print(len(distances))
+        print(distances[0])
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "5"]);
+}
