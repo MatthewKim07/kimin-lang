@@ -1028,6 +1028,44 @@ print(len(split("a,b,c", ",")))             // 3
 
 ---
 
+### 4.11B String Join Builtin
+
+`join` joins an `Array<Text>` into a single `Text` value with a delimiter between each element.
+
+```kimin
+let words: Array<Text> = ["hello", "world", "kimin"]
+print(join(words, ", "))          // hello, world, kimin
+print(join(["a", "b", "c"], "")) // abc
+let empty: Array<Text> = []
+print(join(empty, ","))           // (empty string)
+```
+
+#### `join(parts, delimiter) -> Text`
+
+- `parts` — an `Array<Text>`. Required; any other type is a `TypeError`.
+- `delimiter` — a `Text` value inserted between consecutive elements.
+
+If `parts` is empty, the result is `""`. If `parts` has one element, the result is that element (delimiter is not used). Otherwise, elements are concatenated with `delimiter` between each adjacent pair — equivalent to Rust `Vec<String>.join(delimiter)`.
+
+#### Interactions with other builtins
+
+`join` and `split` are inverse operations when the delimiter is the same:
+
+```kimin
+let original = "a-b-c"
+let parts = split(original, "-")
+print(join(parts, "-"))           // a-b-c
+```
+
+#### Restrictions
+
+- **First arg must be `Array<Text>`**: `Array<Number>`, plain `Text`, and other types are `TypeError`.
+- **No generic join**: `join` works only on `Array<Text>`, not `Array<Number>` or other element types.
+- **No separator-less form**: exactly 2 arguments required.
+- **No regex delimiter**: `delimiter` is a literal string, not a pattern.
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
