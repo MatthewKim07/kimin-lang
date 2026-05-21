@@ -16576,3 +16576,210 @@ fn parse_comparison_unaffected_by_array_syntax() {
     assert!(result2.is_ok());
 }
 
+// --- Typechecker tests ---
+
+#[test]
+fn tc_let_array_annotation_number_ok() {
+    assert!(check("let nums: Array<Number> = [1, 2, 3]").is_ok());
+}
+
+#[test]
+fn tc_let_array_annotation_empty_ok() {
+    assert!(check("let nums: Array<Number> = []").is_ok());
+}
+
+#[test]
+fn tc_let_array_annotation_text_ok() {
+    assert!(check(r#"let words: Array<Text> = ["hello", "world"]"#).is_ok());
+}
+
+#[test]
+fn tc_let_array_annotation_bool_ok() {
+    assert!(check("let flags: Array<Bool> = [true, false]").is_ok());
+}
+
+#[test]
+fn tc_let_array_annotation_unit_ok() {
+    let src = "
+        let d1: meters = 5
+        let d2: meters = 10
+        let distances: Array<meters> = [d1, d2]
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_let_array_annotation_unit_empty_ok() {
+    assert!(check("let distances: Array<meters> = []").is_ok());
+}
+
+#[test]
+fn tc_let_array_wrong_element_type_error() {
+    let result = check(r#"let nums: Array<Number> = ["hello"]"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn tc_let_array_annotation_mismatch_error() {
+    let result = check(r#"let nums: Array<Number> = ["a", "b"]"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn tc_fn_param_array_number_ok() {
+    let src = "
+        fn first(nums: Array<Number>) -> Number {
+            return nums[0]
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_param_array_text_ok() {
+    let src = r#"
+        fn first(words: Array<Text>) -> Text {
+            return words[0]
+        }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_param_array_len_ok() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number {
+            return len(nums)
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_param_array_index_ok() {
+    let src = "
+        fn get(nums: Array<Number>, i: Number) -> Number {
+            return nums[i]
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_param_array_wrong_element_error() {
+    let src = r#"
+        fn sum(nums: Array<Number>) -> Number { return nums[0] }
+        sum(["a", "b"])
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+}
+
+#[test]
+fn tc_fn_param_array_unit_ok() {
+    let src = "
+        fn total(d: Array<meters>) -> Number {
+            return len(d)
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_return_array_number_ok() {
+    let src = "
+        fn make() -> Array<Number> {
+            return [1, 2, 3]
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_return_array_empty_ok() {
+    let src = "
+        fn make_empty() -> Array<Number> {
+            return []
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_return_array_text_ok() {
+    let src = r#"
+        fn make() -> Array<Text> {
+            return ["a", "b"]
+        }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_fn_return_wrong_element_type_error() {
+    let src = r#"
+        fn bad() -> Array<Number> {
+            return ["a"]
+        }
+    "#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_fn_return_array_unit_ok() {
+    let src = "
+        fn make() -> Array<meters> {
+            return []
+        }
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_push_into_empty_annotated_array_ok() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 1)
+        push(nums, 2)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_pop_from_annotated_array_ok() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 42)
+        let x = pop(nums)
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_push_wrong_type_into_annotated_array_error() {
+    let src = r#"
+        let mut nums: Array<Number> = []
+        push(nums, "hello")
+    "#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn tc_assign_empty_array_to_typed_var_ok() {
+    let src = "
+        let mut nums: Array<Number> = [1, 2, 3]
+        nums = []
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn tc_push_unit_into_empty_unit_array_ok() {
+    // Number literal promotes to unit inside push (existing rule)
+    let src = "
+        let mut distances: Array<meters> = []
+        push(distances, 5)
+    ";
+    assert!(check(src).is_ok());
+}
+
