@@ -1,0 +1,15 @@
+// Runnable section: valid map mutation.
+
+let mut scores = {"alice": 10}
+scores["bob"] = 5
+print(scores["bob"])
+
+// Uncomment to test immutable map (TypeError):
+// let bad = {"a": 1}
+// bad["a"] = 2
+
+// Uncomment to test wrong key type (TypeError):
+// scores[1] = 2
+
+// Uncomment to test wrong value type (TypeError):
+// scores["c"] = "three"

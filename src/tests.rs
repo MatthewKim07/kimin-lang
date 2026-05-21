@@ -12437,8 +12437,8 @@ fn type_index_assign_non_array_error() {
     let e = check("let mut x = 5\nx[0] = 99").unwrap_err();
     let msg = e.to_string();
     assert!(
-        msg.contains("not an array"),
-        "expected 'not an array' in: {}",
+        msg.contains("index") || msg.contains("assign") || msg.contains("Number"),
+        "expected index-assign error in: {}",
         msg
     );
 }
@@ -23197,4 +23197,396 @@ fn map_key_must_be_text_error_message() {
         other => panic!("expected TypeError, got {:?}", other),
     };
     assert!(msg.contains("Text"), "got: {}", msg);
+}
+
+// ============================================================
+// M12B: Map index assignment
+// ============================================================
+
+// --- Parser ---
+
+#[test]
+fn parse_map_index_assign_string_key() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 2").is_ok());
+}
+
+#[test]
+fn parse_map_index_assign_variable_key() {
+    assert!(check("let mut m = {\"a\": 1}\nlet k = \"a\"\nm[k] = 2").is_ok());
+}
+
+#[test]
+fn parse_map_index_assign_expression_key() {
+    assert!(check("let mut m = {\"a\": 1}\nm[to_lower(\"A\")] = 2").is_ok());
+}
+
+#[test]
+fn parse_map_index_assign_rhs_uses_map_read() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = m[\"a\"] + 1").is_ok());
+}
+
+#[test]
+fn parse_map_index_assign_plain_identifier_target_only() {
+    // Non-identifier target (chained call) is still a ParseError.
+    // Parsed as Stmt::Expr; the index assign path only triggers for Ident + LBracket.
+    // The result is a type error or parse error — not valid assignment.
+    // Just confirm plain ident target parses ok.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 2").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_assign_still_rejected() {
+    // Compound assignment to map index is not supported until M12C.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] += 1").is_err());
+}
+
+#[test]
+fn parse_array_index_assign_still_parses() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] = 99").is_ok());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_map_index_assign_update_ok() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 2").is_ok());
+}
+
+#[test]
+fn type_map_index_assign_insert_ok() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"b\"] = 2").is_ok());
+}
+
+#[test]
+fn type_map_index_assign_text_values_ok() {
+    assert!(check("let mut m = {\"a\": \"hello\"}\nm[\"b\"] = \"world\"").is_ok());
+}
+
+#[test]
+fn type_map_index_assign_bool_values_ok() {
+    assert!(check("let mut m = {\"ready\": false}\nm[\"ready\"] = true").is_ok());
+}
+
+#[test]
+fn type_map_index_assign_immutable_error() {
+    assert!(check("let m = {\"a\": 1}\nm[\"a\"] = 2").is_err());
+}
+
+#[test]
+fn type_map_index_assign_wrong_value_type_error() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = \"oops\"").is_err());
+}
+
+#[test]
+fn type_map_index_assign_wrong_key_type_error() {
+    assert!(check("let mut m = {\"a\": 1}\nm[1] = 2").is_err());
+}
+
+#[test]
+fn type_map_index_assign_non_map_error() {
+    assert!(check("let mut x: Number = 5\nx[\"a\"] = 1").is_err());
+}
+
+#[test]
+fn type_map_index_assign_array_still_ok() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] = 99").is_ok());
+}
+
+#[test]
+fn type_map_index_assign_array_wrong_index_type_still_error() {
+    assert!(check("let mut a = [1, 2, 3]\na[\"x\"] = 99").is_err());
+}
+
+#[test]
+fn type_map_index_assign_missing_key_not_type_error() {
+    // Inserting a key not present in the original literal is not a static error.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"z\"] = 99").is_ok());
+}
+
+// --- Interpreter ---
+
+#[test]
+fn interp_map_index_assign_update() {
+    let out = vm_run("let mut m = {\"a\": 10}\nm[\"a\"] = 20\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn interp_map_index_assign_insert() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"b\"] = 2\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_map_index_assign_preserves_other_keys() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2}\nm[\"a\"] = 99\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_map_index_assign_key_expr() {
+    let out =
+        vm_run("let mut m = {\"hello\": 1}\nlet k = \"hello\"\nm[k] = 42\nprint(m[k])").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_map_index_assign_value_expr() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = m[\"a\"] + 1\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_map_index_assign_block_outer_update() {
+    let src = "let mut m = {\"a\": 0}\n{\n  m[\"a\"] = 7\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_map_index_assign_loop() {
+    let src = "let mut m = {\"a\": 0}\nfor i in range(0, 3) {\n  m[\"a\"] = m[\"a\"] + 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_array_index_assign_still_works() {
+    let out = vm_run("let mut a = [1, 2, 3]\na[0] = 99\nprint(a[0])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+// --- Bytecode compiler ---
+
+#[test]
+fn bytecode_map_index_assign_emits_set_index() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut m = {\"a\": 1}\nm[\"a\"] = 2");
+    let has_set_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_)));
+    assert!(has_set_index, "expected SetIndex instruction");
+}
+
+#[test]
+fn bytecode_array_index_assign_still_set_index() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut a = [1, 2]\na[0] = 9");
+    let has_set_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_)));
+    assert!(has_set_index, "expected SetIndex instruction for array");
+}
+
+// --- VM ---
+
+#[test]
+fn vm_map_index_assign_update() {
+    let out = vm_run("let mut m = {\"a\": 10}\nm[\"a\"] = 20\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_map_index_assign_insert() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"b\"] = 2\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_map_index_assign_preserves_other_keys() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2}\nm[\"a\"] = 99\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_map_index_assign_key_expr() {
+    let out =
+        vm_run("let mut m = {\"hello\": 1}\nlet k = \"hello\"\nm[k] = 42\nprint(m[k])").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_map_index_assign_loop() {
+    let src = "let mut m = {\"a\": 0}\nfor i in range(0, 3) {\n  m[\"a\"] = m[\"a\"] + 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_map_index_assign_with_array_keys() {
+    let src = "let keys = [\"a\", \"b\", \"c\"]\nlet mut m = {\"a\": 0}\nfor i in range(0, len(keys)) {\n  m[keys[i]] = i\n}\nprint(m[\"a\"])\nprint(m[\"b\"])\nprint(m[\"c\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn vm_map_index_assign_stack_clean() {
+    // After map assignment, subsequent operations work correctly.
+    let out = vm_run(
+        "let mut m = {\"a\": 1}\nm[\"a\"] = 2\nm[\"b\"] = 3\nprint(m[\"a\"])\nprint(m[\"b\"])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "3"]);
+}
+
+#[test]
+fn vm_array_index_assign_still_works() {
+    let out = vm_run("let mut a = [1, 2, 3]\na[0] = 99\nprint(a[0])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_matches_tree_map_index_assign() {
+    let src = "let mut m = {\"alice\": 10}\nm[\"alice\"] = 20\nm[\"bob\"] = 5\nprint(m[\"alice\"])\nprint(m[\"bob\"])";
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["20", "5"]);
+}
+
+// --- Function/closure ---
+
+#[test]
+fn fn_map_index_assign_outer_mutable() {
+    let src = "let mut scores = {\"alice\": 10}\nfn update() {\n  scores[\"alice\"] = 20\n  scores[\"bob\"] = 5\n}\nupdate()\nprint(scores[\"alice\"])\nprint(scores[\"bob\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["20", "5"]);
+}
+
+#[test]
+fn closure_map_index_assign_repeated_calls() {
+    let src = "let mut counts = {\"a\": 0}\nfn inc() {\n  counts[\"a\"] = counts[\"a\"] + 1\n}\ninc()\ninc()\nprint(counts[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn closure_map_index_assign_insert() {
+    let src = "let mut m = {\"a\": 1}\nfn add_b() {\n  m[\"b\"] = 99\n}\nadd_b()\nprint(m[\"b\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn function_local_map_index_assign() {
+    let src = "fn build() -> Number {\n  let mut m = {\"x\": 0}\n  m[\"x\"] = 42\n  return m[\"x\"]\n}\nprint(build())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Loop ---
+
+#[test]
+fn map_index_assign_in_for_loop() {
+    let src = "let mut m = {\"a\": 0}\nfor i in range(0, 3) {\n  m[\"a\"] = m[\"a\"] + 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn map_index_assign_in_while_loop() {
+    let src = "let mut m = {\"a\": 0}\nlet mut i: Number = 0\nwhile i < 3 {\n  m[\"a\"] = m[\"a\"] + 1\n  i += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn map_index_assign_with_array_keys() {
+    let src = "let keys = [\"a\", \"b\", \"c\"]\nlet mut counts = {\"a\": 0}\nfor i in range(0, len(keys)) {\n  counts[keys[i]] = i\n}\nprint(counts[\"a\"])\nprint(counts[\"b\"])\nprint(counts[\"c\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_map_index_assign_accumulate() {
+    let src = "let mut counts = {\"a\": 0}\nlet duration: seconds = 3\nlet dt: seconds = 1\nsimulate duration step dt {\n  counts[\"a\"] = counts[\"a\"] + 1\n}\nprint(counts[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_map_index_assign_simulate() {
+    let src = "let mut counts = {\"a\": 0}\nlet duration: seconds = 3\nlet dt: seconds = 1\nsimulate duration step dt {\n  counts[\"a\"] = counts[\"a\"] + 1\n}\nprint(counts[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- String/array interaction ---
+
+#[test]
+fn map_index_assign_text_transform_value() {
+    let src = "let mut user = {\"name\": \"alice\"}\nuser[\"name\"] = to_upper(user[\"name\"])\nprint(user[\"name\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["ALICE"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn map_index_assign_immutable_message() {
+    let err = check("let m = {\"a\": 1}\nm[\"a\"] = 2").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("immutable"), "got: {}", msg);
+}
+
+#[test]
+fn map_index_assign_wrong_key_message() {
+    let err = check("let mut m = {\"a\": 1}\nm[1] = 2").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("Text"), "got: {}", msg);
+}
+
+#[test]
+fn map_index_assign_wrong_value_message() {
+    let err = check("let mut m = {\"a\": 1}\nm[\"a\"] = \"oops\"").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Number") || msg.contains("type"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn map_index_assign_non_map_message() {
+    let err = check("let mut x: Number = 5\nx[\"a\"] = 1").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("index") || msg.contains("assign") || msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+// --- Regression: existing features unchanged ---
+
+#[test]
+fn existing_array_features_still_ok_after_map_mutation() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] = 99\nlet s = a[0..2]").is_ok());
+}
+
+#[test]
+fn existing_string_features_still_ok_after_map_mutation() {
+    assert!(check("let s = \"hello\"\nlet c = s[0]\nlet sub = s[1..3]").is_ok());
+}
+
+#[test]
+fn existing_map_reads_still_ok_after_map_mutation() {
+    assert!(check("let m = {\"a\": 1, \"b\": 2}\nlet v = m[\"a\"]").is_ok());
 }

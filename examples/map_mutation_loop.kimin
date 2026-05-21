@@ -1,0 +1,17 @@
+let mut counts = {"a": 0}
+
+for i in range(0, 3) {
+  counts["a"] = counts["a"] + 1
+}
+
+print(counts["a"])
+
+let keys = ["a", "b", "c"]
+
+for i in range(0, len(keys)) {
+  counts[keys[i]] = i
+}
+
+print(counts["a"])
+print(counts["b"])
+print(counts["c"])

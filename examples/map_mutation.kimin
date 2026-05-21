@@ -1,0 +1,18 @@
+let mut scores = {"alice": 10}
+
+scores["alice"] = 20
+scores["bob"] = 5
+
+print(scores["alice"])
+print(scores["bob"])
+
+let mut labels = {"a": "apple"}
+labels["b"] = "banana"
+
+print(labels["a"])
+print(labels["b"])
+
+let mut flags = {"ready": false}
+flags["ready"] = true
+
+print(flags["ready"])
