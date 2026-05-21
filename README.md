@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2324_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2378_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-12A-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-12B-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2324 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2378 tests passing**.
 
 ---
 
@@ -432,7 +432,18 @@ let m = {"x": 1, "x": 99}
 print(m["x"])            // 99
 ```
 
-**Current limitations:** Map mutation (assignment to keys), nested maps, and non-Text keys are not yet supported.
+Map mutation by key is supported on `let mut` map bindings:
+
+```kimin
+let mut scores = {"alice": 10}
+scores["alice"] = 20
+scores["bob"] = 5
+
+print(scores["alice"])   // 20
+print(scores["bob"])     // 5
+```
+
+**Current limitations:** Nested maps and non-Text keys are not yet supported.
 
 ### Bytecode backend
 
@@ -688,6 +699,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 11D | `split(text, delimiter) -> Array<Text>` builtin | ✅ |
 | 11E | `join(parts, delimiter) -> Text` builtin | ✅ |
 | 12A | Map literals and map indexing reads (`{"key": value}`, `map["key"]`) | ✅ |
+| 12B | Map mutation by key (`map["key"] = value`) | ✅ |
 
 ---
 
@@ -695,7 +707,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2324 passed, 0 failed
+# 2378 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -722,7 +734,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2324 unit tests
+  tests.rs        2378 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -782,6 +794,9 @@ examples/
   maps.kimin                        maps_strings.kimin
   maps_arrays.kimin                 maps_loop.kimin
   maps_simulate.kimin               map_errors.kimin
+  map_mutation.kimin                map_mutation_function.kimin
+  map_mutation_loop.kimin           map_mutation_simulate.kimin
+  map_mutation_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin

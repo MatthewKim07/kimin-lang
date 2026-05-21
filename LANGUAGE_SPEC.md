@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 12A
+# Kimin Language Specification — Milestone 12B
 
-This document describes the syntax and semantics implemented through Milestone 12A.
+This document describes the syntax and semantics implemented through Milestone 12B.
 
 ---
 
@@ -1103,9 +1103,25 @@ print({"b": 2, "a": 1})   // {a: 1, b: 2}
 
 `Type::Map(Box<Type::Text>, Box<T>)` — first argument is always `Type::Text` in M12A.
 
+#### Map mutation by key (Milestone 12B)
+
+Mutable maps support index assignment:
+
+```kimin
+let mut scores = {"alice": 10}
+scores["alice"] = 20
+scores["bob"] = 5
+```
+
+- The map binding must be declared with `let mut`.
+- The key expression must have type `Text`.
+- The assigned value must match the map's value type.
+- Assigning to an existing key replaces its value.
+- Assigning to a missing key inserts a new entry.
+- `Stmt::IndexAssign` is reused; the interpreter and VM dispatch on `Array` vs `Map` at runtime.
+
 #### Restrictions
 
-- **No map mutation**: `m["key"] = value` is unsupported.
 - **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`.
 - **No non-Text keys**: `{1: "a"}` is a `TypeError`.
 - **No map builtins**: `has_key`, `keys`, `values`, `remove` are not implemented.
