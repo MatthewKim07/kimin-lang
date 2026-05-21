@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1462_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1541_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-10C-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-10D-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1462 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1541 tests passing**.
 
 ---
 
@@ -256,6 +256,7 @@ print(total)  // 55
 let primes = [2, 3, 5, 7, 11]
 print(primes[0])       // 2
 print(len(primes))     // 5
+print(primes[1..4])    // [3, 5, 7]
 
 let mut sum = 0
 for i in range(0, len(primes)) {
@@ -266,6 +267,10 @@ print(sum)             // 28
 
 - Array literal `[e1, e2, e3]` — at least one element; all elements must share the same type
 - Index expression `arr[i]` — `i` must be a `Number`; runtime checks: integer, non-negative, in-bounds
+- Slice expression `arr[start..end]` — returns a new independent `Array<T>` from `start` inclusive to `end` exclusive
+  - `start` and `end` must be `Number`; runtime checks: integer, non-negative, `start <= end`, `end <= len(arr)`
+  - Slices can be empty (`arr[2..2]`), but empty array literals are still unsupported
+  - Slice assignment, open-ended slices (`arr[1..]`, `arr[..3]`), step slices, and string slicing are not supported
 - `len(arr)` builtin — returns the number of elements as `Number`
 - **Index assignment `arr[i] = value`** — requires `let mut` array; element type must match; array stays fixed-size
   - Runtime: integer index, non-negative, in-bounds; updates binding via `assign_existing`
@@ -298,6 +303,21 @@ print(len(log))   // 3
 let v = pop(log)
 print(v)          // 2
 print(len(log))   // 2
+```
+
+Slices are copies, not mutation views:
+
+```kimin
+let mut nums = [1, 2, 3, 4]
+let mut middle = nums[1..3]
+
+middle[0] = 99
+nums[2] = 88
+
+print(middle[0])  // 99
+print(middle[1])  // 3
+print(nums[1])    // 2
+print(nums[2])    // 88
 ```
 
 ### Bytecode backend
@@ -502,7 +522,10 @@ LexError  at line 3, col 7:  unexpected character '@'
 | Bytecode VM: recursive closure cycles | A function stored in its own captured env creates an `Rc` cycle → memory leak; harmless for run-and-exit programs |
 | No multiline REPL input | Multi-line constructs (functions, while) must fit on one input line in the REPL |
 | No package system | No module imports or namespacing |
-| No array slices | No `arr[1..3]` range indexing; `push`/`pop` are available for dynamic growth/shrink |
+| No slice mutation views | `arr[start..end]` returns a new array copy; mutating the slice never mutates the source |
+| No slice assignment | `arr[1..3] = value` and `arr[1..3] += value` are unsupported |
+| No open-ended or stepped slices | `arr[1..]`, `arr[..3]`, and `arr[1..5..2]` are unsupported |
+| No string slicing | Slice syntax is array-only |
 | No nested arrays | `[[1,2],[3,4]]` — technically typechecks as `Array<Array<T>>` but is documented as unsupported |
 | No array type annotations | `let a: Array<Number> = [1,2]` is a ParseError; element type inferred only |
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
@@ -540,6 +563,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 10A | Array mutation by index (`arr[i] = value`, `let mut` required) | ✅ |
 | 10B | Array index compound assignment (`arr[i] += value`, etc.) | ✅ |
 | 10C | `push(arr, value)` and `pop(arr)` builtins | ✅ |
+| 10D | Array slice expressions (`arr[start..end]`) | ✅ |
 
 ---
 
@@ -547,7 +571,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 1462 passed, 0 failed
+# 1541 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -574,7 +598,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1462 unit tests
+  tests.rs        1541 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -609,6 +633,8 @@ examples/
   array_index_compound_simulate.kimin  array_index_compound_errors.kimin
   array_push_pop.kimin              array_push_pop_loop.kimin
   array_push_pop_simulate.kimin     array_push_pop_errors.kimin
+  array_slices.kimin                array_slices_loop.kimin
+  array_slices_mutation.kimin       array_slices_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
@@ -777,5 +803,18 @@ examples/
   - Index is evaluated once, then the current element is read, combined with the rhs, and written back
   - Works in functions, closures, `for` loops, and `simulate` bodies through env-chain reassignment
   - Bytecode: `IndexCompoundAssign { name, op }` / `INDEX_COMPOUND_ASSIGN name op`
+
+### Milestone 10C
+- **`push(arr, value)` and `pop(arr)` builtins**
+  - Both require a mutable array variable as the first argument; expressions like `push(a[0..2], 9)` are rejected
+  - `push` appends and returns `Nil`; `pop` removes and returns the last element
+  - Bytecode: `ArrayPush(name)` / `ARRAY_PUSH name` and `ArrayPop(name)` / `ARRAY_POP name`
+
+### Milestone 10D
+- **Array slice expressions** (`arr[start..end]`)
+  - Static rules: target must be `Array<T>`; both bounds must be `Number`; result type is `Array<T>`
+  - Runtime rules: bounds must be integer-like and non-negative, `start <= end`, and `end <= len(arr)`
+  - Slices are end-exclusive and return independent array copies
+  - Bytecode: `Slice` / `SLICE` pops array, start, and end, then pushes the new array
 
 </details>

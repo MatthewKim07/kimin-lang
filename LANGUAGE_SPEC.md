@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 10C
+# Kimin Language Specification — Milestone 10D
 
-This document describes the syntax and semantics implemented through Milestone 10C.
+This document describes the syntax and semantics implemented through Milestone 10D.
 
 ---
 
@@ -647,6 +647,30 @@ print(arr[2])    // 30
   - Index must be ≥ 0 (negative → `RuntimeError`).
   - Index must be less than `len(arr)` (out-of-bounds → `RuntimeError`).
 
+#### Slicing
+
+```kimin
+let nums = [10, 20, 30, 40]
+let middle = nums[1..3]
+print(middle[0])   // 20
+print(middle[1])   // 30
+print(len(middle)) // 2
+```
+
+- Slice syntax is `array_expr[start_expr..end_expr]`.
+- The target expression must have type `Array<T>`.
+- `start_expr` and `end_expr` must have type `Number`.
+- The result type is `Array<T>`.
+- Slices are end-exclusive: `start` is included and `end` is not.
+- Runtime checks:
+  - Start and end must be integer-like numbers.
+  - Start and end must be non-negative.
+  - Start must be less than or equal to end.
+  - End must be less than or equal to `len(array)`.
+- Slices create a new independent array value. Mutating the original does not mutate the slice, and mutating a mutable slice binding does not mutate the original.
+- Empty array literals remain unsupported, but slices may produce empty arrays at runtime, e.g. `arr[2..2]`.
+- Slice assignment, slice compound assignment, open-ended slices, step slices, and string slicing are unsupported.
+
 #### `len` builtin
 
 ```kimin
@@ -740,6 +764,7 @@ print(len(log))   // 2
 |-----------|---------------------|
 | `[e1, e2, e3]` | compile e1, e2, e3 left-to-right; emit `ARRAY 3` |
 | `arr[i]` | compile arr; compile i; emit `INDEX` |
+| `arr[start..end]` | compile arr; compile start; compile end; emit `SLICE` |
 | `len(arr)` | compile arr; emit `LEN` (no `CALL` instruction) |
 | `arr[i] = value` | compile i; compile value; emit `SET_INDEX name` |
 | `arr[i] op= value` | compile i; compile value; emit `INDEX_COMPOUND_ASSIGN name op` |
@@ -1135,7 +1160,7 @@ comparison      = term (("<" | "<=" | ">" | ">=") term)*
 term            = factor (("+" | "-") factor)*
 factor          = unary (("*" | "/") unary)*
 unary           = ("-" | "!") unary | call
-call            = primary ("(" args ")" | "[" expr "]")*
+call            = primary ("(" args ")" | "[" expr "]" | "[" expr ".." expr "]")*
 primary         = NUMBER | STRING | "true" | "false"
                 | "[" expr ("," expr)* ","? "]"   (array literal, ≥1 element)
                 | IDENT "." IDENT                  (state variant expression)
@@ -1146,11 +1171,11 @@ args            = (expr ("," expr)*)?
 
 ---
 
-## Implementation Note: Bytecode IR and VM (Milestones 8A–10C)
+## Implementation Note: Bytecode IR and VM (Milestones 8A–10D)
 
 Language semantics are defined by the tree-walk interpreter (`kimin run`). The bytecode compiler (`kimin bytecode`) and VM (`kimin vm`) are a separate experimental execution path.
 
-### What the bytecode VM executes (M8A–10C)
+### What the bytecode VM executes (M8A–10D)
 
 - All core expressions: literals, arithmetic, comparisons, string concatenation, unary operators
 - Variable access and mutation (globals and block-scoped locals via env-chain)
@@ -1166,6 +1191,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **Array mutation by index** (M10A): `arr[i] = value` compiles index first, then value, then emits `SET_INDEX name`; VM looks up the existing array binding, validates the index, replaces the element, and writes the updated array back through the env chain
 - **Array index compound assignment** (M10B): `arr[i] += value` and friends compile index first, then rhs, then emit `INDEX_COMPOUND_ASSIGN name op`; VM evaluates the index once, reads the old element, applies the compound operator, and writes the updated array back through the env chain
 - **`push`/`pop` builtins** (M10C): `push(arr, value)` compiles value arg then emits `ARRAY_PUSH name`; `pop(arr)` emits `ARRAY_POP name`; no `CALL` instruction emitted; VM grows/shrinks the array in-place via env chain
+- **Array slices** (M10D): `arr[start..end]` compiles array, start, and end, then emits `SLICE`; VM validates bounds and pushes a new independent `Value::Array`
 - **State machine declarations** (`state Name { ... }`) — registers name, variants, and allowed transitions in the VM state registry
 - **State variant values** (`Door.closed`) — validated against the registry, pushed as `Value::StateValue { state_name, variant_name }`
 - **Transition statements** (`transition door -> opening`) — validates the edge exists in the registry, updates the variable in-place via env-chain walk
@@ -1256,6 +1282,7 @@ SimulateChunk {
 | `SIMULATE body_idx` | Pop step and duration; loop body_idx chunk floor(dur/step) times |
 | `ARRAY count` | Pop `count` values (top = last element), reverse, push `Value::Array` |
 | `INDEX` | Pop index and array; validate integer/bounds; push element |
+| `SLICE` | Pop end, start, and array; validate integer/bounds; push independent array copy |
 | `LEN` | Pop array; push `Value::Number(len)` |
 | `SET_INDEX name` | Pop new_value and index; look up `name` in env chain; clone array; update element; assign back |
 | `INDEX_COMPOUND_ASSIGN name op` | Pop rhs and index; read old element at index; apply op(old, rhs); clone array; update element; assign back |
