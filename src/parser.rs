@@ -28,7 +28,7 @@ use crate::token::{Span, Token, TokenKind};
 ///   if_stmt         → "if" expr block ("else" block)?
 ///   block           → "{" stmt* "}"
 ///   fn_body         → "{" stmt* "}"
-///   type_ann        → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | IDENT
+///   type_ann        → "Number" | "Text" | "Bool" | "Nil" | UNIT_NAME | "Array" "<" type_ann ">" | IDENT
 ///   expr_stmt       → expr
 ///   expr            → equality
 ///   equality        → comparison (("==" | "!=") comparison)*
@@ -364,7 +364,7 @@ impl Parser {
         Ok(Param { name, ty, span })
     }
 
-    /// Parse a type annotation: Number | Text | Bool | Nil | <unit name> | <state machine name>
+    /// Parse a type annotation: Number | Text | Bool | Nil | <unit name> | <state machine name> | Array<T>
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, ParseError> {
         if matches!(self.current_kind(), TokenKind::Ident(_)) {
             let name = match self.current_kind() {
@@ -377,6 +377,32 @@ impl Parser {
                 "Text" => Ok(TypeAnnotation::Text),
                 "Bool" => Ok(TypeAnnotation::Bool),
                 "Nil" => Ok(TypeAnnotation::Nil),
+                "Array" => {
+                    if !matches!(self.current_kind(), TokenKind::Lt) {
+                        return Err(self.error(
+                            "expected '<' after 'Array' in type annotation, e.g. Array<Number>",
+                        ));
+                    }
+                    self.advance(); // consume `<`
+                    if matches!(self.current_kind(), TokenKind::Gt) {
+                        return Err(
+                            self.error("Array type requires an element type, e.g. Array<Number>")
+                        );
+                    }
+                    let inner = self.parse_type_annotation()?;
+                    if matches!(inner, TypeAnnotation::Array(_)) {
+                        return Err(self.error(
+                            "nested arrays are not supported; use Array<T> with a non-array element type",
+                        ));
+                    }
+                    if !matches!(self.current_kind(), TokenKind::Gt) {
+                        return Err(
+                            self.error("expected '>' after element type in Array<T> annotation")
+                        );
+                    }
+                    self.advance(); // consume `>`
+                    Ok(TypeAnnotation::Array(Box::new(inner)))
+                }
                 other => {
                     if let Some(canonical) = resolve_unit(other) {
                         Ok(TypeAnnotation::NumberWithUnit(canonical.to_string()))
@@ -387,7 +413,7 @@ impl Parser {
                 }
             }
         } else {
-            Err(self.error("expected type annotation (Number, Text, Bool, Nil, a known unit, or a state machine name)"))
+            Err(self.error("expected type annotation (Number, Text, Bool, Nil, a known unit, Array<T>, or a state machine name)"))
         }
     }
 
@@ -820,9 +846,11 @@ impl Parser {
             TokenKind::LBracket => {
                 self.advance(); // consume `[`
                 if matches!(self.current_kind(), TokenKind::RBracket) {
-                    return Err(self.error(
-                        "empty array literals are not supported; provide at least one element",
-                    ));
+                    self.advance(); // consume `]`
+                    return Ok(Expr::ArrayLiteral {
+                        elements: vec![],
+                        span,
+                    });
                 }
                 let mut elements = vec![self.parse_expr()?];
                 while matches!(self.current_kind(), TokenKind::Comma) {
