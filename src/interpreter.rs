@@ -814,6 +814,102 @@ impl Interpreter {
                         }
                         return Ok(popped);
                     }
+
+                    if name == "contains" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("contains() expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "contains() first argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let pattern = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "contains() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Bool(text.contains(pattern.as_str())));
+                    }
+
+                    if name == "starts_with" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!(
+                                    "starts_with() expects 2 arguments, got {}",
+                                    args.len()
+                                ),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "starts_with() first argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let prefix = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "starts_with() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Bool(text.starts_with(prefix.as_str())));
+                    }
+
+                    if name == "ends_with" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("ends_with() expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "ends_with() first argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let suffix = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "ends_with() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Bool(text.ends_with(suffix.as_str())));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;

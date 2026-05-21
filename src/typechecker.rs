@@ -1326,6 +1326,111 @@ impl TypeChecker {
                         };
                         return Ok(elem_ty);
                     }
+
+                    // `contains` builtin: contains(text, pattern) -> Bool
+                    if name == "contains" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("contains() expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t1 = self.check_expr(&args[0], *span)?;
+                        if !t1.is_unknown() && t1 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "contains() first argument must be Text, got {}",
+                                    t1.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t2 = self.check_expr(&args[1], *span)?;
+                        if !t2.is_unknown() && t2 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "contains() second argument must be Text, got {}",
+                                    t2.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Bool);
+                    }
+
+                    // `starts_with` builtin: starts_with(text, prefix) -> Bool
+                    if name == "starts_with" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "starts_with() expects 2 arguments, got {}",
+                                    args.len()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t1 = self.check_expr(&args[0], *span)?;
+                        if !t1.is_unknown() && t1 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "starts_with() first argument must be Text, got {}",
+                                    t1.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t2 = self.check_expr(&args[1], *span)?;
+                        if !t2.is_unknown() && t2 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "starts_with() second argument must be Text, got {}",
+                                    t2.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Bool);
+                    }
+
+                    // `ends_with` builtin: ends_with(text, suffix) -> Bool
+                    if name == "ends_with" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("ends_with() expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t1 = self.check_expr(&args[0], *span)?;
+                        if !t1.is_unknown() && t1 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "ends_with() first argument must be Text, got {}",
+                                    t1.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t2 = self.check_expr(&args[1], *span)?;
+                        if !t2.is_unknown() && t2 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "ends_with() second argument must be Text, got {}",
+                                    t2.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Bool);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;
