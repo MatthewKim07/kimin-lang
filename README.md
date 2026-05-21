@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2234_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2312_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-11E-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-12A-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2234 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2312 tests passing**.
 
 ---
 
@@ -406,6 +406,34 @@ let parts = split("a-b-c", "-")
 print(join(parts, "::"))          // a::b::c
 ```
 
+### Maps (dictionaries)
+
+Maps store key-value pairs with `Text` keys. Keys are ordered alphabetically in output.
+
+- Map literals: `{"key1": value1, "key2": value2, ...}`
+- Index read: `map["key"]` — runtime error if key not found
+- All values must be the same type (homogeneous)
+- Duplicate keys: last value in source order wins
+
+```kimin
+let scores = {"alice": 10, "bob": 20, "carol": 15}
+print(scores["alice"])   // 10
+print(scores["bob"])     // 20
+
+let flags = {"debug": true, "verbose": false}
+print(flags["debug"])    // true
+
+// Combine with string builtins
+let labels = {"greeting": "hello world"}
+print(to_upper(labels["greeting"]))   // HELLO WORLD
+
+// Duplicate key — last wins
+let m = {"x": 1, "x": 99}
+print(m["x"])            // 99
+```
+
+**Current limitations:** Map mutation (assignment to keys), nested maps, and non-Text keys are not yet supported.
+
 ### Bytecode backend
 
 ```sh
@@ -654,6 +682,12 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 10D | Array slice expressions (`arr[start..end]`) | ✅ |
 | 10E | Explicit `Array<T>` type annotations; empty array literals with annotation | ✅ |
 | 10F | Expected-type propagation for call arguments; `f([])` works when param is `Array<T>` | ✅ |
+| 11A | String indexing and slicing (`s[i]`, `s[a..b]`, `len(s)`) | ✅ |
+| 11B | String utility builtins (`contains`, `starts_with`, `ends_with`) | ✅ |
+| 11C | String transformation builtins (`to_upper`, `to_lower`, `trim`) | ✅ |
+| 11D | `split(text, delimiter) -> Array<Text>` builtin | ✅ |
+| 11E | `join(parts, delimiter) -> Text` builtin | ✅ |
+| 12A | Map literals and map indexing reads (`{"key": value}`, `map["key"]`) | ✅ |
 
 ---
 
@@ -661,7 +695,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2234 passed, 0 failed
+# 2312 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -678,7 +712,7 @@ src/
   ast.rs          Expression and statement AST nodes
   parser.rs       Recursive-descent parser + unit name registry
   typechecker.rs  Static type checker (TypeEnv, UnitDimension, State types, loop_depth)
-  value.rs        Runtime values: Number, Text, Bool, Nil, Function, StateValue, BytecodeFunction, Array
+  value.rs        Runtime values: Number, Text, Bool, Nil, Function, StateValue, BytecodeFunction, Array, Map
   env.rs          Lexical scope chain — Rc<RefCell<Env>>
   interpreter.rs  Tree-walk interpreter (ExecFlow: Normal / Return / Break / Continue)
   error.rs        Structured errors: Lex / Parse / Type / Runtime / Compile
@@ -688,7 +722,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2234 unit tests
+  tests.rs        2312 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -745,6 +779,9 @@ examples/
   string_join.kimin                 string_join_split.kimin
   string_join_loop.kimin            string_join_functions.kimin
   string_join_simulate.kimin        string_join_errors.kimin
+  maps.kimin                        maps_strings.kimin
+  maps_arrays.kimin                 maps_loop.kimin
+  maps_simulate.kimin               map_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin

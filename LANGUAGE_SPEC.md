@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 11A
+# Kimin Language Specification — Milestone 12A
 
-This document describes the syntax and semantics implemented through Milestone 11A.
+This document describes the syntax and semantics implemented through Milestone 12A.
 
 ---
 
@@ -104,7 +104,7 @@ let  mut  if  else  while  for  in  break  continue  print  fn  return  true  fa
 
 ### 2.2 Static types (Milestones 3–5)
 
-The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, any unit name from the unit registry, or a state machine name.
+The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, `Array<T>`, any unit name from the unit registry, or a state machine name. `Map<Text, T>` is inferred from map literals but cannot yet be written as an explicit annotation.
 
 Functions without a return type annotation are assigned `Unknown` — the gradual-typing escape hatch. Operations involving an `Unknown` value propagate `Unknown` without error, so unannotated code remains valid.
 
@@ -1063,6 +1063,54 @@ print(join(parts, "-"))           // a-b-c
 - **No generic join**: `join` works only on `Array<Text>`, not `Array<Number>` or other element types.
 - **No separator-less form**: exactly 2 arguments required.
 - **No regex delimiter**: `delimiter` is a literal string, not a pattern.
+
+---
+
+### 4.13 Maps (Milestone 12A)
+
+A **map** is a collection of key-value pairs with `Text` keys and homogeneous values.
+
+#### Map literals
+
+```kimin
+let scores = {"alice": 10, "bob": 20, "carol": 15}
+```
+
+- Keys must be `Text` expressions. Non-Text keys are a `TypeError`.
+- All values must be the same type (homogeneous). Mixed types are a `TypeError`.
+- Empty map literals are a `TypeError` (no type context available without explicit annotations).
+- Duplicate keys: the last value in source order wins.
+
+#### Map indexing
+
+```kimin
+print(scores["alice"])   // 10
+```
+
+- Key must be a `Text` expression. A `Number` key on a map is a `TypeError`.
+- If the key is not present at runtime, a `RuntimeError` is raised: `"map key 'k' not found"`.
+- `Instruction::Index` is reused; the VM and interpreter dispatch on the target value type.
+
+#### Display format
+
+Maps print as `{key: value, key: value, ...}` in alphabetical key order (BTreeMap ordering).
+
+```kimin
+print({"b": 2, "a": 1})   // {a: 1, b: 2}
+```
+
+#### Type
+
+`Type::Map(Box<Type::Text>, Box<T>)` — first argument is always `Type::Text` in M12A.
+
+#### Restrictions
+
+- **No map mutation**: `m["key"] = value` is unsupported.
+- **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`.
+- **No non-Text keys**: `{1: "a"}` is a `TypeError`.
+- **No map builtins**: `has_key`, `keys`, `values`, `remove` are not implemented.
+- **No explicit `Map<K,V>` type annotation syntax**: deferred to a future milestone.
+- **No map iteration**: maps cannot be directly iterated with `for`; use a keys array.
 
 ---
 
