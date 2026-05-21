@@ -666,8 +666,26 @@ The expected-type context is:
 - `let x: Array<T> = []` — annotation provides `T`
 - `return []` inside a function with `-> Array<T>` return type
 - `x = []` where `x` is already typed as `Array<T>`
+- `f([])` where the corresponding parameter is typed `Array<T>` — call argument position
 
-Empty arrays in function call arguments are not supported yet; use a named variable instead.
+#### Call argument expected-type propagation
+
+When calling a statically known function, each argument is typechecked with its corresponding parameter type as the expected type. This means empty array literals are accepted in call arguments when the parameter type is `Array<T>`:
+
+```kimin
+fn sum(nums: Array<Number>) -> Number {
+  let mut total: Number = 0
+  for i in range(0, len(nums)) {
+    total += nums[i]
+  }
+  return total
+}
+
+print(sum([]))        // 0 — [] is Array<Number> because param is Array<Number>
+print(sum([1, 2, 3])) // 6
+```
+
+The rule applies to all `Array<T>` parameter types including unit arrays and state arrays. Dynamic or unknown callees do not provide expected types for arguments.
 
 #### Indexing
 

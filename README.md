@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1654_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1679_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-10E-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-10F-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1654 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1679 tests passing**.
 
 ---
 
@@ -534,7 +534,6 @@ LexError  at line 3, col 7:  unexpected character '@'
 | No open-ended or stepped slices | `arr[1..]`, `arr[..3]`, and `arr[1..5..2]` are unsupported |
 | No string slicing | Slice syntax is array-only |
 | No nested arrays | `Array<Array<T>>` is a ParseError; one level of array nesting only |
-| No empty array in call arguments | `fn f(x: Array<Number>) ...` then `f([])` is a TypeError; use `let empty: Array<Number> = []` first |
 | No array type annotation without `<T>` | `let a: Array = [1,2]` is a ParseError — `Array` must always have an element type |
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
@@ -573,6 +572,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 10C | `push(arr, value)` and `pop(arr)` builtins | ✅ |
 | 10D | Array slice expressions (`arr[start..end]`) | ✅ |
 | 10E | Explicit `Array<T>` type annotations; empty array literals with annotation | ✅ |
+| 10F | Expected-type propagation for call arguments; `f([])` works when param is `Array<T>` | ✅ |
 
 ---
 
@@ -580,7 +580,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 1541 passed, 0 failed
+# 1679 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -607,7 +607,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1654 unit tests
+  tests.rs        1679 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -647,6 +647,8 @@ examples/
   array_annotations.kimin           array_annotations_push.kimin
   array_annotations_function.kimin  array_annotations_units.kimin
   array_annotations_errors.kimin
+  array_call_expected.kimin         array_call_expected_units.kimin
+  array_call_expected_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
