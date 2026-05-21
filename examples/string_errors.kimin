@@ -1,0 +1,17 @@
+// Keep runnable by default.
+
+let s = "hello"
+print(s[0])
+print(s[1..4])
+
+// Uncomment to test out-of-bounds index:
+// print(s[99])
+
+// Uncomment to test fractional index:
+// print(s[1.5])
+
+// Uncomment to test bad slice (start > end):
+// print(s[4..1])
+
+// Uncomment to test non-number index:
+// print(s["0"])

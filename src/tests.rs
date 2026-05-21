@@ -11966,9 +11966,10 @@ fn type_nested_array_typechecks_as_array_of_array() {
 }
 
 #[test]
-fn type_string_index_error() {
-    let result = check("let s = \"hello\"\nlet _ = s[0]");
-    assert!(result.is_err());
+fn type_string_index_now_ok() {
+    // M11A: string indexing is valid; s[0] on Text returns Text
+    let result = check("let s = \"hello\"\nlet c = s[0]");
+    assert!(result.is_ok());
 }
 
 // ─── M9E Audit: Interpreter ───────────────────────────────────────────────────
@@ -14933,7 +14934,9 @@ let v: Light = pop(arr)
 #[test]
 fn tc_push_returns_nil_and_len_rejects_it() {
     let err = check("let mut a = [1]\nlen(push(a, 2))").unwrap_err();
-    assert!(err.to_string().contains("len() requires Array, got Nil"));
+    assert!(err
+        .to_string()
+        .contains("len() requires Array or Text, got Nil"));
 }
 
 // --- Interpreter audit ---
@@ -18053,4 +18056,421 @@ fn interp_fn_in_variable_empty_array_call() {
     ";
     let interp = run(src).unwrap();
     assert_eq!(interp.get_var("result"), Some(Value::Number(0.0)));
+}
+
+// ============================================================
+// M11A — String basics: len(text), text[i], text[start..end]
+// ============================================================
+
+// --- parser: string index/slice syntax ---
+
+#[test]
+fn parse_string_index_literal() {
+    let src = "let _ = \"hello\"[0]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_slice_literal() {
+    let src = "let _ = \"hello\"[1..4]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_variable_index() {
+    let src = "let s = \"hello\"\nlet _ = s[2]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_slice_after_call() {
+    let src = "fn get_str() -> Text { return \"hello\" }\nlet _ = get_str()[1..3]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_array_index_still_works() {
+    let src = "let a = [1, 2, 3]\nlet _ = a[0]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_array_slice_still_works() {
+    let src = "let a = [1, 2, 3]\nlet _ = a[1..3]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- typechecker ---
+
+#[test]
+fn type_len_text_ok() {
+    assert!(check("let n = len(\"hello\")").is_ok());
+}
+
+#[test]
+fn type_len_empty_text_ok() {
+    assert!(check("let n = len(\"\")").is_ok());
+}
+
+#[test]
+fn type_string_index_returns_text() {
+    assert!(check("let c: Text = \"hello\"[1]").is_ok());
+}
+
+#[test]
+fn type_string_slice_returns_text() {
+    assert!(check("let sub: Text = \"hello\"[1..4]").is_ok());
+}
+
+#[test]
+fn type_string_index_text_index_error() {
+    // Index must be Number, not Text
+    let src = "\"hello\"[\"0\"]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_string_slice_start_text_error() {
+    let src = "\"hello\"[\"1\"..3]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_string_slice_end_text_error() {
+    let src = "\"hello\"[1..\"4\"]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_index_number_still_error() {
+    // Can't index a Number
+    let src = "let x: Number = 5\nlet _ = x[0]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_array_index_still_returns_element() {
+    let src = "let a = [10, 20]\nlet x: Number = a[0]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_array_slice_still_returns_array() {
+    let src = "let a = [1, 2, 3]\nlet b: Array<Number> = a[0..2]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_len_array_still_ok() {
+    assert!(check("let n = len([1, 2, 3])").is_ok());
+}
+
+#[test]
+fn type_len_number_still_error() {
+    assert!(check("len(42)").is_err());
+}
+
+#[test]
+fn type_len_bool_still_error() {
+    assert!(check("len(true)").is_err());
+}
+
+#[test]
+fn type_len_empty_array_still_error() {
+    assert!(check("len([])").is_err());
+}
+
+#[test]
+fn type_string_index_in_function_ok() {
+    let src = "fn first(s: Text) -> Text { return s[0] }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_string_slice_in_function_ok() {
+    let src = "fn middle(s: Text) -> Text { return s[1..4] }";
+    assert!(check(src).is_ok());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_len_text() {
+    let interp = run("let n = len(\"hello\")").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_len_empty_text() {
+    let interp = run("let n = len(\"\")").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_string_index_first_middle_last() {
+    let interp = run("let a = \"hello\"[0]\nlet b = \"hello\"[2]\nlet c = \"hello\"[4]").unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Str("h".into())));
+    assert_eq!(interp.get_var("b"), Some(Value::Str("l".into())));
+    assert_eq!(interp.get_var("c"), Some(Value::Str("o".into())));
+}
+
+#[test]
+fn interp_string_slice_basic() {
+    let interp = run("let sub = \"hello\"[1..4]").unwrap();
+    assert_eq!(interp.get_var("sub"), Some(Value::Str("ell".into())));
+}
+
+#[test]
+fn interp_string_slice_zero_length() {
+    let interp = run("let sub = \"hello\"[2..2]").unwrap();
+    assert_eq!(interp.get_var("sub"), Some(Value::Str("".into())));
+}
+
+#[test]
+fn interp_string_slice_full() {
+    let interp = run("let sub = \"hello\"[0..5]").unwrap();
+    assert_eq!(interp.get_var("sub"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_string_index_unicode_char_count() {
+    // é is one Rust char (U+00E9)
+    let interp = run("let a = \"éx\"[0]\nlet b = \"éx\"[1]").unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Str("é".into())));
+    assert_eq!(interp.get_var("b"), Some(Value::Str("x".into())));
+}
+
+#[test]
+fn interp_string_slice_unicode_char_count() {
+    let interp = run("let sub = \"héllo\"[1..3]").unwrap();
+    assert_eq!(interp.get_var("sub"), Some(Value::Str("él".into())));
+}
+
+#[test]
+fn interp_string_index_out_of_bounds_error() {
+    let result = run("let _ = \"hello\"[99]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_string_index_negative_error() {
+    let result = run("let mut i: Number = 0\ni = 0 - 1\nlet _ = \"hello\"[i]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_string_index_fractional_error() {
+    let result = run("let _ = \"hello\"[1.5]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_string_slice_out_of_bounds_error() {
+    let result = run("let _ = \"hello\"[0..99]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_string_slice_negative_error() {
+    let result = run("let mut i: Number = 0\ni = 0 - 1\nlet _ = \"hello\"[i..3]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_string_slice_fractional_error() {
+    let result = run("let _ = \"hello\"[0.5..3]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_string_slice_start_greater_than_end_error() {
+    let result = run("let _ = \"hello\"[4..1]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_len_in_for_range_string() {
+    let out = vm_run("let s = \"abc\"\nfor i in range(0, len(s)) { print(s[i]) }").unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+// --- bytecode ---
+
+#[test]
+fn bytecode_string_len_emits_len() {
+    let prog = compile_prog("len(\"hello\")");
+    let has_len = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Len));
+    assert!(has_len, "expected LEN instruction");
+}
+
+#[test]
+fn bytecode_string_index_emits_index() {
+    let prog = compile_prog("\"hello\"[1]");
+    let has_index = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Index));
+    assert!(has_index, "expected INDEX instruction");
+}
+
+#[test]
+fn bytecode_string_slice_emits_slice() {
+    let prog = compile_prog("\"hello\"[1..4]");
+    let has_slice = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Slice));
+    assert!(has_slice, "expected SLICE instruction");
+}
+
+#[test]
+fn bytecode_array_len_index_slice_unchanged() {
+    let prog = compile_prog("let a = [1, 2, 3]\nlen(a)\na[1]\na[0..2]");
+    let instrs = &prog.main.instructions;
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Len)));
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Index)));
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Slice)));
+}
+
+// --- VM ---
+
+#[test]
+fn vm_len_text() {
+    let out = vm_run("print(len(\"hello\"))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_len_empty_text() {
+    let out = vm_run("print(len(\"\"))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_string_index_first_middle_last() {
+    let out = vm_run("print(\"hello\"[0])\nprint(\"hello\"[2])\nprint(\"hello\"[4])").unwrap();
+    assert_eq!(out, vec!["h", "l", "o"]);
+}
+
+#[test]
+fn vm_string_slice_basic() {
+    let out = vm_run("print(\"hello\"[1..4])").unwrap();
+    assert_eq!(out, vec!["ell"]);
+}
+
+#[test]
+fn vm_string_slice_zero_length() {
+    let out = vm_run("print(\"hello\"[2..2])").unwrap();
+    assert_eq!(out, vec![""]);
+}
+
+#[test]
+fn vm_string_slice_full() {
+    let out = vm_run("print(\"hello\"[0..5])").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn vm_string_unicode_len_index_slice() {
+    let out = vm_run("print(len(\"éx\"))\nprint(\"éx\"[0])\nprint(\"éx\"[1])").unwrap();
+    assert_eq!(out, vec!["2", "é", "x"]);
+}
+
+#[test]
+fn vm_string_index_out_of_bounds_error() {
+    let result = vm_run("\"hello\"[99]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_string_index_negative_error() {
+    // Use arithmetic to get a negative number at runtime
+    let result = vm_run("let mut i: Number = 0\ni = 0 - 1\nlet _ = \"hello\"[i]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_string_index_fractional_error() {
+    let result = vm_run("\"hello\"[1.5]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_string_slice_out_of_bounds_error() {
+    let result = vm_run("\"hello\"[0..99]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_string_slice_start_greater_than_end_error() {
+    let result = vm_run("\"hello\"[4..1]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_string_matches_tree() {
+    let src = "
+        let s = \"hello\"
+        print(len(s))
+        print(s[0])
+        print(s[1..4])
+    ";
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["5", "h", "ell"]);
+    let _ = tree;
+}
+
+// --- regression: array behavior unchanged ---
+
+#[test]
+fn array_len_still_works() {
+    let interp = run("let n = len([1, 2, 3])").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn array_index_still_works() {
+    let interp = run("let x = [10, 20, 30][1]").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(20.0)));
+}
+
+#[test]
+fn array_slice_still_works() {
+    let src = "let a = [1, 2, 3, 4]\nlet b = a[1..3]";
+    let interp = run(src).unwrap();
+    match interp.get_var("b").unwrap() {
+        Value::Array(v) => assert_eq!(v, vec![Value::Number(2.0), Value::Number(3.0)]),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn array_index_errors_unchanged() {
+    assert!(run("let _ = [1, 2][99]").is_err());
+    assert!(run("let _ = [1, 2][1.5]").is_err());
+}
+
+#[test]
+fn array_slice_errors_unchanged() {
+    assert!(run("let _ = [1, 2][0..99]").is_err());
+    assert!(run("let _ = [1, 2][3..1]").is_err());
 }

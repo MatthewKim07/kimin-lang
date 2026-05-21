@@ -1,0 +1,10 @@
+fn first(s: Text) -> Text {
+  return s[0]
+}
+
+fn middle(s: Text) -> Text {
+  return s[1..4]
+}
+
+print(first("hello"))
+print(middle("hello"))
