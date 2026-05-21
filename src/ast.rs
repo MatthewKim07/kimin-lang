@@ -42,6 +42,14 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// Array slice expression: `array[start..end]`
+    /// Returns a new array with elements from start (inclusive) to end (exclusive).
+    Slice {
+        array: Box<Expr>,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

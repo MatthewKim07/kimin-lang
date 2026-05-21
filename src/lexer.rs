@@ -85,7 +85,14 @@ impl Lexer {
             '[' => TokenKind::LBracket,
             ']' => TokenKind::RBracket,
             ',' => TokenKind::Comma,
-            '.' => TokenKind::Dot,
+            '.' => {
+                if self.peek() == Some('.') {
+                    self.advance();
+                    TokenKind::DotDot
+                } else {
+                    TokenKind::Dot
+                }
+            }
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance();

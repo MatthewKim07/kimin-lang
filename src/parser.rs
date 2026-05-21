@@ -7,7 +7,7 @@ use crate::token::{Span, Token, TokenKind};
 
 /// Recursive-descent parser.
 ///
-/// Grammar (Milestone 9D):
+/// Grammar (Milestone 10D):
 ///   program         → stmt* EOF
 ///   stmt            → state_decl | transition_stmt | simulate_stmt | while_stmt | for_stmt | break_stmt | continue_stmt
 ///                   | fn_decl | return_stmt | let_stmt | assign_stmt | print_stmt | if_stmt | block | expr_stmt
@@ -36,7 +36,7 @@ use crate::token::{Span, Token, TokenKind};
 ///   term            → factor (("+" | "-") factor)*
 ///   factor          → unary (("*" | "/") unary)*
 ///   unary           → ("-" | "!") unary | call
-///   call            → primary ("(" args ")")*
+///   call            → primary ( "(" args ")" | "[" expr "]" | "[" expr ".." expr "]" )*
 ///   primary         → NUMBER | STRING | "true" | "false" | IDENT ("." IDENT)? | "(" expr ")"
 ///   args            → (expr ("," expr)*)?
 pub struct Parser {
@@ -503,7 +503,19 @@ impl Parser {
         self.advance(); // consume name
         self.advance(); // consume `[`
 
+        // Let expression parsing produce the dedicated open-start slice error.
+        if matches!(self.current_kind(), TokenKind::DotDot) {
+            self.pos = saved_pos;
+            return Ok(Stmt::Expr(self.parse_expr()?));
+        }
+
         let index = self.parse_expr()?;
+
+        // If DotDot follows, this is a slice expression — backtrack and parse as Stmt::Expr.
+        if matches!(self.current_kind(), TokenKind::DotDot) {
+            self.pos = saved_pos;
+            return Ok(Stmt::Expr(self.parse_expr()?));
+        }
 
         if !matches!(self.current_kind(), TokenKind::RBracket) {
             return Err(self.error("expected ']' after index expression"));
@@ -710,13 +722,35 @@ impl Parser {
                 if matches!(self.current_kind(), TokenKind::RBracket) {
                     return Err(self.error("index expression requires an index value"));
                 }
-                let index = self.parse_expr()?;
-                self.expect_kind(TokenKind::RBracket, "expected ']' after index")?;
-                expr = Expr::Index {
-                    array: Box::new(expr),
-                    index: Box::new(index),
-                    span,
-                };
+                if matches!(self.current_kind(), TokenKind::DotDot) {
+                    return Err(self.error(
+                        "open-ended slices are not supported; provide a start expression before '..'",
+                    ));
+                }
+                let first = self.parse_expr()?;
+                if matches!(self.current_kind(), TokenKind::DotDot) {
+                    self.advance(); // consume `..`
+                    if matches!(self.current_kind(), TokenKind::RBracket) {
+                        return Err(self.error(
+                            "open-ended slices are not supported; provide an end expression after '..'",
+                        ));
+                    }
+                    let end = self.parse_expr()?;
+                    self.expect_kind(TokenKind::RBracket, "expected ']' after slice end")?;
+                    expr = Expr::Slice {
+                        array: Box::new(expr),
+                        start: Box::new(first),
+                        end: Box::new(end),
+                        span,
+                    };
+                } else {
+                    self.expect_kind(TokenKind::RBracket, "expected ']' after index")?;
+                    expr = Expr::Index {
+                        array: Box::new(expr),
+                        index: Box::new(first),
+                        span,
+                    };
+                }
             } else {
                 break;
             }
