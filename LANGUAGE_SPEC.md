@@ -924,6 +924,59 @@ These builtins are intercepted before normal function dispatch (same pattern as 
 
 ---
 
+### 4.15 String Transformation Builtins
+
+Three string transformation functions are built into the language.
+
+```kimin
+print(to_upper("hello"))          // HELLO
+print(to_lower("HELLO"))          // hello
+print(trim("  hello  "))          // hello
+print(to_upper(trim("  hi  ")))   // HI
+```
+
+#### `to_upper(text) -> Text`
+
+Returns the uppercased version of `text`. Delegates to Rust `String::to_uppercase`. String length may increase for some Unicode codepoints (e.g., German `ß` → `SS`).
+
+#### `to_lower(text) -> Text`
+
+Returns the lowercased version of `text`. Delegates to Rust `String::to_lowercase`.
+
+#### `trim(text) -> Text`
+
+Returns `text` with leading and trailing Unicode whitespace removed. Delegates to Rust `str::trim`. Does not mutate the original string.
+
+#### Type rules
+
+- Exactly 1 argument, which must be `Text`.
+- Return type is `Text`.
+- Wrong arity or a non-`Text` argument is a `TypeError`.
+
+#### Unicode behavior
+
+Case conversion follows Rust's Unicode rules. Results are correct for Latin, Greek, Cyrillic, and most Unicode scripts. String length may differ between input and output for certain codepoints.
+
+#### Composition with other string builtins
+
+Transformation builtins can be freely composed with utility builtins:
+
+```kimin
+contains(to_lower("HELLO WORLD"), "world")    // true
+starts_with(trim("  hello"), "hello")         // true
+len(trim("  hi  "))                           // 2
+to_upper(trim("  hello  "))[0]               // H
+```
+
+#### Restrictions
+
+- **No mutation**: transformation returns a new `Text` value; the original is unchanged.
+- **No regex**: these are not pattern-based transformations.
+- **No split, replace, or case-insensitive comparison**: not yet supported.
+- **Escape sequences**: Kimin string literals do not support `\t` or `\n` — trim is only observable with space characters in literal strings.
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
