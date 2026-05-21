@@ -456,7 +456,14 @@ impl TypeChecker {
                 value,
                 span,
             } => {
-                let val_ty = self.check_expr(value, *span)?;
+                // Pre-resolve annotation so we can pass the expected type to the expression
+                // checker — this enables empty array literals when the annotation is Array<T>.
+                let ann_ty_opt: Option<Type> = match annotation.as_ref() {
+                    Some(ann) => Some(self.resolve_annotation(ann, *span)?),
+                    None => None,
+                };
+
+                let val_ty = self.check_expr_with_expected(value, ann_ty_opt.as_ref(), *span)?;
 
                 // Extract known variant when the initializer is a direct state variant expression.
                 let known_variant = match value {
@@ -464,8 +471,7 @@ impl TypeChecker {
                     _ => None,
                 };
 
-                let (effective_ty, effective_variant) = if let Some(ann) = annotation {
-                    let ann_ty = self.resolve_annotation(ann, *span)?;
+                let (effective_ty, effective_variant) = if let Some(ann_ty) = ann_ty_opt {
                     let compatible = val_ty.is_unknown()
                         || val_ty == ann_ty
                         || (matches!(&ann_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number)
@@ -535,7 +541,9 @@ impl TypeChecker {
                     });
                 }
 
-                let val_ty = self.check_expr(value, *span)?;
+                // Pass the variable's type as expected so that `arr = []` is valid
+                // when the variable is already typed as Array<T>.
+                let val_ty = self.check_expr_with_expected(value, Some(&var_ty), *span)?;
                 let compatible = val_ty.is_unknown()
                     || var_ty.is_unknown()
                     || val_ty == var_ty
@@ -847,7 +855,7 @@ impl TypeChecker {
                     .expect("checked above")
                     .clone();
                 let ret_ty = match value {
-                    Some(expr) => self.check_expr(expr, *span)?,
+                    Some(expr) => self.check_expr_with_expected(expr, Some(&declared), *span)?,
                     None => Type::Nil,
                 };
                 let compatible = declared.is_unknown()
@@ -1083,7 +1091,7 @@ impl TypeChecker {
             Expr::ArrayLiteral { elements, span } => {
                 if elements.is_empty() {
                     return Err(TypeError {
-                        msg: "empty array literals are not supported; cannot infer element type"
+                        msg: "empty array literal requires an explicit Array<T> type annotation"
                             .into(),
                         line: span.line,
                         col: span.col,
@@ -1565,7 +1573,37 @@ impl TypeChecker {
                     })
                 }
             }
+            TypeAnnotation::Array(inner) => {
+                let inner_ty = self.resolve_annotation(inner, span)?;
+                Ok(Type::Array(Box::new(inner_ty)))
+            }
         }
+    }
+
+    /// Check an expression, allowing an empty array literal when the expected type is known.
+    ///
+    /// Only special-cases `Expr::ArrayLiteral { elements: [] }` — all other expressions
+    /// (including non-empty array literals) delegate to `check_expr`.
+    fn check_expr_with_expected(
+        &mut self,
+        expr: &Expr,
+        expected: Option<&Type>,
+        context_span: Span,
+    ) -> Result<Type, TypeError> {
+        if let Expr::ArrayLiteral { elements, span } = expr {
+            if elements.is_empty() {
+                return match expected {
+                    Some(Type::Array(elem_ty)) => Ok(Type::Array(elem_ty.clone())),
+                    _ => Err(TypeError {
+                        msg: "empty array literal requires an explicit Array<T> type annotation"
+                            .into(),
+                        line: span.line,
+                        col: span.col,
+                    }),
+                };
+            }
+        }
+        self.check_expr(expr, context_span)
     }
 
     fn build_fn_type(
