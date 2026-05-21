@@ -1,0 +1,10 @@
+fn shout(s: Text) -> Text {
+  return to_upper(s)
+}
+
+fn clean(s: Text) -> Text {
+  return trim(s)
+}
+
+print(shout("hello"))
+print(clean("  hello  "))

@@ -1,0 +1,2 @@
+print(to_upper("éclair"))
+print(to_lower("ÉCLAIR"))

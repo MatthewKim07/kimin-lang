@@ -1,0 +1,5 @@
+print(to_upper("hello"))
+print(to_lower("HELLO"))
+print(trim("  hello  "))
+print(to_upper(trim("  hello  ")))
+print(contains(to_lower("HELLO WORLD"), "world"))

@@ -1,0 +1,11 @@
+// Keep runnable by default.
+
+print(to_upper("hello"))
+print(to_lower("HELLO"))
+print(trim("  hello  "))
+
+// Uncomment to test wrong arg type:
+// to_upper(123)
+
+// Uncomment to test wrong arity:
+// trim("a", "b")

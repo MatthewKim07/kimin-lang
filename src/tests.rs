@@ -17949,6 +17949,9 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Contains
             | crate::bytecode::Instruction::StartsWith
             | crate::bytecode::Instruction::EndsWith
+            | crate::bytecode::Instruction::ToUpper
+            | crate::bytecode::Instruction::ToLower
+            | crate::bytecode::Instruction::Trim
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -19535,6 +19538,544 @@ fn ends_with_wrong_arity_message() {
     };
     assert!(
         msg.contains("ends_with") && msg.contains("2") && msg.contains("1"),
+        "got: {}",
+        msg
+    );
+}
+
+// ==========================================================================
+// M11C — to_upper / to_lower / trim
+// ==========================================================================
+
+// --- parser ---
+
+#[test]
+fn parse_to_upper_call() {
+    let src = "to_upper(\"hello\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_to_lower_call() {
+    let src = "to_lower(\"HELLO\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_trim_call() {
+    let src = "trim(\"  hello  \")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_transform_nested_call() {
+    let src = "to_upper(trim(\"  hello  \"))";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_transform_in_return() {
+    let src = "fn shout(s: Text) -> Text { return to_upper(s) }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- typechecker ---
+
+#[test]
+fn type_to_upper_text_ok() {
+    assert!(check("let s: Text = to_upper(\"hello\")").is_ok());
+}
+
+#[test]
+fn type_to_lower_text_ok() {
+    assert!(check("let s: Text = to_lower(\"HELLO\")").is_ok());
+}
+
+#[test]
+fn type_trim_text_ok() {
+    assert!(check("let s: Text = trim(\"  hello  \")").is_ok());
+}
+
+#[test]
+fn type_string_transform_returns_text() {
+    // Verify return type is Text by assigning to Text variable
+    assert!(check(
+        "let u: Text = to_upper(\"a\")\nlet l: Text = to_lower(\"A\")\nlet t: Text = trim(\" a \")"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_upper_wrong_arity_error() {
+    assert!(check("to_upper(\"a\", \"b\")").is_err());
+}
+
+#[test]
+fn type_to_lower_wrong_arity_error() {
+    assert!(check("to_lower()").is_err());
+}
+
+#[test]
+fn type_trim_wrong_arity_error() {
+    assert!(check("trim(\"a\", \"b\")").is_err());
+}
+
+#[test]
+fn type_to_upper_number_arg_error() {
+    assert!(check("to_upper(42)").is_err());
+}
+
+#[test]
+fn type_to_lower_bool_arg_error() {
+    assert!(check("to_lower(true)").is_err());
+}
+
+#[test]
+fn type_trim_array_arg_error() {
+    assert!(check("trim([\"hello\"])").is_err());
+}
+
+#[test]
+fn type_trim_unit_arg_error() {
+    assert!(check("let d: meters = 5\ntrim(d)").is_err());
+}
+
+#[test]
+fn type_trim_state_arg_error() {
+    let src = "state Door { closed\n  open\n  transition closed -> open }\nlet d: Door = Door.closed\ntrim(d)";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_contains_still_ok_after_m11c() {
+    assert!(check("let b: Bool = contains(\"hello\", \"ell\")").is_ok());
+}
+
+#[test]
+fn type_len_text_still_ok_after_m11c() {
+    assert!(check("let n = len(\"hello\")").is_ok());
+}
+
+#[test]
+fn type_string_index_still_ok_after_m11c() {
+    assert!(check("let c: Text = \"hello\"[0]").is_ok());
+}
+
+#[test]
+fn type_string_slice_still_ok_after_m11c() {
+    assert!(check("let sub: Text = \"hello\"[1..4]").is_ok());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_to_upper_basic() {
+    let interp = run("let s = to_upper(\"hello\")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("HELLO".into())));
+}
+
+#[test]
+fn interp_to_lower_basic() {
+    let interp = run("let s = to_lower(\"HELLO\")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_trim_basic() {
+    let interp = run("let s = trim(\"  hello  \")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_trim_leading_trailing_spaces() {
+    // Kimin string literals don't support escape sequences, so test with spaces only.
+    let interp = run("let s = trim(\"   hello   \")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_transform_empty_string() {
+    let i = run("let u = to_upper(\"\")\nlet l = to_lower(\"\")\nlet t = trim(\"\")").unwrap();
+    assert_eq!(i.get_var("u"), Some(Value::Str("".into())));
+    assert_eq!(i.get_var("l"), Some(Value::Str("".into())));
+    assert_eq!(i.get_var("t"), Some(Value::Str("".into())));
+}
+
+#[test]
+fn interp_transform_variables() {
+    let src = "let s = \"  Hello  \"\nlet u = to_upper(s)\nlet l = to_lower(s)\nlet t = trim(s)";
+    let i = run(src).unwrap();
+    assert_eq!(i.get_var("u"), Some(Value::Str("  HELLO  ".into())));
+    assert_eq!(i.get_var("l"), Some(Value::Str("  hello  ".into())));
+    assert_eq!(i.get_var("t"), Some(Value::Str("Hello".into())));
+}
+
+#[test]
+fn interp_transform_nested_calls() {
+    let interp = run("let s = to_upper(trim(\"  hello  \"))").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("HELLO".into())));
+}
+
+#[test]
+fn interp_transform_in_if_with_contains() {
+    let src = "let mut r: Number = 0\nif contains(to_lower(\"HELLO\"), \"ell\") { r = 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(1.0)));
+}
+
+#[test]
+fn interp_to_upper_unicode() {
+    let interp = run("let s = to_upper(\"éclair\")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("ÉCLAIR".into())));
+}
+
+#[test]
+fn interp_to_lower_unicode() {
+    let interp = run("let s = to_lower(\"ÉCLAIR\")").unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("éclair".into())));
+}
+
+#[test]
+fn interp_fn_to_upper_param() {
+    let src = "fn shout(s: Text) -> Text { return to_upper(s) }\nlet r = shout(\"hello\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("HELLO".into())));
+}
+
+#[test]
+fn interp_fn_trim_param() {
+    let src = "fn clean(s: Text) -> Text { return trim(s) }\nlet r = clean(\"  hello  \")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_closure_trim_captured_text() {
+    let src = "let raw = \"  hello  \"\nfn clean() -> Text { return trim(raw) }\nlet r = clean()";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("hello".into())));
+}
+
+#[test]
+fn interp_string_transform_in_for_loop() {
+    let src = "let words = [\" hello \", \" world \"]\nlet mut out = \"\"\nfor i in range(0, len(words)) { out = to_upper(trim(words[i])) }\nlet r = out";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("WORLD".into())));
+}
+
+#[test]
+fn interp_string_transform_in_while_loop() {
+    let src = "let mut s = \"  abc  \"\nlet mut done: Number = 0\nwhile done == 0 { s = trim(s)\ndone = 1 }\nlet r = s";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("abc".into())));
+}
+
+#[test]
+fn interp_simulate_string_transform() {
+    let src = "let words = [\" hello \", \" world \"]\nlet mut i: Number = 0\nlet dur: seconds = 2\nlet dt: seconds = 1\nlet mut last = \"\"\nsimulate dur step dt { last = to_upper(trim(words[i]))\ni += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("last"), Some(Value::Str("WORLD".into())));
+}
+
+// --- composition with other builtins ---
+
+#[test]
+fn transform_then_contains() {
+    let interp = run("let b = contains(to_lower(\"HELLO WORLD\"), \"world\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn transform_then_starts_with() {
+    let interp = run("let b = starts_with(trim(\"  hello  \"), \"hello\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn transform_then_ends_with() {
+    let interp = run("let b = ends_with(to_upper(\"hello\"), \"LO\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn transform_then_len() {
+    let interp = run("let n = len(trim(\"  hi  \"))").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn transform_then_index() {
+    let interp = run("let c = to_upper(\"hello\")[0]").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Str("H".into())));
+}
+
+#[test]
+fn transform_then_slice() {
+    let interp = run("let sub = to_upper(\"hello\")[0..3]").unwrap();
+    assert_eq!(interp.get_var("sub"), Some(Value::Str("HEL".into())));
+}
+
+// --- bytecode ---
+
+#[test]
+fn bytecode_to_upper_emits_to_upper() {
+    let prog = compile_prog("to_upper(\"hello\")");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToUpper));
+    assert!(has, "expected TO_UPPER instruction");
+}
+
+#[test]
+fn bytecode_to_lower_emits_to_lower() {
+    let prog = compile_prog("to_lower(\"HELLO\")");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToLower));
+    assert!(has, "expected TO_LOWER instruction");
+}
+
+#[test]
+fn bytecode_trim_emits_trim() {
+    let prog = compile_prog("trim(\"  hello  \")");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Trim));
+    assert!(has, "expected TRIM instruction");
+}
+
+#[test]
+fn bytecode_transform_no_call_instruction() {
+    let prog = compile_prog("to_upper(\"a\")\nto_lower(\"A\")\ntrim(\" a \")");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "transform builtins must not emit CALL");
+}
+
+#[test]
+fn bytecode_transform_inside_function() {
+    let prog = compile_prog("fn shout(s: Text) -> Text { return to_upper(s) }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "shout").unwrap();
+    let has = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToUpper));
+    assert!(has, "expected TO_UPPER inside function chunk");
+}
+
+#[test]
+fn bytecode_transform_inside_if() {
+    let prog = compile_prog("if contains(to_lower(\"HELLO\"), \"ell\") { print(true) }");
+    let has_to_lower = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToLower));
+    assert!(has_to_lower, "expected TO_LOWER inside if condition");
+}
+
+#[test]
+fn bytecode_transform_inside_simulate() {
+    let prog = compile_prog(
+        "let dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt { print(to_upper(\"hi\")) }",
+    );
+    let has = prog.simulate_bodies.iter().any(|b| {
+        b.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToUpper))
+    });
+    assert!(has, "expected TO_UPPER inside simulate body chunk");
+}
+
+#[test]
+fn disassemble_string_transform_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("to_upper(\"a\")\nto_lower(\"A\")\ntrim(\" a \")");
+    let out = disassemble(&prog);
+    assert!(out.contains("TO_UPPER"), "expected TO_UPPER in disassembly");
+    assert!(out.contains("TO_LOWER"), "expected TO_LOWER in disassembly");
+    assert!(out.contains("TRIM"), "expected TRIM in disassembly");
+}
+
+// --- VM ---
+
+#[test]
+fn vm_to_upper_basic() {
+    let out = vm_run("print(to_upper(\"hello\"))").unwrap();
+    assert_eq!(out, vec!["HELLO"]);
+}
+
+#[test]
+fn vm_to_lower_basic() {
+    let out = vm_run("print(to_lower(\"HELLO\"))").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn vm_trim_basic() {
+    let out = vm_run("print(trim(\"  hello  \"))").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn vm_trim_leading_trailing_spaces() {
+    let out = vm_run("print(trim(\"   hello   \"))").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn vm_transform_empty_string() {
+    let out = vm_run("print(to_upper(\"\"))\nprint(to_lower(\"\"))\nprint(trim(\"\"))").unwrap();
+    assert_eq!(out, vec!["", "", ""]);
+}
+
+#[test]
+fn vm_transform_variables() {
+    let src = "let s = \"  Hello  \"\nprint(to_upper(s))\nprint(to_lower(s))\nprint(trim(s))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["  HELLO  ", "  hello  ", "Hello"]);
+}
+
+#[test]
+fn vm_transform_nested_calls() {
+    let out = vm_run("print(to_upper(trim(\"  hello  \")))").unwrap();
+    assert_eq!(out, vec!["HELLO"]);
+}
+
+#[test]
+fn vm_transform_stack_clean() {
+    // After expression statement, stack clean; next print works correctly
+    let out = vm_run("to_upper(\"x\")\nprint(trim(\"  hi  \"))").unwrap();
+    assert_eq!(out, vec!["hi"]);
+}
+
+#[test]
+fn vm_to_upper_unicode() {
+    let out = vm_run("print(to_upper(\"éclair\"))").unwrap();
+    assert_eq!(out, vec!["ÉCLAIR"]);
+}
+
+#[test]
+fn vm_to_lower_unicode() {
+    let out = vm_run("print(to_lower(\"ÉCLAIR\"))").unwrap();
+    assert_eq!(out, vec!["éclair"]);
+}
+
+#[test]
+fn vm_transform_matches_tree() {
+    let src = std::fs::read_to_string("examples/string_transforms.kimin").unwrap();
+    run(&src).unwrap();
+    let out = vm_run(&src).unwrap();
+    assert_eq!(out, vec!["HELLO", "hello", "hello", "HELLO", "true"]);
+}
+
+#[test]
+fn vm_matches_tree_string_transform_functions() {
+    let src = std::fs::read_to_string("examples/string_transforms_functions.kimin").unwrap();
+    run(&src).unwrap();
+    let out = vm_run(&src).unwrap();
+    assert_eq!(out, vec!["HELLO", "hello"]);
+}
+
+#[test]
+fn vm_matches_tree_string_transform_loop() {
+    let src = std::fs::read_to_string("examples/string_transforms_loop.kimin").unwrap();
+    run(&src).unwrap();
+    let out = vm_run(&src).unwrap();
+    assert_eq!(out, vec!["HELLO", "WORLD"]);
+}
+
+#[test]
+fn vm_matches_tree_string_transform_simulate() {
+    let src = "let words = [\" hello \", \" world \"]\nlet mut i: Number = 0\nlet dur: seconds = 2\nlet dt: seconds = 1\nsimulate dur step dt { print(to_upper(trim(words[i])))\ni += 1 }";
+    run(src).unwrap();
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["HELLO", "WORLD"]);
+}
+
+#[test]
+fn vm_string_transform_in_for_loop() {
+    let src = "let words = [\" hello \", \" world \"]\nfor i in range(0, len(words)) { print(to_upper(trim(words[i]))) }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["HELLO", "WORLD"]);
+}
+
+// --- regression ---
+
+#[test]
+fn regression_contains_still_ok_after_m11c() {
+    let out = vm_run("print(contains(\"hello\", \"ell\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn regression_len_index_slice_still_ok_after_m11c() {
+    let out = vm_run("print(len(\"hello\"))\nprint(\"hello\"[1])\nprint(\"hello\"[1..4])").unwrap();
+    assert_eq!(out, vec!["5", "e", "ell"]);
+}
+
+#[test]
+fn regression_arrays_still_ok_after_m11c() {
+    let src = "let a = [1, 2, 3]\nlet mut b = [10, 20]\npush(b, 30)\nlet x = pop(b)\nprint(x)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+// --- error message quality ---
+
+#[test]
+fn to_upper_wrong_arity_message() {
+    let err = check("to_upper(\"a\", \"b\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("to_upper") && msg.contains("1") && msg.contains("2"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn to_upper_arg_error_message() {
+    let err = check("to_upper(42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn trim_wrong_arity_message() {
+    let err = check("trim(\"a\", \"b\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("trim") && msg.contains("1") && msg.contains("2"),
         "got: {}",
         msg
     );

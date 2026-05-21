@@ -1,0 +1,5 @@
+let words = [" hello ", " world "]
+
+for i in range(0, len(words)) {
+  print(to_upper(trim(words[i])))
+}
