@@ -50,6 +50,12 @@ pub enum Expr {
         end: Box<Expr>,
         span: Span,
     },
+    /// Map literal expression: `{"key": value, ...}`
+    /// Keys must be Text expressions; values must be homogeneous.
+    MapLiteral {
+        entries: Vec<(Expr, Expr)>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

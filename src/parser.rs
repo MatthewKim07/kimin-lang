@@ -863,6 +863,23 @@ impl Parser {
                 self.expect_kind(TokenKind::RBracket, "expected ']' after array elements")?;
                 Ok(Expr::ArrayLiteral { elements, span })
             }
+            TokenKind::LBrace => {
+                self.advance(); // consume `{`
+                let mut entries: Vec<(Expr, Expr)> = Vec::new();
+                while !matches!(self.current_kind(), TokenKind::RBrace) && !self.is_at_end() {
+                    let key = self.parse_expr()?;
+                    self.expect_kind(TokenKind::Colon, "expected ':' after map key")?;
+                    let val = self.parse_expr()?;
+                    entries.push((key, val));
+                    if matches!(self.current_kind(), TokenKind::Comma) {
+                        self.advance(); // consume `,`
+                    } else {
+                        break;
+                    }
+                }
+                self.expect_kind(TokenKind::RBrace, "expected '}' after map entries")?;
+                Ok(Expr::MapLiteral { entries, span })
+            }
             _ => Err(self.error("expected expression")),
         }
     }
