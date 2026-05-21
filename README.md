@@ -6,7 +6,7 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1625_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1654_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 ![Milestone](https://img.shields.io/badge/milestone-10E-informational?style=flat-square)
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1625 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1654 tests passing**.
 
 ---
 
@@ -607,7 +607,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1625 unit tests
+  tests.rs        1654 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
