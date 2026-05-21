@@ -881,6 +881,49 @@ Indexing operates on Unicode scalar values (Rust `char`s). This means:
 
 ---
 
+### 4.14 String Utility Builtins
+
+Three read-only string predicates are built into the language.
+
+```kimin
+print(contains("hello world", "world"))   // true
+print(contains("hello world", "x"))       // false
+print(starts_with("hello", "he"))         // true
+print(starts_with("hello", "lo"))         // false
+print(ends_with("hello", "lo"))           // true
+print(ends_with("hello", "he"))           // false
+```
+
+#### `contains(text, pattern) -> Bool`
+
+Returns `true` if `pattern` appears anywhere in `text`. An empty pattern always returns `true`.
+
+#### `starts_with(text, prefix) -> Bool`
+
+Returns `true` if `text` begins with `prefix`. An empty prefix always returns `true`.
+
+#### `ends_with(text, suffix) -> Bool`
+
+Returns `true` if `text` ends with `suffix`. An empty suffix always returns `true`.
+
+#### Type rules
+
+- Both arguments must be `Text`.
+- Return type is `Bool`.
+- Wrong arity or a non-`Text` argument is a `TypeError`.
+
+#### Implementation note
+
+These builtins are intercepted before normal function dispatch (same pattern as `len`/`push`/`pop`). No `CALL` bytecode instruction is emitted; instead three dedicated instructions (`CONTAINS`, `STARTS_WITH`, `ENDS_WITH`) are used. Unicode correctness is inherited from Rust's `str` methods, which operate on UTF-8 bytes but still produce correct results for well-formed Unicode strings.
+
+#### Restrictions
+
+- **No mutation**: these builtins are read-only predicates.
+- **No regex**: pattern arguments are treated as literal substrings.
+- **No case-insensitive variants**: matching is always case-sensitive.
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
