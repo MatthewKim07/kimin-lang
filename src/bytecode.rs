@@ -98,6 +98,9 @@ pub enum Instruction {
     Index,
     /// Return the length of an array. Stack: [..., array] → Number.
     Len,
+    /// Slice an array. Stack: [..., array, start, end] → new_array.
+    /// End-exclusive; returns an independent copy of the sub-array.
+    Slice,
     /// Append a value to a mutable array variable.
     /// Stack before: [..., new_value] — pops value, pushes Nil.
     ArrayPush(String),

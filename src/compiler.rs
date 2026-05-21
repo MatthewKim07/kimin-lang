@@ -675,6 +675,15 @@ impl BytecodeCompiler {
                 self.chunk.emit(Instruction::Index);
             }
 
+            Expr::Slice {
+                array, start, end, ..
+            } => {
+                self.compile_expr(array)?;
+                self.compile_expr(start)?;
+                self.compile_expr(end)?;
+                self.chunk.emit(Instruction::Slice);
+            }
+
             Expr::StateVariant {
                 state_name,
                 variant_name,

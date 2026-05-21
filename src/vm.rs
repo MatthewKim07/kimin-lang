@@ -547,6 +547,63 @@ impl Vm {
                     }
                 }
 
+                Instruction::Slice => {
+                    let end_val = pop(stack)?;
+                    let start_val = pop(stack)?;
+                    let arr_val = pop(stack)?;
+                    let elems = match arr_val {
+                        Value::Array(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "slice target must be Array, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let s = match start_val {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("slice start must be Number")),
+                    };
+                    if s.fract() != 0.0 {
+                        return Err(runtime_err(&format!(
+                            "slice start must be an integer, got {}",
+                            s
+                        )));
+                    }
+                    if s < 0.0 {
+                        return Err(runtime_err("slice start must be non-negative"));
+                    }
+                    let e = match end_val {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("slice end must be Number")),
+                    };
+                    if e.fract() != 0.0 {
+                        return Err(runtime_err(&format!(
+                            "slice end must be an integer, got {}",
+                            e
+                        )));
+                    }
+                    if e < 0.0 {
+                        return Err(runtime_err("slice end must be non-negative"));
+                    }
+                    let si = s as usize;
+                    let ei = e as usize;
+                    if si > ei {
+                        return Err(runtime_err(&format!(
+                            "slice start {} is greater than end {}",
+                            si, ei
+                        )));
+                    }
+                    if ei > elems.len() {
+                        return Err(runtime_err(&format!(
+                            "slice end {} is out of bounds for array of length {}",
+                            ei,
+                            elems.len()
+                        )));
+                    }
+                    stack.push(Value::Array(elems[si..ei].to_vec()));
+                }
+
                 Instruction::SetIndex(name) => {
                     // Stack before: [..., index_value, new_value]
                     let new_elem = pop(stack)?;
