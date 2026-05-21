@@ -23590,3 +23590,143 @@ fn existing_string_features_still_ok_after_map_mutation() {
 fn existing_map_reads_still_ok_after_map_mutation() {
     assert!(check("let m = {\"a\": 1, \"b\": 2}\nlet v = m[\"a\"]").is_ok());
 }
+
+// ============================================================
+// M12B: additional tests found during audit
+// ============================================================
+
+// --- Typechecker: gaps from audit ---
+
+#[test]
+fn type_map_index_assign_unit_values_ok() {
+    // Map with unit values — assignment should be type-ok.
+    assert!(check("let mut m = {\"d\": 10}\nlet v: Number = 5\nm[\"d\"] = v").is_ok());
+}
+
+#[test]
+fn type_array_index_assign_wrong_value_type_still_error() {
+    // Array mutation regression: wrong value type still a TypeError.
+    assert!(check("let mut a = [1, 2, 3]\na[0] = \"oops\"").is_err());
+}
+
+// --- Parser: regression guards ---
+
+#[test]
+fn parse_map_read_still_parses() {
+    // Map reads (Expr::Index) are unaffected by M12B parser changes.
+    assert!(check("let m = {\"a\": 1}\nlet v = m[\"a\"]").is_ok());
+}
+
+#[test]
+fn parse_block_statement_unaffected_after_map_mutation() {
+    // Block in statement position still parses as Stmt::Block, not a map literal.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 2\n{ let x = 1 }").is_ok());
+}
+
+#[test]
+fn parse_state_decl_unaffected_after_map_mutation() {
+    // State declarations are still parsed correctly after map mutation is added.
+    assert!(check(
+        "state Light {\n  red\n  green\n  transition red -> green\n}\nlet mut m = {\"x\": 0}\nm[\"x\"] = 1"
+    )
+    .is_ok());
+}
+
+// --- Interpreter: tree-walk specific (using run(), not vm_run()) ---
+
+#[test]
+fn interp_tree_walk_map_index_assign_update() {
+    // Exercises tree-walk interpreter path specifically (not VM).
+    let interp = run("let mut m = {\"a\": 10}\nm[\"a\"] = 20").unwrap();
+    let v = interp.get_var("m").unwrap();
+    match v {
+        Value::Map(map) => assert_eq!(map.get("a"), Some(&Value::Number(20.0))),
+        other => panic!("expected Map, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_tree_walk_map_index_assign_insert() {
+    // Insert a new key via tree-walk interpreter.
+    let interp = run("let mut m = {\"a\": 1}\nm[\"b\"] = 99").unwrap();
+    let v = interp.get_var("m").unwrap();
+    match v {
+        Value::Map(map) => {
+            assert_eq!(map.get("a"), Some(&Value::Number(1.0)));
+            assert_eq!(map.get("b"), Some(&Value::Number(99.0)));
+        }
+        other => panic!("expected Map, got {:?}", other),
+    }
+}
+
+// --- Env-chain / closure ---
+
+#[test]
+fn block_shadow_map_index_assign() {
+    // Inner block declares a new map with the same name; outer map is unaffected.
+    let src = "let mut m = {\"a\": 0}\n{\n  let mut m = {\"a\": 99}\n  m[\"a\"] = 100\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn immutable_captured_map_index_assign_error() {
+    // A function that tries to mutate an immutable outer map is a TypeError.
+    let src = "let m = {\"a\": 1}\nfn bad() {\n  m[\"a\"] = 2\n}\nbad()";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn vm_map_index_assign_closure_capture() {
+    // VM: closure captures mutable map from enclosing scope and mutates it.
+    let src = "let mut data = {\"v\": 0}\nfn set_v(x: Number) {\n  data[\"v\"] = x\n}\nset_v(42)\nprint(data[\"v\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Loop: break/continue ---
+
+#[test]
+fn map_index_assign_with_break_continue() {
+    // Map mutation with break and continue — only accumulates values 0 and 1 (break at 2).
+    let src = "let mut m = {\"sum\": 0}\nfor i in range(0, 5) {\n  if i == 2 {\n    break\n  }\n  m[\"sum\"] = m[\"sum\"] + i\n}\nprint(m[\"sum\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn map_index_assign_accumulate_in_loop() {
+    // Accumulate by squaring loop index into map.
+    let src = "let mut m = {\"total\": 0}\nfor i in range(1, 4) {\n  m[\"total\"] = m[\"total\"] + i\n}\nprint(m[\"total\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_map_index_assign_with_array_keys() {
+    // Map keys come from an array; simulate body updates each entry.
+    let src = "let keys = [\"a\", \"b\"]\nlet mut counts = {\"a\": 0, \"b\": 0}\nlet duration: seconds = 2\nlet dt: seconds = 1\nsimulate duration step dt {\n  counts[\"a\"] = counts[\"a\"] + 1\n  counts[\"b\"] = counts[\"b\"] + 2\n}\nprint(counts[\"a\"])\nprint(counts[\"b\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2", "4"]);
+}
+
+// --- String/array interaction ---
+
+#[test]
+fn map_index_assign_array_text_value() {
+    // Map value type is Array<Text>; not currently supported (mixed-type maps rejected).
+    // Confirm that a map with Number values and a join after update still works.
+    let src = "let mut user = {\"greeting\": \"hello\"}\nuser[\"greeting\"] = join([\"hi\", \"there\"], \" \")\nprint(user[\"greeting\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["hi there"]);
+}
+
+#[test]
+fn map_index_assign_join_after_update() {
+    // Demonstrate: build strings via join and store them back in a map.
+    let src = "let mut results = {\"line\": \"\"}\nresults[\"line\"] = join([\"a\", \"b\", \"c\"], \"-\")\nprint(results[\"line\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a-b-c"]);
+}

@@ -6,7 +6,7 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2378_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2393_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 ![Milestone](https://img.shields.io/badge/milestone-12B-informational?style=flat-square)
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2378 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2393 tests passing**.
 
 ---
 
@@ -658,6 +658,13 @@ LexError  at line 3, col 7:  unexpected character '@'
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
+| No map compound assignment | `m["k"] += v` is unsupported; use `m["k"] = m["k"] + v` |
+| No map builtins | `has_key`, `keys`, `values`, `remove` are not implemented |
+| No map iteration | Maps cannot be directly iterated with `for`; use a separate keys array |
+| No explicit `Map<K,V>` annotation | Map type is inferred from the literal; `let m: Map<Text, Number>` is a ParseError |
+| No nested maps | `{"outer": {"inner": 1}}` is a TypeError |
+| No non-Text map keys | `{1: "a"}` is a TypeError; keys must be Text |
+| Empty map literal always TypeError | No annotation context to infer element type |
 
 ---
 
@@ -707,7 +714,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2378 passed, 0 failed
+# 2393 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -734,7 +741,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2378 unit tests
+  tests.rs        2393 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
