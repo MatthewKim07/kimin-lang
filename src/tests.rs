@@ -19243,3 +19243,299 @@ fn regression_string_slice_after_m11b() {
     let interp = run("let sub = \"hello\"[1..4]").unwrap();
     assert_eq!(interp.get_var("sub"), Some(Value::Str("ell".into())));
 }
+
+// ==========================================================================
+// M11B audit — additional coverage
+// ==========================================================================
+
+// --- parser: extra coverage ---
+
+#[test]
+fn parse_string_utility_in_if_condition() {
+    let src = "if contains(\"hello\", \"ell\") { print(true) }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_utility_in_return() {
+    let src = "fn f(s: Text) -> Bool { return starts_with(s, \"h\") }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_len_index_slice_still_parse() {
+    let src = "let n = len(\"hi\")\nlet c = \"hi\"[0]\nlet sub = \"hi\"[0..1]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- typechecker: extra coverage ---
+
+#[test]
+fn type_string_utility_in_if_condition_ok() {
+    assert!(check("if contains(\"hello\", \"ell\") { print(true) }").is_ok());
+}
+
+#[test]
+fn type_string_utility_function_return_ok() {
+    assert!(check("fn f(s: Text) -> Bool { return ends_with(s, \"lo\") }").is_ok());
+}
+
+#[test]
+fn type_contains_array_first_arg_error() {
+    assert!(check("contains([\"hello\", \"world\"], \"hello\")").is_err());
+}
+
+#[test]
+fn type_starts_with_first_arg_bool_error() {
+    assert!(check("starts_with(true, \"t\")").is_err());
+}
+
+#[test]
+fn type_contains_state_arg_error() {
+    let src = "state Door { closed\n  open\n  transition closed -> open }\nlet d: Door = Door.closed\ncontains(d, \"x\")";
+    assert!(check(src).is_err());
+}
+
+// --- interpreter: extra coverage ---
+
+#[test]
+fn interp_string_utility_in_if() {
+    let interp = run("let mut r: Number = 0\nif contains(\"hello\", \"ell\") { r = 1 }").unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(1.0)));
+}
+
+#[test]
+fn interp_contains_unicode_false() {
+    let interp = run("let b = contains(\"hello\", \"é\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn interp_closure_contains_captured_pattern() {
+    let src = "let pat = \"ell\"\nfn check(s: Text) -> Bool { return contains(s, pat) }\nlet b = check(\"hello\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_string_utility_in_while_loop() {
+    let src = "let mut s = \"x\"\nlet mut count: Number = 0\nwhile !contains(s, \"hello\") { count += 1\nif count == 3 { s = \"hello\" } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("count"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_string_utility_break_continue() {
+    let src = "let words = [\"hi\", \"hello\", \"hey\", \"world\"]\nlet mut found: Number = 0\nfor i in range(0, len(words)) { if !starts_with(words[i], \"h\") { continue }\nfound += 1\nif ends_with(words[i], \"o\") { break } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("found"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_simulate_starts_with() {
+    let src = "let s = \"hello\"\nlet mut matched: Number = 0\nlet dur: seconds = 2\nlet dt: seconds = 1\nsimulate dur step dt { if starts_with(s, \"he\") { matched += 1 } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("matched"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_simulate_ends_with() {
+    let src = "let s = \"café\"\nlet mut matched: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { if ends_with(s, \"é\") { matched += 1 } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("matched"), Some(Value::Number(3.0)));
+}
+
+// --- bytecode: extra coverage ---
+
+#[test]
+fn bytecode_string_utility_arg_order() {
+    // Compiler must emit text arg first, pattern arg second.
+    // constants[0] = "text", constants[1] = "pattern".
+    let prog = compile_prog("contains(\"text\", \"pattern\")");
+    assert_eq!(
+        prog.main.constants.get(0),
+        Some(&Constant::Text("text".into())),
+        "first constant must be text arg"
+    );
+    assert_eq!(
+        prog.main.constants.get(1),
+        Some(&Constant::Text("pattern".into())),
+        "second constant must be pattern arg"
+    );
+    let has_contains = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Contains));
+    assert!(has_contains, "CONTAINS must be emitted");
+}
+
+#[test]
+fn bytecode_string_utility_inside_if() {
+    let prog = compile_prog("if contains(\"hello\", \"ell\") { print(true) }");
+    let has_contains = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Contains));
+    assert!(has_contains, "CONTAINS must appear inside if condition");
+}
+
+#[test]
+fn bytecode_string_utility_inside_simulate() {
+    let prog = compile_prog(
+        "let dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt { if starts_with(\"hello\", \"he\") { print(true) } }",
+    );
+    let has_sw = prog.simulate_bodies.iter().any(|b| {
+        b.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::StartsWith))
+    });
+    assert!(has_sw, "STARTS_WITH must appear in simulate body chunk");
+}
+
+#[test]
+fn bytecode_len_index_slice_unchanged_after_m11b() {
+    // Verify len/index/slice still emit their expected instructions unchanged.
+    let prog = compile_prog("let n = len(\"hi\")\nlet c = \"hi\"[0]\nlet sub = \"hi\"[0..2]");
+    let instrs = &prog.main.instructions;
+    let has_len = instrs.iter().any(|i| matches!(i, Instruction::Len));
+    let has_index = instrs.iter().any(|i| matches!(i, Instruction::Index));
+    let has_slice = instrs.iter().any(|i| matches!(i, Instruction::Slice));
+    assert!(has_len, "LEN must still be emitted");
+    assert!(has_index, "INDEX must still be emitted");
+    assert!(has_slice, "SLICE must still be emitted");
+}
+
+// --- VM: extra coverage ---
+
+#[test]
+fn vm_string_utility_nested_call() {
+    let src = "fn get() -> Text { return \"hello\" }\nprint(contains(get(), \"ell\"))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_string_utility_in_if() {
+    let out =
+        vm_run("if starts_with(\"hello\", \"he\") { print(true) } else { print(false) }").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_len_index_slice_still_work_after_m11b() {
+    let out = vm_run("print(len(\"hello\"))\nprint(\"hello\"[1])\nprint(\"hello\"[1..4])").unwrap();
+    assert_eq!(out, vec!["5", "e", "ell"]);
+}
+
+// --- array interaction ---
+
+#[test]
+fn contains_array_text_arg_error() {
+    assert!(check("contains([\"hello\", \"world\"], \"hello\")").is_err());
+}
+
+#[test]
+fn contains_array_text_index_ok() {
+    assert!(check("let b: Bool = contains([\"hello\", \"world\"][0], \"ell\")").is_ok());
+}
+
+#[test]
+fn array_index_slice_still_ok_after_m11b() {
+    let interp = run("let a = [10, 20, 30]\nlet x = a[1]\nlet s = a[0..2]").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(20.0)));
+    assert_eq!(
+        interp.get_var("s"),
+        Some(Value::Array(vec![Value::Number(10.0), Value::Number(20.0)]))
+    );
+}
+
+#[test]
+fn push_pop_still_ok_after_m11b() {
+    let interp = run("let mut a = [1, 2]\npush(a, 3)\nlet x = pop(a)").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn array_text_expected_call_still_ok_after_m11b() {
+    let src = "fn first(arr: Array<Text>) -> Text { return arr[0] }\nlet r = first([\"hello\", \"world\"])";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("hello".into())));
+}
+
+// --- error message quality ---
+
+#[test]
+fn contains_wrong_arity_message() {
+    let err = check("contains(\"hello\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("contains") && msg.contains("2") && msg.contains("1"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn contains_first_arg_error_message() {
+    let err = check("contains(42, \"x\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("first argument") && msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn contains_second_arg_error_message() {
+    let err = check("contains(\"hello\", 42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("second argument") && msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn starts_with_wrong_arity_message() {
+    let err = check("starts_with(\"hello\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("starts_with") && msg.contains("2") && msg.contains("1"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn ends_with_wrong_arity_message() {
+    let err = check("ends_with(\"hello\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("ends_with") && msg.contains("2") && msg.contains("1"),
+        "got: {}",
+        msg
+    );
+}
