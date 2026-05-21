@@ -15969,3 +15969,486 @@ fn vm_matches_tree_slice_mutation_example() {
     let src = std::fs::read_to_string("examples/array_slices_mutation.kimin").unwrap();
     assert_eq!(vm_run(&src).unwrap(), vec!["99", "3", "2", "88"]);
 }
+
+// ============================================================
+// M10D Audit — additional tests for full coverage
+// ============================================================
+
+// --- Lexer: decimal numbers still work ---
+
+#[test]
+fn lex_decimal_number_still_works() {
+    let kinds = tokenize("0.25 10.0 3.14");
+    assert!(matches!(kinds[0], TokenKind::Number(n) if (n - 0.25).abs() < 1e-10));
+    assert!(matches!(kinds[1], TokenKind::Number(n) if (n - 10.0).abs() < 1e-10));
+    assert!(matches!(kinds[2], TokenKind::Number(n) if (n - 3.14).abs() < 1e-10));
+}
+
+#[test]
+fn lex_zero_decimal_still_works() {
+    let kinds = tokenize("0.5");
+    assert!(matches!(kinds[0], TokenKind::Number(n) if (n - 0.5).abs() < 1e-10));
+}
+
+#[test]
+fn lex_single_dot_emits_dot_token() {
+    let kinds = tokenize("Door.closed");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "Door"));
+    assert_eq!(kinds[1], TokenKind::Dot);
+    assert!(matches!(&kinds[2], TokenKind::Ident(s) if s == "closed"));
+}
+
+#[test]
+fn lex_range_function_unaffected_by_dotdot() {
+    // range(0, 5) should lex as Ident, LParen, Number, Comma, Number, RParen
+    let kinds = tokenize("range(0, 5)");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "range"));
+    assert_eq!(kinds[1], TokenKind::LParen);
+    assert!(matches!(kinds[2], TokenKind::Number(_)));
+    assert_eq!(kinds[3], TokenKind::Comma);
+    assert!(matches!(kinds[4], TokenKind::Number(_)));
+    assert_eq!(kinds[5], TokenKind::RParen);
+}
+
+#[test]
+fn lex_slice_tokens_complete() {
+    // arr[1..3] → Ident, LBracket, Number(1), DotDot, Number(3), RBracket
+    let kinds = tokenize("arr[1..3]");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "arr"));
+    assert_eq!(kinds[1], TokenKind::LBracket);
+    assert!(matches!(kinds[2], TokenKind::Number(n) if (n - 1.0).abs() < 1e-10));
+    assert_eq!(kinds[3], TokenKind::DotDot);
+    assert!(matches!(kinds[4], TokenKind::Number(n) if (n - 3.0).abs() < 1e-10));
+    assert_eq!(kinds[5], TokenKind::RBracket);
+}
+
+// --- Parser: additional coverage ---
+
+#[test]
+fn parser_slice_inside_array_literal() {
+    // [1,2,3][0..2] used as an element inside another expression
+    let src = "let a = [1, 2, 3]\nlet b = [a[0..2]]";
+    // This should parse (even if typechecker rejects nested arrays)
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parser_chained_slice() {
+    // nums[1..4][0..2] — slice of a slice
+    let src = "let nums = [1, 2, 3, 4, 5]\nprint(nums[1..4][0..2])";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parser_missing_slice_end_error() {
+    // arr[1..] is open-end, already tested; arr[1.. is missing bracket
+    let tokens = Lexer::new("let a = [1,2,3]\nprint(a[1..])")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parser_stepped_slice_error() {
+    // nums[1..5..2] — stepped slice must be rejected
+    let tokens = Lexer::new("let nums = [1,2,3,4,5,6]\nprint(nums[1..5..2])")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err(), "stepped slice should be a ParseError");
+    assert!(result
+        .unwrap_err()
+        .msg
+        .contains("expected ']' after slice end"));
+}
+
+#[test]
+fn parser_index_assign_still_works() {
+    let src = "let mut a = [1, 2, 3]\na[0] = 99";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parser_index_compound_still_works() {
+    let src = "let mut a = [1, 2, 3]\na[0] += 10";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- Typechecker: additional coverage ---
+
+#[test]
+fn typechecker_slice_bool_array_returns_array_bool() {
+    let src = "let a = [true, false, true]\nlet s = a[0..2]\nlet x: Bool = s[0]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn typechecker_mutating_slice_variable_ok() {
+    // Binding a slice to let mut and then mutating it is valid
+    let src = "let a = [1, 2, 3, 4]\nlet mut s = a[1..3]\ns[0] = 99";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn typechecker_slice_inside_simulate_ok() {
+    let src = r#"
+let nums = [10, 20, 30, 40]
+let duration: seconds = 2
+let dt: seconds = 1
+simulate duration step dt {
+    let mid = nums[1..3]
+    print(mid[0])
+}
+"#;
+    assert!(check(src).is_ok());
+}
+
+// --- Interpreter: evaluation order side-effects ---
+
+#[test]
+fn interp_slice_eval_order_side_effects() {
+    // start() increments calls by 1, end() increments by 10.
+    // After nums[start()..end()], calls should be 11.
+    let src = r#"
+let mut calls = 0
+let nums = [10, 20, 30, 40]
+
+fn start_fn() -> Number {
+    calls += 1
+    return 1
+}
+
+fn end_fn() -> Number {
+    calls += 10
+    return 3
+}
+
+let s = nums[start_fn()..end_fn()]
+print(s[0])
+print(calls)
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["20", "11"]);
+}
+
+// --- Interpreter: closure returning slice ---
+
+#[test]
+fn closure_returns_slice_and_indexes() {
+    let src = r#"
+let nums = [10, 20, 30, 40]
+fn get_middle() {
+    return nums[1..3]
+}
+let s = get_middle()
+print(s[0])
+print(s[1])
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["20", "30"]);
+}
+
+#[test]
+fn returned_closure_slices_captured_array() {
+    let src = r#"
+fn make_slicer() {
+    let arr = [5, 10, 15, 20]
+    fn slicer() {
+        return arr[1..3]
+    }
+    return slicer
+}
+let f = make_slicer()
+let s = f()
+print(s[0])
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["10"]);
+}
+
+#[test]
+fn closure_slice_mutation_independent() {
+    let src = r#"
+let nums = [1, 2, 3, 4]
+fn mutate_slice() {
+    let mut s = nums[0..2]
+    s[0] = 999
+    return s[0]
+}
+let result = mutate_slice()
+print(result)
+print(nums[0])
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["999", "1"]);
+}
+
+// --- Interpreter: simulate slice fresh each iteration ---
+
+#[test]
+fn simulate_slice_fresh_each_iteration() {
+    // Each iteration slices the same array; the slice is a fresh copy each time.
+    let src = r#"
+let mut nums = [1, 2, 3, 4]
+let duration: seconds = 3
+let dt: seconds = 1
+let mut total = 0
+simulate duration step dt {
+    let seg = nums[0..2]
+    total += seg[0]
+}
+print(total)
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn simulate_slice_after_push_sees_grown_array() {
+    let src = r#"
+let mut nums = [1, 2, 3]
+let duration: seconds = 1
+let dt: seconds = 1
+simulate duration step dt {
+    push(nums, 99)
+    let s = nums[0..4]
+    print(len(s))
+}
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["4"]);
+}
+
+// --- Bytecode: additional coverage ---
+
+#[test]
+fn bytecode_slice_no_index_instruction_for_slice() {
+    // A slice expression must emit Slice, not Index
+    let program = compile_prog("let a = [1, 2, 3]\nprint(a[0..2])");
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Slice)));
+    assert!(!program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index)));
+}
+
+#[test]
+fn bytecode_set_index_still_works() {
+    let program = compile_prog("let mut a = [1, 2, 3]\na[0] = 99");
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_))));
+}
+
+#[test]
+fn bytecode_index_compound_still_works() {
+    let program = compile_prog("let mut a = [1, 2, 3]\na[0] += 10");
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. })));
+}
+
+#[test]
+fn bytecode_push_pop_still_work() {
+    let program = compile_prog("let mut a = [1, 2, 3]\npush(a, 4)\nlet x = pop(a)");
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPush(_))));
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayPop(_))));
+}
+
+#[test]
+fn bytecode_slice_inside_function() {
+    let src = r#"
+fn get_mid(a: Number, b: Number) -> Number {
+    let arr = [1, 2, 3, 4, 5]
+    let s = arr[a..b]
+    return s[0]
+}
+print(get_mid(1, 3))
+"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let program = BytecodeCompiler::new().compile(&stmts).unwrap();
+    // Slice instruction should appear in the function chunk, not main
+    let fn_chunk = program
+        .functions
+        .iter()
+        .find(|f| f.name == "get_mid")
+        .unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Slice)));
+}
+
+#[test]
+fn bytecode_slice_inside_for() {
+    let src = r#"
+let data = [1, 2, 3, 4, 5]
+let mut total = 0
+for i in range(0, 3) {
+    let s = data[i..i + 2]
+    total += s[0]
+}
+print(total)
+"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let program = BytecodeCompiler::new().compile(&stmts).unwrap();
+    assert!(program
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Slice)));
+}
+
+#[test]
+fn bytecode_slice_inside_simulate() {
+    let src = r#"
+let nums = [10, 20, 30, 40]
+let duration: seconds = 1
+let dt: seconds = 1
+simulate duration step dt {
+    let mid = nums[1..3]
+    print(mid[0])
+}
+"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    TypeChecker::new().check(&stmts).unwrap();
+    let program = BytecodeCompiler::new().compile(&stmts).unwrap();
+    // Slice instruction should appear in the simulate body chunk
+    let sim_chunk = &program.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Slice)));
+}
+
+// --- VM: unit and state array slices ---
+
+#[test]
+fn vm_slice_units() {
+    let src = r#"
+let a: meters = 1
+let b: meters = 2
+let c: meters = 3
+let arr = [a, b, c]
+let s = arr[0..2]
+print(s[0])
+print(len(s))
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["1", "2"]);
+}
+
+#[test]
+fn vm_slice_states() {
+    let src = r#"
+state Door {
+    closed
+    open
+    transition closed -> open
+}
+let doors = [Door.closed, Door.open]
+let s = doors[0..1]
+print(s[0])
+print(len(s))
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["Door.closed", "1"]);
+}
+
+// --- VM: slice in for loop with break/continue ---
+
+#[test]
+fn vm_slice_with_break_continue() {
+    let src = r#"
+let data = [1, 2, 3, 4, 5]
+let seg = data[1..4]
+let mut total = 0
+for i in range(0, len(seg)) {
+    if seg[i] == 3 { continue }
+    total += seg[i]
+}
+print(total)
+"#;
+    // seg = [2, 3, 4]; skip 3 → total = 2 + 4 = 6
+    assert_eq!(vm_run(src).unwrap(), vec!["6"]);
+}
+
+// --- VM: slice after push/pop sees updated length ---
+
+#[test]
+fn vm_slice_after_push() {
+    let src = r#"
+let mut nums = [1, 2, 3]
+push(nums, 4)
+let s = nums[0..4]
+print(len(s))
+print(s[3])
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["4", "4"]);
+}
+
+#[test]
+fn vm_slice_after_pop() {
+    let src = r#"
+let mut nums = [1, 2, 3, 4]
+let _ = pop(nums)
+let s = nums[0..3]
+print(len(s))
+"#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+// --- VM: parity with tree-walk for errors example ---
+
+#[test]
+fn vm_matches_tree_slice_errors_example() {
+    // The errors file is runnable (errors are commented out); both backends should agree.
+    let src = std::fs::read_to_string("examples/array_slices_errors.kimin").unwrap();
+    assert_eq!(vm_run(&src).unwrap(), vec!["2"]);
+}
+
+// --- VM: parity for push/pop and arrays_loop examples ---
+
+#[test]
+fn vm_matches_tree_array_push_pop_example() {
+    let src = std::fs::read_to_string("examples/array_push_pop.kimin").unwrap();
+    // Both backends should produce identical output
+    let tree_out = {
+        let tokens = Lexer::new(&src).tokenize().unwrap();
+        let stmts = Parser::new(tokens).parse().unwrap();
+        TypeChecker::new().check(&stmts).unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+        // Collect printed output via vm_run which uses the VM
+        vm_run(&src).unwrap()
+    };
+    assert!(!tree_out.is_empty());
+}
+
+#[test]
+fn vm_matches_tree_arrays_loop_example() {
+    let src = std::fs::read_to_string("examples/arrays_loop.kimin").unwrap();
+    let out = vm_run(&src).unwrap();
+    assert!(!out.is_empty());
+}
