@@ -910,6 +910,66 @@ impl Interpreter {
                         };
                         return Ok(Value::Bool(text.ends_with(suffix.as_str())));
                     }
+
+                    if name == "to_upper" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("to_upper() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "to_upper() argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Str(text.to_uppercase()));
+                    }
+
+                    if name == "to_lower" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("to_lower() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "to_lower() argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Str(text.to_lowercase()));
+                    }
+
+                    if name == "trim" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("trim() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "trim() argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Str(text.trim().to_string()));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;

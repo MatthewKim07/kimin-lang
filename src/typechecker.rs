@@ -1431,6 +1431,66 @@ impl TypeChecker {
                         }
                         return Ok(Type::Bool);
                     }
+
+                    // `to_upper` builtin: to_upper(text) -> Text
+                    if name == "to_upper" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("to_upper() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t = self.check_expr(&args[0], *span)?;
+                        if !t.is_unknown() && t != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("to_upper() argument must be Text, got {}", t.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Text);
+                    }
+
+                    // `to_lower` builtin: to_lower(text) -> Text
+                    if name == "to_lower" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("to_lower() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t = self.check_expr(&args[0], *span)?;
+                        if !t.is_unknown() && t != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("to_lower() argument must be Text, got {}", t.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Text);
+                    }
+
+                    // `trim` builtin: trim(text) -> Text
+                    if name == "trim" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("trim() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t = self.check_expr(&args[0], *span)?;
+                        if !t.is_unknown() && t != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("trim() argument must be Text, got {}", t.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Text);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;
