@@ -140,6 +140,9 @@ fn fmt_instruction(instr: &Instruction) -> String {
             };
             format!("INDEX_COMPOUND_ASSIGN {} {}", name, op_str)
         }
+        Instruction::Contains => "CONTAINS".to_string(),
+        Instruction::StartsWith => "STARTS_WITH".to_string(),
+        Instruction::EndsWith => "ENDS_WITH".to_string(),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

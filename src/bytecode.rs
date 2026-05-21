@@ -122,6 +122,11 @@ pub enum Instruction {
         op: crate::ast::CompoundAssignOp,
     },
 
+    /// String utility builtins: stack [..., text, pattern] → Bool.
+    Contains,
+    StartsWith,
+    EndsWith,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }

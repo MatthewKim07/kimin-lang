@@ -647,6 +647,24 @@ impl BytecodeCompiler {
                             return Ok(());
                         }
                     }
+                    if name == "contains" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::Contains);
+                        return Ok(());
+                    }
+                    if name == "starts_with" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::StartsWith);
+                        return Ok(());
+                    }
+                    if name == "ends_with" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::EndsWith);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

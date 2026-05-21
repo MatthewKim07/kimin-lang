@@ -779,6 +779,78 @@ impl Vm {
                     stack.push(popped);
                 }
 
+                Instruction::Contains => {
+                    let pattern = pop(stack)?;
+                    let text = pop(stack)?;
+                    let t = match text {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "contains() first argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let p = match pattern {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "contains() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Bool(t.contains(p.as_str())));
+                }
+
+                Instruction::StartsWith => {
+                    let prefix = pop(stack)?;
+                    let text = pop(stack)?;
+                    let t = match text {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "starts_with() first argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let p = match prefix {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "starts_with() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Bool(t.starts_with(p.as_str())));
+                }
+
+                Instruction::EndsWith => {
+                    let suffix = pop(stack)?;
+                    let text = pop(stack)?;
+                    let t = match text {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "ends_with() first argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let s = match suffix {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "ends_with() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Bool(t.ends_with(s.as_str())));
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",
