@@ -146,6 +146,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::ToUpper => "TO_UPPER".to_string(),
         Instruction::ToLower => "TO_LOWER".to_string(),
         Instruction::Trim => "TRIM".to_string(),
+        Instruction::Split => "SPLIT".to_string(),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

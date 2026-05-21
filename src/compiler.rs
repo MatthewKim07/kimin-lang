@@ -680,6 +680,12 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Trim);
                         return Ok(());
                     }
+                    if name == "split" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::Split);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

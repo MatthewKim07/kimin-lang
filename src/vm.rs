@@ -893,6 +893,37 @@ impl Vm {
                     stack.push(Value::Str(s.trim().to_string()));
                 }
 
+                Instruction::Split => {
+                    let delim_val = pop(stack)?;
+                    let text_val = pop(stack)?;
+                    let delimiter = match delim_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "split() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let text = match text_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "split() first argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let parts: Vec<Value> = if delimiter.is_empty() {
+                        text.chars().map(|c| Value::Str(c.to_string())).collect()
+                    } else {
+                        text.split(delimiter.as_str())
+                            .map(|p| Value::Str(p.to_string()))
+                            .collect()
+                    };
+                    stack.push(Value::Array(parts));
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

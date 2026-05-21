@@ -132,6 +132,10 @@ pub enum Instruction {
     ToLower,
     Trim,
 
+    /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
+    /// Empty delimiter splits into individual characters.
+    Split,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }
