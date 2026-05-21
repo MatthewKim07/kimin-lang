@@ -1,0 +1,20 @@
+let d1: meters = 5
+let d2: meters = 10
+
+fn count_distances(ds: Array<meters>) -> Number {
+  return len(ds)
+}
+
+fn total_distances(ds: Array<meters>) -> meters {
+  let mut total: meters = 0
+
+  for i in range(0, len(ds)) {
+    total += ds[i]
+  }
+
+  return total
+}
+
+print(count_distances([]))
+print(count_distances([d1, d2]))
+print(total_distances([d1, d2]))

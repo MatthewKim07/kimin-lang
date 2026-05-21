@@ -17095,16 +17095,15 @@ fn tc_empty_array_in_print_error() {
 }
 
 #[test]
-fn tc_empty_array_call_arg_still_error() {
-    // sum([]) — call argument position has no expected-type propagation in M10E
+fn tc_empty_array_call_arg_now_ok() {
+    // M10F: sum([]) now works because param type Array<Number> propagates as expected type
     let src = "
-        fn sum(nums: Array<Number>) -> Number { return nums[0] }
-        sum([])
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([])
     ";
-    let result = check(src);
     assert!(
-        result.is_err(),
-        "expected TypeError for empty array call arg"
+        check(src).is_ok(),
+        "expected ok for empty array call arg with Array<Number> param"
     );
 }
 
@@ -17373,4 +17372,279 @@ fn vm_annotated_unit_array_push_pop() {
     ";
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["1", "5"]);
+}
+
+// ============================================================
+// M10F — Expected-type propagation for function call arguments
+// ============================================================
+
+// --- typechecker: empty [] in call arg when param is Array<T> ---
+
+#[test]
+fn call_arg_empty_array_expected_number_ok() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn call_arg_empty_array_expected_text_ok() {
+    let src = "
+        fn count(words: Array<Text>) -> Number { return len(words) }
+        count([])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn call_arg_empty_array_expected_bool_ok() {
+    let src = "
+        fn count(flags: Array<Bool>) -> Number { return len(flags) }
+        count([])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn call_arg_empty_array_expected_unit_ok() {
+    let src = "
+        fn count_distances(ds: Array<meters>) -> Number { return len(ds) }
+        count_distances([])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn call_arg_empty_array_expected_state_ok() {
+    let src = "
+        state Door { open closed transition open -> closed }
+        fn count_doors(ds: Array<Door>) -> Number { return len(ds) }
+        count_doors([])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn call_arg_non_empty_array_checked_against_param_ok() {
+    let src = "
+        fn sum(nums: Array<Number>) -> Number {
+            let mut t: Number = 0
+            for i in range(0, len(nums)) { t += nums[i] }
+            return t
+        }
+        sum([1, 2, 3])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn call_arg_wrong_element_type_error() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([\"bad\"])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn call_arg_mixed_array_error() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([1, \"bad\"])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn call_arg_empty_array_expected_number_not_array_error() {
+    let src = "
+        fn f(x: Number) -> Number { return x }
+        f([])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn call_arg_wrong_arity_still_error() {
+    let src = "
+        fn f(a: Array<Number>, b: Number) -> Number { return b }
+        f([])
+    ";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn call_arg_multiple_params_expected_types_ok() {
+    let src = "
+        fn f(a: Array<Number>, b: Array<Text>) -> Number { return len(a) }
+        f([], [])
+    ";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn len_empty_array_still_error() {
+    // len([]) has no expected-type context — still TypeError
+    let src = "len([])";
+    assert!(check(src).is_err());
+}
+
+// --- interpreter: call [] arg evaluates to empty array ---
+
+#[test]
+fn interp_call_empty_array_arg_count_zero() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        let result = count([])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_call_sum_empty_array() {
+    let src = "
+        fn sum(nums: Array<Number>) -> Number {
+            let mut t: Number = 0
+            for i in range(0, len(nums)) { t += nums[i] }
+            return t
+        }
+        let a = sum([])
+        let b = sum([1, 2, 3])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Number(0.0)));
+    assert_eq!(interp.get_var("b"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn interp_call_unit_array_arg_empty() {
+    let src = "
+        fn count_distances(ds: Array<meters>) -> Number { return len(ds) }
+        let result = count_distances([])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_call_state_array_arg_empty() {
+    let src = "
+        state Door { open closed transition open -> closed }
+        fn count_doors(ds: Array<Door>) -> Number { return len(ds) }
+        let result = count_doors([])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_call_nonempty_array_arg_sum() {
+    let src = "
+        fn sum(nums: Array<Number>) -> Number {
+            let mut t: Number = 0
+            for i in range(0, len(nums)) { t += nums[i] }
+            return t
+        }
+        let result = sum([10, 20, 30])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(60.0)));
+}
+
+// --- VM: parity with tree-walk ---
+
+#[test]
+fn vm_call_empty_array_arg_count_zero() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        print(count([]))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_call_sum_empty_array() {
+    let src = "
+        fn sum(nums: Array<Number>) -> Number {
+            let mut t: Number = 0
+            for i in range(0, len(nums)) { t += nums[i] }
+            return t
+        }
+        print(sum([]))
+        print(sum([1, 2, 3]))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "6"]);
+}
+
+#[test]
+fn vm_call_unit_array_arg_empty() {
+    let src = "
+        fn count_distances(ds: Array<meters>) -> Number { return len(ds) }
+        print(count_distances([]))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_call_nonempty_array_arg() {
+    let src = "
+        fn first(nums: Array<Number>) -> Number { return nums[0] }
+        print(first([10, 20]))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+// --- bytecode: ARRAY 0 emitted for [] call arg ---
+
+#[test]
+fn bytecode_call_empty_array_arg_emits_array_0() {
+    let src = "
+        fn count(nums: Array<Number>) -> Number { return len(nums) }
+        count([])
+    ";
+    let prog = compile_prog(src);
+    let has_array_0 = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, crate::bytecode::Instruction::Array { count: 0 }))
+    }) || prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Array { count: 0 }));
+    assert!(
+        has_array_0,
+        "expected ARRAY 0 in bytecode for empty array call arg"
+    );
+}
+
+// --- regression: M10E behavior unchanged ---
+
+#[test]
+fn regression_annotated_let_empty_still_ok() {
+    let src = "let x: Array<Number> = []";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn regression_unannotated_let_empty_still_error() {
+    let src = "let x = []";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn regression_fn_return_empty_still_ok() {
+    let src = "
+        fn make() -> Array<Number> { return [] }
+        let x: Array<Number> = make()
+    ";
+    assert!(check(src).is_ok());
 }

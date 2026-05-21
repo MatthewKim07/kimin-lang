@@ -1,0 +1,17 @@
+// Keep runnable by default.
+
+fn count(nums: Array<Number>) -> Number {
+  return len(nums)
+}
+
+print(count([]))
+
+// Uncomment to test wrong element type:
+// count(["bad"])
+
+// Uncomment to test mixed element type:
+// count([1, "bad"])
+
+// Uncomment to test [] where Number is expected:
+// fn id(x: Number) -> Number { return x }
+// id([])

@@ -1,0 +1,17 @@
+fn count(nums: Array<Number>) -> Number {
+  return len(nums)
+}
+
+fn sum(nums: Array<Number>) -> Number {
+  let mut total: Number = 0
+
+  for i in range(0, len(nums)) {
+    total += nums[i]
+  }
+
+  return total
+}
+
+print(count([]))
+print(sum([1, 2, 3]))
+print(sum([]))
