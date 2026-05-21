@@ -650,46 +650,72 @@ impl TypeChecker {
                     });
                 }
 
-                let elem_ty = match var_ty {
-                    Type::Array(elem) => *elem,
-                    Type::Unknown => Type::Unknown,
+                match var_ty {
+                    Type::Array(elem_ty) => {
+                        let idx_ty = self.check_expr(index, *span)?;
+                        if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("array index must be Number, got {}", idx_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let val_ty = self.check_expr(value, *span)?;
+                        let compatible = val_ty.is_unknown()
+                            || elem_ty.is_unknown()
+                            || val_ty == *elem_ty
+                            || (matches!(&*elem_ty, Type::NumberWithUnit(_))
+                                && val_ty == Type::Number);
+                        if !compatible {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "array element has type {} but assigned value has type {}",
+                                    elem_ty.name(),
+                                    val_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                    }
+                    Type::Map(_, val_ty) => {
+                        let key_ty = self.check_expr(index, *span)?;
+                        if !key_ty.is_unknown() && key_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("map index key must be Text, got {}", key_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let assigned_ty = self.check_expr(value, *span)?;
+                        let compatible = assigned_ty.is_unknown()
+                            || val_ty.is_unknown()
+                            || assigned_ty == *val_ty
+                            || (matches!(&*val_ty, Type::NumberWithUnit(_))
+                                && assigned_ty == Type::Number);
+                        if !compatible {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "map value has type {} but assigned value has type {}",
+                                    val_ty.name(),
+                                    assigned_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                    }
+                    Type::Unknown => {
+                        self.check_expr(index, *span)?;
+                        self.check_expr(value, *span)?;
+                    }
                     other => {
                         return Err(TypeError {
-                            msg: format!(
-                                "index assignment target '{}' is not an array, got {}",
-                                name,
-                                other.name()
-                            ),
+                            msg: format!("cannot index-assign into value of type {}", other.name()),
                             line: span.line,
                             col: span.col,
                         });
                     }
-                };
-
-                let idx_ty = self.check_expr(index, *span)?;
-                if !idx_ty.is_unknown() && idx_ty != Type::Number {
-                    return Err(TypeError {
-                        msg: format!("array index must be Number, got {}", idx_ty.name()),
-                        line: span.line,
-                        col: span.col,
-                    });
-                }
-
-                let val_ty = self.check_expr(value, *span)?;
-                let compatible = val_ty.is_unknown()
-                    || elem_ty.is_unknown()
-                    || val_ty == elem_ty
-                    || (matches!(&elem_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
-                if !compatible {
-                    return Err(TypeError {
-                        msg: format!(
-                            "array element has type {} but assigned value has type {}",
-                            elem_ty.name(),
-                            val_ty.name()
-                        ),
-                        line: span.line,
-                        col: span.col,
-                    });
                 }
                 Ok(())
             }
