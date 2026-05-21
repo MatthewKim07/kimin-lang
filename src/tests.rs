@@ -11445,8 +11445,6 @@ fn tc_unannotated_empty_array_error() {
 }
 
 #[test]
-
-#[test]
 fn parse_empty_array_literal_error() {
     // Empty [] now parses successfully; the type checker rejects it without an annotation.
     // This test is kept to document the behavior change from M10E.
@@ -16902,3 +16900,84 @@ fn bytecode_fn_returning_empty_array() {
     assert!(has_array_0, "expected ARRAY 0 in a function chunk");
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_empty_annotated_array_len_zero() {
+    let src = "
+        let nums: Array<Number> = []
+        print(len(nums))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_annotated_array_push_pop() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 10)
+        push(nums, 20)
+        push(nums, 30)
+        print(len(nums))
+        print(nums[0])
+        print(nums[2])
+        print(pop(nums))
+        print(len(nums))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3", "10", "30", "30", "2"]);
+}
+
+#[test]
+fn vm_fn_returns_empty_array() {
+    let src = "
+        fn make_empty() -> Array<Number> {
+            return []
+        }
+        print(len(make_empty()))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_fn_param_array() {
+    let src = "
+        fn sum(nums: Array<Number>) -> Number {
+            let mut total: Number = 0
+            for i in range(0, len(nums)) {
+                total += nums[i]
+            }
+            return total
+        }
+        fn make_nums() -> Array<Number> {
+            return [1, 2, 3, 4]
+        }
+        print(sum(make_nums()))
+        print(len(make_nums()))
+    ";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10", "4"]);
+}
+
+#[test]
+fn vm_annotated_array_matches_tree() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 1)
+        push(nums, 2)
+        push(nums, 3)
+        print(len(nums))
+        print(nums[1])
+    ";
+    let tree_out = {
+        let tokens = Lexer::new(src).tokenize().unwrap();
+        let stmts = Parser::new(tokens).parse().unwrap();
+        TypeChecker::new().check(&stmts).unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+        vm_run(src).unwrap()
+    };
+    assert_eq!(tree_out, vec!["3", "2"]);
+}
