@@ -16783,3 +16783,122 @@ fn tc_push_unit_into_empty_unit_array_ok() {
     assert!(check(src).is_ok());
 }
 
+// --- Interpreter tests ---
+
+#[test]
+fn interp_empty_annotated_array_len_zero() {
+    let interp = run("let nums: Array<Number> = []").unwrap();
+    match interp.get_var("nums").unwrap() {
+        Value::Array(v) => assert_eq!(v.len(), 0),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_annotated_array_push_pop() {
+    let src = "
+        let mut nums: Array<Number> = []
+        push(nums, 10)
+        push(nums, 20)
+        let a = pop(nums)
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("a").unwrap(), Value::Number(20.0));
+    match interp.get_var("nums").unwrap() {
+        Value::Array(v) => assert_eq!(v.len(), 1),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_fn_returns_empty_array() {
+    let src = "
+        fn make_empty() -> Array<Number> {
+            return []
+        }
+        let result = make_empty()
+        let n = len(result)
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(0.0));
+}
+
+#[test]
+fn interp_fn_param_array_index() {
+    let src = "
+        fn first(nums: Array<Number>) -> Number {
+            return nums[0]
+        }
+        let result = first([10, 20, 30])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result").unwrap(), Value::Number(10.0));
+}
+
+#[test]
+fn interp_annotated_array_sum_loop() {
+    let src = "
+        fn sum(nums: Array<Number>) -> Number {
+            let mut total: Number = 0
+            for i in range(0, len(nums)) {
+                total += nums[i]
+            }
+            return total
+        }
+        let result = sum([1, 2, 3, 4])
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result").unwrap(), Value::Number(10.0));
+}
+
+#[test]
+fn interp_make_array_fn_return() {
+    let src = "
+        fn make_nums() -> Array<Number> {
+            return [1, 2, 3, 4]
+        }
+        fn make_empty() -> Array<Number> {
+            return []
+        }
+        let a = make_nums()
+        let b = make_empty()
+        let n = len(b)
+    ";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(0.0));
+    match interp.get_var("a").unwrap() {
+        Value::Array(v) => assert_eq!(v.len(), 4),
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+// --- Bytecode compiler tests ---
+
+#[test]
+fn bytecode_empty_array_emits_array_0() {
+    let prog = compile_prog("let nums: Array<Number> = []");
+    let has_array_0 = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Array { count: 0 }));
+    assert!(has_array_0, "expected ARRAY 0 in main chunk");
+}
+
+#[test]
+fn bytecode_fn_returning_empty_array() {
+    let src = "
+        fn make() -> Array<Number> {
+            return []
+        }
+    ";
+    let prog = compile_prog(src);
+    let has_array_0 = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Array { count: 0 }))
+    });
+    assert!(has_array_0, "expected ARRAY 0 in a function chunk");
+}
+
