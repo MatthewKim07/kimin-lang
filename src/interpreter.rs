@@ -970,6 +970,44 @@ impl Interpreter {
                         };
                         return Ok(Value::Str(text.trim().to_string()));
                     }
+
+                    if name == "split" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("split() expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let text = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "split() first argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let delimiter = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "split() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let parts: Vec<Value> = if delimiter.is_empty() {
+                            text.chars().map(|c| Value::Str(c.to_string())).collect()
+                        } else {
+                            text.split(delimiter.as_str())
+                                .map(|p| Value::Str(p.to_string()))
+                                .collect()
+                        };
+                        return Ok(Value::Array(parts));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
