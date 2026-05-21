@@ -6,7 +6,7 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2068_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2122_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 ![Milestone](https://img.shields.io/badge/milestone-11D-informational?style=flat-square)
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2068 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2122 tests passing**.
 
 ---
 
@@ -643,7 +643,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2068 passed, 0 failed
+# 2122 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -670,7 +670,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2068 unit tests
+  tests.rs        2122 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin

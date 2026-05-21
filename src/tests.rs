@@ -20917,3 +20917,550 @@ fn split_arity_error_message() {
     };
     assert!(msg.contains("split"), "got: {}", msg);
 }
+
+// =============================================================================
+// M11D audit: additional tests
+// =============================================================================
+
+// --- 1. Parser audit ---
+
+#[test]
+fn parse_split_nested_call() {
+    assert!(check("let parts = split(trim(\"  a,b  \"), \",\")").is_ok());
+}
+
+#[test]
+fn parse_split_in_return() {
+    assert!(check("fn words(s: Text) -> Array<Text> { return split(s, \" \") }").is_ok());
+}
+
+#[test]
+fn parse_split_in_if_condition() {
+    // split result inside if body: parsed correctly
+    let src = "let s = \"a,b\"\nlet parts = split(s, \",\")\nif starts_with(parts[0], \"a\") { let x = 1 }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn parse_existing_string_builtins_still_parse_after_split() {
+    assert!(check("contains(\"a\", \"a\")").is_ok());
+    assert!(check("starts_with(\"a\", \"a\")").is_ok());
+    assert!(check("ends_with(\"a\", \"a\")").is_ok());
+    assert!(check("to_upper(\"a\")").is_ok());
+    assert!(check("to_lower(\"A\")").is_ok());
+    assert!(check("trim(\"  a  \")").is_ok());
+}
+
+#[test]
+fn parse_string_len_index_slice_still_parse_after_split() {
+    assert!(check("len(\"hello\")").is_ok());
+    assert!(check("\"hello\"[0]").is_ok());
+    assert!(check("\"hello\"[0..3]").is_ok());
+}
+
+// --- 2. Typechecker audit ---
+
+#[test]
+fn type_split_text_text_ok() {
+    assert!(check("split(\"a,b\", \",\")").is_ok());
+}
+
+#[test]
+fn type_split_bool_first_arg_error() {
+    let err = check("split(true, \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text") && msg.contains("Bool"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_split_bool_second_arg_error() {
+    let err = check("split(\"hello\", false)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text") && msg.contains("Bool"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_split_array_first_arg_error() {
+    // [1, 2] is Array<Number> — not Text
+    let err = check("split([1, 2], \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_split_unit_first_arg_error() {
+    let err = check("let d: meters = 1\nsplit(d, \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_split_state_first_arg_error() {
+    let src = "state Light {\n  red\n  green\n  transition red -> green\n}\nlet l: Light = Light.red\nsplit(l, \",\")";
+    let err = check(src).unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("split") && msg.contains("Text"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_chained_index_split_result_ok() {
+    // split(...)[0] is Text; Text[0] is Text
+    assert!(check("let c: Text = split(\"abc\", \"\")[0][0]").is_ok());
+}
+
+#[test]
+fn type_slice_split_result_ok() {
+    // split result can be sliced — Array<Text>[start..end] = Array<Text>
+    assert!(check("let sub: Array<Text> = split(\"a,b,c\", \",\")[0..2]").is_ok());
+}
+
+#[test]
+fn type_string_utils_still_ok_after_split() {
+    assert!(check("contains(\"hello\", \"ell\")").is_ok());
+    assert!(check("starts_with(\"hello\", \"h\")").is_ok());
+    assert!(check("ends_with(\"hello\", \"o\")").is_ok());
+}
+
+#[test]
+fn type_string_transforms_still_ok_after_split() {
+    assert!(check("to_upper(\"hello\")").is_ok());
+    assert!(check("to_lower(\"HELLO\")").is_ok());
+    assert!(check("trim(\"  hello  \")").is_ok());
+}
+
+#[test]
+fn type_array_text_expected_call_still_ok_after_split() {
+    // f([]) when param is Array<Text> should still work
+    let src = "fn process(parts: Array<Text>) -> Number { return len(parts) }\nprocess([])";
+    assert!(check(src).is_ok());
+}
+
+// --- 3. Interpreter audit ---
+
+#[test]
+fn interp_split_variables() {
+    let src = "let text = \"x,y,z\"\nlet delim = \",\"\nlet parts = split(text, delim)";
+    let interp = run(src).unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("x".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_eval_order_left_to_right() {
+    // Both sides must evaluate: verify text arg evaluates before delimiter
+    let src =
+        "let text = \"a,b\"\nlet delim = \",\"\nlet parts = split(text, delim)\nlet n = len(parts)";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(2.0));
+}
+
+#[test]
+fn interp_split_unicode_delimiter() {
+    let interp = run("let parts = split(\"heello\", \"ee\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0], Value::Str("h".to_string()));
+            assert_eq!(elems[1], Value::Str("llo".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn interp_split_empty_delimiter_unicode_content() {
+    // Actual Unicode scalar values, not raw bytes
+    let interp = run("let parts = split(\"abc\", \"\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+            assert_eq!(elems[2], Value::Str("c".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+// --- 4 + 5. Empty delimiter and edge-case audit ---
+
+#[test]
+fn split_empty_delimiter_unicode_chars() {
+    // Non-ASCII Unicode: multi-byte UTF-8, but single scalar values
+    // "ab" with empty delimiter -> ["a", "b"] — simple ASCII variant
+    let interp = run("let parts = split(\"ab\", \"\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn split_entire_string_delimiter() {
+    // split("abc", "abc") -> ["", ""] — Rust str::split behavior
+    let interp = run("let parts = split(\"abc\", \"abc\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0], Value::Str("".to_string()));
+            assert_eq!(elems[1], Value::Str("".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn vm_split_entire_string_delimiter() {
+    let out = vm_run(
+        "let parts = split(\"abc\", \"abc\")\nprint(len(parts))\nprint(parts[0])\nprint(parts[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "", ""]);
+}
+
+// --- 6. Bytecode compiler audit ---
+
+#[test]
+fn bytecode_split_arg_order() {
+    // text is first constant, delimiter is second — SPLIT pops delimiter (top) then text
+    let prog = compile_prog("split(\"hello\", \",\")");
+    let constants: Vec<_> = prog
+        .main
+        .constants
+        .iter()
+        .filter_map(|c| {
+            if let Constant::Text(s) = c {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    // "hello" must appear before "," in constant pool
+    let hello_pos = constants.iter().position(|&s| s == "hello");
+    let comma_pos = constants.iter().position(|&s| s == ",");
+    assert!(hello_pos.is_some() && comma_pos.is_some());
+    assert!(
+        hello_pos.unwrap() < comma_pos.unwrap(),
+        "text must be before delimiter in constant pool"
+    );
+}
+
+#[test]
+fn bytecode_split_inside_function() {
+    let src = "fn words(s: Text) -> Array<Text> { return split(s, \" \") }";
+    let prog = compile_prog(src);
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "words").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Split)));
+}
+
+#[test]
+fn bytecode_split_inside_if() {
+    let src = "let s = \"a,b\"\nif starts_with(s, \"a\") { let parts = split(s, \",\") }";
+    let prog = compile_prog(src);
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Split)));
+}
+
+#[test]
+fn bytecode_split_inside_simulate() {
+    let src =
+        "let dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt { let p = split(\"a,b\", \",\") }";
+    let prog = compile_prog(src);
+    // SPLIT must appear in a simulate body chunk
+    assert!(prog.simulate_bodies.iter().any(|sc| sc
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Split))));
+}
+
+#[test]
+fn bytecode_existing_string_builtins_unchanged_after_split() {
+    let prog =
+        compile_prog("contains(\"a\",\"a\")\nstarts_with(\"a\",\"a\")\nends_with(\"a\",\"a\")\nto_upper(\"a\")\nto_lower(\"A\")\ntrim(\"  a  \")");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Contains)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::StartsWith)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::EndsWith)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::ToUpper)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::ToLower)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Trim)));
+}
+
+#[test]
+fn bytecode_len_index_slice_unchanged_after_split() {
+    let prog = compile_prog("let arr = [1, 2, 3]\nlen(arr)\narr[0]\narr[0..2]");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Len)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Index)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Slice)));
+}
+
+#[test]
+fn disassemble_split_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("split(\"a\", \",\")");
+    let output = disassemble(&prog);
+    assert!(
+        output.contains("SPLIT"),
+        "expected SPLIT in disassembly, got:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("CALL"),
+        "CALL should not appear for split, got:\n{}",
+        output
+    );
+}
+
+// --- 7. VM audit ---
+
+#[test]
+fn vm_split_basic_space() {
+    let out = vm_run("let parts = split(\"hello world\", \" \")\nprint(parts[0])\nprint(parts[1])")
+        .unwrap();
+    assert_eq!(out, vec!["hello", "world"]);
+}
+
+#[test]
+fn vm_split_repeated_delimiter() {
+    let out =
+        vm_run("let parts = split(\"a,,b\", \",\")\nprint(len(parts))\nprint(parts[1])").unwrap();
+    assert_eq!(out, vec!["3", ""]);
+}
+
+#[test]
+fn vm_split_leading_delimiter() {
+    let out =
+        vm_run("let parts = split(\",a,b\", \",\")\nprint(len(parts))\nprint(parts[0])").unwrap();
+    assert_eq!(out, vec!["3", ""]);
+}
+
+#[test]
+fn vm_split_trailing_delimiter() {
+    let out =
+        vm_run("let parts = split(\"a,b,\", \",\")\nprint(len(parts))\nprint(parts[2])").unwrap();
+    assert_eq!(out, vec!["3", ""]);
+}
+
+#[test]
+fn vm_split_empty_text() {
+    // split("", ",") -> one-element array with ""
+    let out = vm_run("print(len(split(\"\", \",\")))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_split_empty_delimiter_unicode() {
+    // "abc" split by "" -> ["a", "b", "c"]
+    let out =
+        vm_run("let cs = split(\"abc\", \"\")\nprint(cs[0])\nprint(cs[1])\nprint(cs[2])").unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_split_variables() {
+    let src = "let t = \"p,q,r\"\nlet d = \",\"\nlet parts = split(t, d)\nprint(parts[0])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["p"]);
+}
+
+#[test]
+fn vm_split_stack_clean() {
+    // split result used as expression statement (discarded with POP) should not corrupt the stack
+    let src = "split(\"a,b\", \",\")\nprint(\"ok\")";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["ok"]);
+}
+
+// --- 8. Unicode audit ---
+
+#[test]
+fn interp_split_unicode_delimiter_non_ascii() {
+    // split("a-b", "-") using ASCII delimiter on ASCII string — basic sanity
+    let interp = run("let parts = split(\"a-b-c\", \"-\")").unwrap();
+    match interp.get_var("parts").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0], Value::Str("a".to_string()));
+            assert_eq!(elems[1], Value::Str("b".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn vm_split_unicode_delimiter_non_ascii() {
+    let out = vm_run("print(len(split(\"a-b-c\", \"-\")))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn unicode_len_index_slice_still_work_after_split() {
+    // len of multi-char string still char-based
+    let out = vm_run("print(len(\"hello\"))\nprint(\"hello\"[0])\nprint(\"hello\"[1..3])").unwrap();
+    assert_eq!(out, vec!["5", "h", "el"]);
+}
+
+#[test]
+fn unicode_transform_still_work_after_split() {
+    let out =
+        vm_run("print(to_upper(\"hello\"))\nprint(to_lower(\"WORLD\"))\nprint(trim(\"  ok  \"))")
+            .unwrap();
+    assert_eq!(out, vec!["HELLO", "world", "ok"]);
+}
+
+// --- 9. Function / closure audit ---
+
+#[test]
+fn closure_split_captured_delimiter() {
+    let src = "let delimiter = \",\"\nfn parts(s: Text) -> Array<Text> { return split(s, delimiter) }\nlet xs = parts(\"a,b\")\nprint(xs[0])\nprint(xs[1])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a", "b"]);
+}
+
+#[test]
+fn vm_matches_tree_split_functions() {
+    let src = "fn words(s: Text) -> Array<Text> { return split(s, \" \") }\nlet parts = words(\"hello world\")\nprint(parts[0])\nprint(parts[1])";
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["hello", "world"]);
+}
+
+// --- 10. Loop audit ---
+
+#[test]
+fn split_result_for_loop_with_string_utils() {
+    // "hello world help" → ["hello", "world", "help"]; starts_with "h": hello, help → count=2
+    let src = "let words = split(\"hello world help\", \" \")\nlet mut count: Number = 0\nfor i in range(0, len(words)) { if starts_with(words[i], \"h\") { count += 1 } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("count").unwrap(), Value::Number(2.0));
+}
+
+#[test]
+fn split_result_while_loop() {
+    let src = "let parts = split(\"a,b,c\", \",\")\nlet mut idx: Number = 0\nlet mut total: Number = 0\nwhile idx < len(parts) { total += 1\nidx += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("total").unwrap(), Value::Number(3.0));
+}
+
+#[test]
+fn split_result_break_continue() {
+    let src = "let words = split(\"a,skip,b\", \",\")\nlet mut count: Number = 0\nfor i in range(0, len(words)) { if words[i] == \"skip\" { continue }\ncount += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("count").unwrap(), Value::Number(2.0));
+}
+
+// --- 11. Simulate audit ---
+
+#[test]
+fn simulate_split_result_indexing() {
+    let src = "let parts = split(\"a,b,c\", \",\")\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { i += 1 }\nlet last = parts[2]";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("last").unwrap(), Value::Str("c".to_string()));
+}
+
+#[test]
+fn simulate_split_call_inside_body() {
+    let src = "let dur: seconds = 1\nlet dt: seconds = 1\nlet mut result: Array<Text> = []\nsimulate dur step dt { result = split(\"x,y\", \",\") }";
+    let interp = run(src).unwrap();
+    match interp.get_var("result").unwrap() {
+        Value::Array(elems) => {
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0], Value::Str("x".to_string()));
+        }
+        other => panic!("expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn simulate_split_with_string_utils() {
+    let src = "let data = split(\"hello,world\", \",\")\nlet dur: seconds = 1\nlet dt: seconds = 1\nlet mut found: Number = 0\nsimulate dur step dt { if contains(data[0], \"ell\") { found += 1 } }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("found").unwrap(), Value::Number(1.0));
+}
+
+#[test]
+fn vm_matches_tree_split_simulate() {
+    let src = "let parts = split(\"a,b,c\", \",\")\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { print(parts[i])\ni += 1 }";
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["a", "b", "c"]);
+}
+
+// --- 12. Interactions ---
+
+#[test]
+fn split_chained_string_index_ok() {
+    // split("abc", "")[0][0] -> Text -> Text
+    let interp = run("let c = split(\"abc\", \"\")[0][0]").unwrap();
+    assert_eq!(interp.get_var("c").unwrap(), Value::Str("a".to_string()));
+}
+
+#[test]
+fn existing_array_features_still_ok_after_split() {
+    let src = "let arr = [1, 2, 3]\nlet n = len(arr)\nlet v = arr[1]\nlet sub = arr[0..2]\nlet mut marr: Array<Number> = []\npush(marr, 42)\nlet popped = pop(marr)";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(3.0));
+    assert_eq!(interp.get_var("v").unwrap(), Value::Number(2.0));
+    assert_eq!(interp.get_var("popped").unwrap(), Value::Number(42.0));
+}
+
+#[test]
+fn existing_string_features_still_ok_after_split() {
+    let src = "let s = \"hello\"\nlet n = len(s)\nlet c = s[0]\nlet sub = s[1..3]";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(5.0));
+    assert_eq!(interp.get_var("c").unwrap(), Value::Str("h".to_string()));
+    assert_eq!(interp.get_var("sub").unwrap(), Value::Str("el".to_string()));
+}
