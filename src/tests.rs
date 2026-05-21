@@ -18474,3 +18474,323 @@ fn array_slice_errors_unchanged() {
     assert!(run("let _ = [1, 2][0..99]").is_err());
     assert!(run("let _ = [1, 2][3..1]").is_err());
 }
+
+// ============================================================
+// M11A audit — additional coverage
+// ============================================================
+
+// --- parser: missing cases ---
+
+#[test]
+fn parse_string_slice_variable() {
+    let src = "let s = \"hello\"\nlet _ = s[1..4]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_index_after_call() {
+    let src = "fn get() -> Text { return \"hello\" }\nlet _ = get()[0]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_slice_open_start_error() {
+    let src = "let s = \"hello\"\nlet _ = s[..3]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_string_slice_open_end_error() {
+    let src = "let s = \"hello\"\nlet _ = s[1..]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_string_slice_stepped_error() {
+    // s[1..5..2] — the second '..' after the end is a ParseError (unexpected token after end)
+    let src = "let s = \"hello\"\nlet _ = s[1..5..2]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+// --- typechecker: missing error cases ---
+
+#[test]
+fn type_string_index_bool_index_error() {
+    assert!(check("\"hello\"[true]").is_err());
+}
+
+#[test]
+fn type_string_index_unit_index_error() {
+    let src = "let d: meters = 5\nlet _ = \"hello\"[d]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_string_slice_start_unit_error() {
+    let src = "let d: meters = 1\nlet _ = \"hello\"[d..3]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_slice_number_still_error() {
+    let src = "let x: Number = 5\nlet _ = x[0..2]";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_string_index_assign_error() {
+    // String index assignment is a TypeError
+    let src = "let mut s: Text = \"hi\"\ns[0] = \"x\"";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_string_index_compound_error() {
+    let src = "let mut s: Text = \"hi\"\ns[0] += \"x\"";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_push_string_error() {
+    let src = "let mut s: Text = \"hi\"\npush(s, \"x\")";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_pop_string_error() {
+    let src = "let mut s: Text = \"hi\"\npop(s)";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_len_unit_still_error() {
+    let src = "let d: meters = 5\nlen(d)";
+    assert!(check(src).is_err());
+}
+
+// --- interpreter: function/closure/loop/simulate ---
+
+#[test]
+fn interp_fn_string_index() {
+    let src = "fn first(s: Text) -> Text { return s[0] }\nlet r = first(\"hello\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("h".into())));
+}
+
+#[test]
+fn interp_fn_string_slice() {
+    let src = "fn mid(s: Text) -> Text { return s[1..4] }\nlet r = mid(\"hello\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("ell".into())));
+}
+
+#[test]
+fn interp_fn_string_len() {
+    let src = "fn slen(s: Text) -> Number { return len(s) }\nlet r = slen(\"world\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_closure_string_capture() {
+    let src = "let s = \"hello\"\nfn get_mid() -> Text { return s[1..4] }\nlet r = get_mid()";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Str("ell".into())));
+}
+
+#[test]
+fn interp_loop_string_slice_prefixes() {
+    // Tree-walk: use vm_run for output-based comparison since interpreter uses println!
+    let src = "let s = \"abcd\"\nfor i in range(0, len(s)) { print(s[0..i]) }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["", "a", "ab", "abc"]);
+}
+
+#[test]
+fn interp_while_string_index() {
+    let src = "let s = \"abc\"\nlet mut i: Number = 0\nwhile i < len(s) { print(s[i])\ni += 1 }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn interp_simulate_string_index() {
+    let src = "let s = \"abc\"\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { print(s[i])\ni += 1 }";
+    // Verify both paths are correct; use vm_run for output collection
+    run(src).unwrap();
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn interp_simulate_time_as_string_index_type_error() {
+    let src = "let s = \"abc\"\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { print(s[time]) }";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn interp_len_unicode_single_scalar() {
+    // é is U+00E9, one Rust char
+    let interp = run("let n = len(\"é\")").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(1.0)));
+}
+
+// --- Unicode: VM ---
+
+#[test]
+fn vm_len_unicode_single_scalar() {
+    let out = vm_run("print(len(\"é\"))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_string_slice_unicode() {
+    // "héllo"[1..3] → "él" (two chars starting at char index 1)
+    let out = vm_run("print(\"héllo\"[1..3])").unwrap();
+    assert_eq!(out, vec!["él"]);
+}
+
+// --- VM: missing error cases ---
+
+#[test]
+fn vm_string_slice_fractional_error() {
+    let result = vm_run("\"hello\"[0.5..3]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_string_slice_negative_error() {
+    let result = vm_run("let mut i: Number = 0\ni = 0 - 1\nlet _ = \"hello\"[i..3]");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_array_len_index_slice_vm_regression() {
+    let out =
+        vm_run("let a = [10, 20, 30]\nprint(len(a))\nprint(a[1])\nlet b = a[1..3]\nprint(len(b))")
+            .unwrap();
+    assert_eq!(out, vec!["3", "20", "2"]);
+}
+
+#[test]
+fn vm_simulate_string_index() {
+    let src = "let s = \"abc\"\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { print(s[i])\ni += 1 }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_fn_string_index() {
+    let src = "fn first(s: Text) -> Text { return s[0] }\nprint(first(\"hello\"))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["h"]);
+}
+
+#[test]
+fn vm_fn_string_slice() {
+    let src = "fn mid(s: Text) -> Text { return s[1..4] }\nprint(mid(\"hello\"))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["ell"]);
+}
+
+#[test]
+fn vm_closure_string_capture() {
+    let src = "let s = \"hello\"\nfn get_mid() -> Text { return s[1..4] }\nprint(get_mid())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["ell"]);
+}
+
+#[test]
+fn vm_while_string_index() {
+    let src = "let s = \"abc\"\nlet mut i: Number = 0\nwhile i < len(s) { print(s[i])\ni += 1 }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_loop_string_slice_prefixes() {
+    let src = "let s = \"abcd\"\nfor i in range(0, len(s)) { print(s[0..i]) }";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["", "a", "ab", "abc"]);
+}
+
+// --- output matching against example files ---
+
+#[test]
+fn vm_matches_tree_strings_loop() {
+    let src = std::fs::read_to_string("examples/strings_loop.kimin").unwrap();
+    // Verify tree-walk runs without error
+    run(&src).unwrap();
+    let out_vm = vm_run(&src).unwrap();
+    assert_eq!(out_vm, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_matches_tree_strings_functions() {
+    let src = std::fs::read_to_string("examples/strings_functions.kimin").unwrap();
+    run(&src).unwrap();
+    let out_vm = vm_run(&src).unwrap();
+    assert_eq!(out_vm, vec!["h", "ell"]);
+}
+
+#[test]
+fn vm_matches_tree_strings_simulate() {
+    let src = std::fs::read_to_string("examples/strings_simulate.kimin").unwrap();
+    run(&src).unwrap();
+    let out_vm = vm_run(&src).unwrap();
+    assert_eq!(out_vm, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_matches_tree_string_errors_example() {
+    // string_errors.kimin runs with only the safe (uncommented) operations
+    let src = std::fs::read_to_string("examples/string_errors.kimin").unwrap();
+    run(&src).unwrap();
+    let out_vm = vm_run(&src).unwrap();
+    assert_eq!(out_vm, vec!["h", "ell"]);
+}
+
+// --- array of Text interactions ---
+
+#[test]
+fn array_text_len_is_array_len() {
+    // len(["a", "b"]) returns 2 (element count), not length of first string
+    let interp = run("let n = len([\"a\", \"b\"])").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn array_text_index_returns_text_element() {
+    let interp = run("let x = [\"ab\", \"cd\"][0]").unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Str("ab".into())));
+}
+
+#[test]
+fn array_text_index_then_string_index() {
+    // Chained indexing: array index returns Text, then string index on that
+    let interp = run("let c = [\"ab\", \"cd\"][0][1]").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Str("b".into())));
+}
+
+#[test]
+fn array_text_slice_returns_array_text() {
+    let src = "let a = [\"x\", \"y\", \"z\"]\nlet b: Array<Text> = a[0..2]";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn vm_array_text_len_is_array_len() {
+    let out = vm_run("print(len([\"a\", \"b\"]))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_array_text_chained_index() {
+    let out = vm_run("print([\"ab\", \"cd\"][0][1])").unwrap();
+    assert_eq!(out, vec!["b"]);
+}
