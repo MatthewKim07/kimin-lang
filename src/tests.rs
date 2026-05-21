@@ -11427,10 +11427,32 @@ fn parse_array_index_expr() {
 }
 
 #[test]
-fn parse_empty_array_literal_error() {
+fn parse_empty_array_literal_ok() {
+    // Empty [] now parses successfully; the TypeError is deferred to the type checker.
     let tokens = Lexer::new("[]").tokenize().unwrap();
     let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn tc_unannotated_empty_array_error() {
+    // Without an annotation, the type checker cannot infer the element type.
+    let result = check("let x = []");
     assert!(result.is_err());
+    if let Err(crate::error::KiminError::Type(e)) = result {
+        assert!(e.msg.contains("Array<T>"), "unexpected message: {}", e.msg);
+    }
+}
+
+#[test]
+
+#[test]
+fn parse_empty_array_literal_error() {
+    // Empty [] now parses successfully; the type checker rejects it without an annotation.
+    // This test is kept to document the behavior change from M10E.
+    let tokens = Lexer::new("[]").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -16452,3 +16474,105 @@ fn vm_matches_tree_arrays_loop_example() {
     let out = vm_run(&src).unwrap();
     assert!(!out.is_empty());
 }
+// ── M10E: Explicit Array<T> Type Annotations ─────────────────────────────────
+
+// --- Parser tests ---
+
+#[test]
+fn parse_array_annotation_number() {
+    let tokens = Lexer::new("let nums: Array<Number> = [1, 2]")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_array_annotation_text() {
+    let tokens = Lexer::new(r#"let words: Array<Text> = ["a"]"#)
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_array_annotation_bool() {
+    let tokens = Lexer::new("let flags: Array<Bool> = [true]")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_array_annotation_unit() {
+    let tokens = Lexer::new("let d: Array<meters> = []").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_array_annotation_fn_param() {
+    let tokens = Lexer::new("fn f(nums: Array<Number>) { }")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_array_annotation_fn_return() {
+    let tokens = Lexer::new("fn f() -> Array<Number> { return [1] }")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_array_annotation_empty_type_arg_error() {
+    // Array<> is not valid
+    let tokens = Lexer::new("let x: Array<> = []").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_array_annotation_missing_lt_error() {
+    // Array without < is not valid in annotation position
+    let tokens = Lexer::new("let x: Array = []").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_array_annotation_missing_gt_error() {
+    // Array<Number without > is not valid
+    let tokens = Lexer::new("let x: Array<Number = []").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_array_annotation_nested_rejected() {
+    // Array<Array<Number>> must be rejected
+    let tokens = Lexer::new("let x: Array<Array<Number>> = []")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.msg.contains("nested"), "unexpected: {}", e.msg);
+    }
+}
+
+#[test]
+fn parse_comparison_unaffected_by_array_syntax() {
+    // < and > in expressions must still work as comparison operators
+    let result = check("let x = 3 < 5");
+    assert!(result.is_ok());
+    let result2 = check("let x = 5 > 3");
+    assert!(result2.is_ok());
+}
+
