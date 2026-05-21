@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2008_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2068_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-11C-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-11D-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2008 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2068 tests passing**.
 
 ---
 
@@ -370,6 +370,24 @@ print(trim("  hello  "))                          // hello
 print(contains(to_lower("HELLO WORLD"), "world")) // true
 ```
 
+### String split builtin
+
+- `split(text, delimiter) -> Array<Text>` — split a string by a delimiter; returns an `Array<Text>`
+
+Empty delimiter splits the string into individual characters. Consecutive delimiters produce empty-string elements. Delimiter not found returns a single-element array containing the original string.
+
+```kimin
+let parts = split("a,b,c", ",")
+print(len(parts))       // 3
+print(parts[0])         // a
+
+let chars = split("abc", "")
+print(len(chars))       // 3
+print(chars[0])         // a
+
+print(to_upper(split("hello world", " ")[0]))  // HELLO
+```
+
 ### Bytecode backend
 
 ```sh
@@ -625,7 +643,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2008 passed, 0 failed
+# 2068 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -652,7 +670,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2008 unit tests
+  tests.rs        2068 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -697,6 +715,15 @@ examples/
   strings.kimin                     strings_loop.kimin
   strings_functions.kimin           strings_simulate.kimin
   string_errors.kimin
+  string_utils.kimin                string_utils_functions.kimin
+  string_utils_loop.kimin           string_utils_unicode.kimin
+  string_utils_errors.kimin
+  string_transforms.kimin           string_transforms_functions.kimin
+  string_transforms_loop.kimin      string_transforms_unicode.kimin
+  string_transforms_errors.kimin
+  string_split.kimin                string_split_empty_delim.kimin
+  string_split_loop.kimin           string_split_functions.kimin
+  string_split_simulate.kimin       string_split_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin

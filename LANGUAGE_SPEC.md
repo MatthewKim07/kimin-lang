@@ -972,8 +972,59 @@ to_upper(trim("  hello  "))[0]               // H
 
 - **No mutation**: transformation returns a new `Text` value; the original is unchanged.
 - **No regex**: these are not pattern-based transformations.
-- **No split, replace, or case-insensitive comparison**: not yet supported.
+- **No replace or case-insensitive comparison**: not yet supported.
 - **Escape sequences**: Kimin string literals do not support `\t` or `\n` — trim is only observable with space characters in literal strings.
+
+---
+
+### 4.16 String Split Builtin
+
+`split` splits a `Text` value into an `Array<Text>` of parts.
+
+```kimin
+let parts = split("a,b,c", ",")
+print(len(parts))         // 3
+print(parts[0])           // a
+print(parts[1])           // b
+
+let chars = split("abc", "")
+print(len(chars))         // 3
+print(chars[0])           // a
+```
+
+#### `split(text, delimiter) -> Array<Text>`
+
+- `text` — the `Text` to split.
+- `delimiter` — the `Text` separator.
+- Returns a new `Array<Text>` containing the parts.
+
+If `delimiter` is the empty string `""`, the result contains each Unicode character of `text` as a separate one-character `Text` element. Splitting an empty string with an empty delimiter returns an empty array.
+
+If `delimiter` is non-empty, the result is equivalent to Rust `str::split(delimiter)`. Consecutive delimiters produce empty-string elements. If the delimiter does not appear in `text`, the result is a one-element array containing `text`.
+
+#### Type rules
+
+- Exactly 2 arguments, both must be `Text`.
+- Return type is `Array<Text>`.
+- Wrong arity or a non-`Text` argument is a `TypeError`.
+
+#### Composition
+
+`split` results are plain `Array<Text>` values. All array operations apply: `len`, `[]` indexing, `[start..end]` slices, `push`, `pop`, and iteration with `for`.
+
+```kimin
+let words = split("hello world", " ")
+print(to_upper(words[0]))                   // HELLO
+print(contains(words[1], "orld"))           // true
+print(len(split("a,b,c", ",")))             // 3
+```
+
+#### Restrictions
+
+- **No mutation**: `split` returns a new array; the original string is unchanged.
+- **No regex delimiter**: `delimiter` is a literal string, not a pattern.
+- **No limit parameter**: all occurrences are split.
+- **No open-ended delimiters**: the delimiter must be an exact `Text` value.
 
 ---
 
