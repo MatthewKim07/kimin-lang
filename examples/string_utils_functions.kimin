@@ -1,0 +1,15 @@
+fn has_world(s: Text) -> Bool {
+  return contains(s, "world")
+}
+
+fn has_prefix(s: Text, prefix: Text) -> Bool {
+  return starts_with(s, prefix)
+}
+
+fn has_suffix(s: Text, suffix: Text) -> Bool {
+  return ends_with(s, suffix)
+}
+
+print(has_world("hello world"))
+print(has_prefix("hello", "he"))
+print(has_suffix("hello", "lo"))

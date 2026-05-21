@@ -1,0 +1,10 @@
+let words = ["hello", "world", "help"]
+let mut count: Number = 0
+
+for i in range(0, len(words)) {
+  if starts_with(words[i], "he") {
+    count += 1
+  }
+}
+
+print(count)

@@ -1,0 +1,14 @@
+// Keep runnable by default.
+
+print(contains("hello", "ell"))
+print(starts_with("hello", "he"))
+print(ends_with("hello", "lo"))
+
+// Uncomment to test wrong arg type:
+// contains("hello", 1)
+
+// Uncomment to test wrong arity:
+// contains("hello")
+
+// Uncomment to test non-text first arg:
+// starts_with(123, "1")

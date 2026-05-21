@@ -1,0 +1,3 @@
+print(contains("héllo", "é"))
+print(starts_with("éclair", "é"))
+print(ends_with("café", "é"))

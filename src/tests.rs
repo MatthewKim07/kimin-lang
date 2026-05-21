@@ -17946,6 +17946,9 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::IndexCompoundAssign { .. }
             | crate::bytecode::Instruction::ArrayPush(_)
             | crate::bytecode::Instruction::ArrayPop(_)
+            | crate::bytecode::Instruction::Contains
+            | crate::bytecode::Instruction::StartsWith
+            | crate::bytecode::Instruction::EndsWith
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -18793,4 +18796,450 @@ fn vm_array_text_len_is_array_len() {
 fn vm_array_text_chained_index() {
     let out = vm_run("print([\"ab\", \"cd\"][0][1])").unwrap();
     assert_eq!(out, vec!["b"]);
+}
+
+// ============================================================
+// M11B — String utility builtins: contains, starts_with, ends_with
+// ============================================================
+
+// --- parser: builtin calls parse as normal calls ---
+
+#[test]
+fn parse_contains_call() {
+    let src = "contains(\"hello\", \"ell\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_starts_with_call() {
+    let src = "starts_with(\"hello\", \"he\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_ends_with_call() {
+    let src = "ends_with(\"hello\", \"lo\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+#[test]
+fn parse_string_utility_nested_call() {
+    let src = "fn get() -> Text { return \"hello\" }\ncontains(get(), \"ell\")";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_ok());
+}
+
+// --- typechecker ---
+
+#[test]
+fn type_contains_text_text_ok() {
+    assert!(check("let b: Bool = contains(\"hello\", \"ell\")").is_ok());
+}
+
+#[test]
+fn type_starts_with_text_text_ok() {
+    assert!(check("let b: Bool = starts_with(\"hello\", \"he\")").is_ok());
+}
+
+#[test]
+fn type_ends_with_text_text_ok() {
+    assert!(check("let b: Bool = ends_with(\"hello\", \"lo\")").is_ok());
+}
+
+#[test]
+fn type_contains_returns_bool() {
+    // Bool annotation must succeed — verifies return type
+    assert!(check("let b: Bool = contains(\"a\", \"a\")").is_ok());
+}
+
+#[test]
+fn type_contains_wrong_arity_error() {
+    assert!(check("contains(\"hello\")").is_err());
+}
+
+#[test]
+fn type_starts_with_wrong_arity_error() {
+    assert!(check("starts_with(\"hello\")").is_err());
+}
+
+#[test]
+fn type_ends_with_wrong_arity_error() {
+    assert!(check("ends_with(\"hello\")").is_err());
+}
+
+#[test]
+fn type_contains_first_arg_number_error() {
+    assert!(check("contains(42, \"ell\")").is_err());
+}
+
+#[test]
+fn type_contains_second_arg_number_error() {
+    assert!(check("contains(\"hello\", 42)").is_err());
+}
+
+#[test]
+fn type_starts_with_first_arg_array_error() {
+    assert!(check("starts_with([\"a\", \"b\"], \"a\")").is_err());
+}
+
+#[test]
+fn type_ends_with_second_arg_bool_error() {
+    assert!(check("ends_with(\"hello\", true)").is_err());
+}
+
+#[test]
+fn type_contains_unit_error() {
+    let src = "let d: meters = 5\ncontains(d, \"x\")";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_len_text_still_ok_regression() {
+    assert!(check("let n = len(\"hello\")").is_ok());
+}
+
+#[test]
+fn type_string_index_still_ok_regression() {
+    assert!(check("let c: Text = \"hello\"[0]").is_ok());
+}
+
+#[test]
+fn type_string_slice_still_ok_regression() {
+    assert!(check("let sub: Text = \"hello\"[1..4]").is_ok());
+}
+
+// --- interpreter ---
+
+#[test]
+fn interp_contains_true() {
+    let interp = run("let b = contains(\"hello world\", \"world\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_contains_false() {
+    let interp = run("let b = contains(\"hello world\", \"xyz\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn interp_contains_empty_pattern_true() {
+    let interp = run("let b = contains(\"hello\", \"\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_starts_with_true() {
+    let interp = run("let b = starts_with(\"hello\", \"he\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_starts_with_false() {
+    let interp = run("let b = starts_with(\"hello\", \"lo\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn interp_starts_with_empty_prefix_true() {
+    let interp = run("let b = starts_with(\"hello\", \"\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_ends_with_true() {
+    let interp = run("let b = ends_with(\"hello\", \"lo\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_ends_with_false() {
+    let interp = run("let b = ends_with(\"hello\", \"he\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn interp_ends_with_empty_suffix_true() {
+    let interp = run("let b = ends_with(\"hello\", \"\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_string_utility_with_variables() {
+    let src = "let s = \"hello world\"\nlet p = \"world\"\nlet b = contains(s, p)";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_string_utility_nested_call() {
+    let src = "fn get() -> Text { return \"hello\" }\nlet b = starts_with(get(), \"he\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_contains_unicode() {
+    let interp = run("let b = contains(\"héllo\", \"é\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_starts_with_unicode() {
+    let interp = run("let b = starts_with(\"éclair\", \"é\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_ends_with_unicode() {
+    let interp = run("let b = ends_with(\"café\", \"é\")").unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_fn_contains_param() {
+    let src = "fn has_world(s: Text) -> Bool { return contains(s, \"world\") }\nlet b = has_world(\"hello world\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_fn_starts_with_param() {
+    let src =
+        "fn check(s: Text) -> Bool { return starts_with(s, \"he\") }\nlet b = check(\"hello\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_closure_starts_with_captured_prefix() {
+    let src = "let prefix = \"he\"\nfn check(s: Text) -> Bool { return starts_with(s, prefix) }\nlet b = check(\"hello\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_string_utility_in_for_loop() {
+    let src = "let words = [\"hello\", \"world\", \"help\"]\nlet mut count: Number = 0\nfor i in range(0, len(words)) { if starts_with(words[i], \"he\") { count += 1 } }\nlet r = count";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_simulate_contains_with_string_slice() {
+    let src = "let s = \"abc\"\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nlet mut found: Number = 0\nsimulate dur step dt { if contains(s[0..i + 1], \"b\") { found += 1 }\ni += 1 }";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("found"), Some(Value::Number(2.0)));
+}
+
+// --- bytecode ---
+
+#[test]
+fn bytecode_contains_emits_contains() {
+    let prog = compile_prog("contains(\"hello\", \"ell\")");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Contains));
+    assert!(has, "expected CONTAINS instruction");
+}
+
+#[test]
+fn bytecode_starts_with_emits_starts_with() {
+    let prog = compile_prog("starts_with(\"hello\", \"he\")");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::StartsWith));
+    assert!(has, "expected STARTS_WITH instruction");
+}
+
+#[test]
+fn bytecode_ends_with_emits_ends_with() {
+    let prog = compile_prog("ends_with(\"hello\", \"lo\")");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::EndsWith));
+    assert!(has, "expected ENDS_WITH instruction");
+}
+
+#[test]
+fn bytecode_string_utility_no_call_instruction() {
+    // None of the three builtins should emit a normal Call instruction
+    let prog =
+        compile_prog("contains(\"a\", \"a\")\nstarts_with(\"a\", \"a\")\nends_with(\"a\", \"a\")");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Call { .. }));
+    assert!(!has_call, "string utility builtins must not emit CALL");
+}
+
+#[test]
+fn bytecode_string_utility_inside_function() {
+    let prog = compile_prog("fn check(s: Text) -> Bool { return contains(s, \"x\") }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "check").unwrap();
+    let has = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::Contains));
+    assert!(has, "expected CONTAINS inside function chunk");
+}
+
+#[test]
+fn disassemble_string_utility_stable() {
+    use crate::disassemble::disassemble;
+    let prog =
+        compile_prog("contains(\"a\", \"b\")\nstarts_with(\"a\", \"b\")\nends_with(\"a\", \"b\")");
+    let out = disassemble(&prog);
+    assert!(out.contains("CONTAINS"), "expected CONTAINS in disassembly");
+    assert!(
+        out.contains("STARTS_WITH"),
+        "expected STARTS_WITH in disassembly"
+    );
+    assert!(
+        out.contains("ENDS_WITH"),
+        "expected ENDS_WITH in disassembly"
+    );
+}
+
+// --- VM ---
+
+#[test]
+fn vm_contains_true_false() {
+    let out = vm_run(
+        "print(contains(\"hello world\", \"world\"))\nprint(contains(\"hello world\", \"xyz\"))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn vm_contains_empty_pattern() {
+    let out = vm_run("print(contains(\"hello\", \"\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_starts_with_true_false() {
+    let out =
+        vm_run("print(starts_with(\"hello\", \"he\"))\nprint(starts_with(\"hello\", \"lo\"))")
+            .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn vm_starts_with_empty_prefix() {
+    let out = vm_run("print(starts_with(\"hello\", \"\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_ends_with_true_false() {
+    let out =
+        vm_run("print(ends_with(\"hello\", \"lo\"))\nprint(ends_with(\"hello\", \"he\"))").unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn vm_ends_with_empty_suffix() {
+    let out = vm_run("print(ends_with(\"hello\", \"\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_string_utility_variables() {
+    let src = "let s = \"hello world\"\nlet p = \"world\"\nprint(contains(s, p))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_string_utility_stack_clean() {
+    // After a contains expression statement, stack should be clean (POP pops the Bool)
+    let out = vm_run("contains(\"a\", \"a\")\nprint(contains(\"hello\", \"ell\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_string_utility_unicode() {
+    let out = vm_run(
+        "print(contains(\"héllo\", \"é\"))\nprint(starts_with(\"éclair\", \"é\"))\nprint(ends_with(\"café\", \"é\"))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "true", "true"]);
+}
+
+#[test]
+fn vm_string_utility_matches_tree_basic() {
+    let src = "print(contains(\"hello\", \"ell\"))\nprint(starts_with(\"hello\", \"he\"))\nprint(ends_with(\"hello\", \"lo\"))";
+    run(src).unwrap();
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["true", "true", "true"]);
+}
+
+#[test]
+fn vm_matches_tree_string_utility_functions() {
+    let src = std::fs::read_to_string("examples/string_utils_functions.kimin").unwrap();
+    run(&src).unwrap();
+    let out = vm_run(&src).unwrap();
+    assert_eq!(out, vec!["true", "true", "true"]);
+}
+
+#[test]
+fn vm_matches_tree_string_utility_loop() {
+    let src = std::fs::read_to_string("examples/string_utils_loop.kimin").unwrap();
+    run(&src).unwrap();
+    let out = vm_run(&src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_matches_tree_string_utility_simulate() {
+    let src = "let s = \"abc\"\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { if contains(s[0..i + 1], \"b\") { print(i) }\ni += 1 }";
+    run(src).unwrap();
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_string_utility_in_for_loop() {
+    let src = "let words = [\"hello\", \"world\", \"help\"]\nlet mut count: Number = 0\nfor i in range(0, len(words)) { if starts_with(words[i], \"he\") { count += 1 } }\nprint(count)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- regression: existing string/array builtins unchanged ---
+
+#[test]
+fn regression_len_array_after_m11b() {
+    let interp = run("let n = len([1, 2, 3])").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn regression_len_text_after_m11b() {
+    let interp = run("let n = len(\"hello\")").unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn regression_string_index_after_m11b() {
+    let interp = run("let c = \"hello\"[0]").unwrap();
+    assert_eq!(interp.get_var("c"), Some(Value::Str("h".into())));
+}
+
+#[test]
+fn regression_string_slice_after_m11b() {
+    let interp = run("let sub = \"hello\"[1..4]").unwrap();
+    assert_eq!(interp.get_var("sub"), Some(Value::Str("ell".into())));
 }

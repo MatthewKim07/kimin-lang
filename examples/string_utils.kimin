@@ -1,0 +1,6 @@
+print(contains("hello world", "world"))
+print(contains("hello world", "x"))
+print(starts_with("hello", "he"))
+print(starts_with("hello", "lo"))
+print(ends_with("hello", "lo"))
+print(ends_with("hello", "he"))
