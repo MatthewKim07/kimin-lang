@@ -1008,6 +1008,49 @@ impl Interpreter {
                         };
                         return Ok(Value::Array(parts));
                     }
+
+                    if name == "join" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("join() expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let parts = match self.eval_expr(&args[0])? {
+                            Value::Array(elems) => elems,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "join() first argument must be Array<Text>, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let delimiter = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "join() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let strs: Result<Vec<String>, RuntimeError> = parts
+                            .iter()
+                            .map(|v| match v {
+                                Value::Str(s) => Ok(s.clone()),
+                                other => Err(RuntimeError {
+                                    msg: format!(
+                                        "join() array element must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                }),
+                            })
+                            .collect();
+                        return Ok(Value::Str(strs?.join(delimiter.as_str())));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
