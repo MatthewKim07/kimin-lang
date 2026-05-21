@@ -569,40 +569,50 @@ impl Interpreter {
             Expr::Index { array, index, .. } => {
                 let arr_val = self.eval_expr(array)?;
                 let idx_val = self.eval_expr(index)?;
-                let elems = match arr_val {
-                    Value::Array(v) => v,
-                    other => {
-                        return Err(RuntimeError {
-                            msg: format!("cannot index into value of type {}", other.type_name()),
-                        })
-                    }
-                };
                 let n = match idx_val {
                     Value::Number(n) => n,
                     other => {
                         return Err(RuntimeError {
-                            msg: format!("array index must be Number, got {}", other.type_name()),
+                            msg: format!("index must be Number, got {}", other.type_name()),
                         })
                     }
                 };
                 if n.fract() != 0.0 {
                     return Err(RuntimeError {
-                        msg: format!("array index must be an integer, got {}", n),
+                        msg: format!("index must be an integer, got {}", n),
                     });
                 }
                 if n < 0.0 {
                     return Err(RuntimeError {
-                        msg: format!("array index out of bounds: index {} is negative", n as i64),
+                        msg: format!("index out of bounds: index {} is negative", n as i64),
                     });
                 }
                 let i = n as usize;
-                elems.get(i).cloned().ok_or_else(|| RuntimeError {
-                    msg: format!(
-                        "array index out of bounds: index {} but length is {}",
-                        i,
-                        elems.len()
-                    ),
-                })
+                match arr_val {
+                    Value::Array(elems) => elems.get(i).cloned().ok_or_else(|| RuntimeError {
+                        msg: format!(
+                            "array index out of bounds: index {} but length is {}",
+                            i,
+                            elems.len()
+                        ),
+                    }),
+                    Value::Str(s) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        chars
+                            .get(i)
+                            .map(|c| Value::Str(c.to_string()))
+                            .ok_or_else(|| RuntimeError {
+                                msg: format!(
+                                    "string index out of bounds: index {} but length is {}",
+                                    i,
+                                    chars.len()
+                                ),
+                            })
+                    }
+                    other => Err(RuntimeError {
+                        msg: format!("cannot index into value of type {}", other.type_name()),
+                    }),
+                }
             }
 
             Expr::Slice {
@@ -611,14 +621,6 @@ impl Interpreter {
                 let arr_val = self.eval_expr(array)?;
                 let start_val = self.eval_expr(start)?;
                 let end_val = self.eval_expr(end)?;
-                let elems = match arr_val {
-                    Value::Array(v) => v,
-                    other => {
-                        return Err(RuntimeError {
-                            msg: format!("slice target must be Array, got {}", other.type_name()),
-                        })
-                    }
-                };
                 let s = match start_val {
                     Value::Number(n) => n,
                     other => {
@@ -662,16 +664,39 @@ impl Interpreter {
                         msg: format!("slice start {} is greater than end {}", si, ei),
                     });
                 }
-                if ei > elems.len() {
-                    return Err(RuntimeError {
+                match arr_val {
+                    Value::Array(elems) => {
+                        if ei > elems.len() {
+                            return Err(RuntimeError {
+                                msg: format!(
+                                    "slice end {} is out of bounds for array of length {}",
+                                    ei,
+                                    elems.len()
+                                ),
+                            });
+                        }
+                        Ok(Value::Array(elems[si..ei].to_vec()))
+                    }
+                    Value::Str(s_str) => {
+                        let chars: Vec<char> = s_str.chars().collect();
+                        if ei > chars.len() {
+                            return Err(RuntimeError {
+                                msg: format!(
+                                    "slice end {} is out of bounds for string of length {}",
+                                    ei,
+                                    chars.len()
+                                ),
+                            });
+                        }
+                        Ok(Value::Str(chars[si..ei].iter().collect()))
+                    }
+                    other => Err(RuntimeError {
                         msg: format!(
-                            "slice end {} is out of bounds for array of length {}",
-                            ei,
-                            elems.len()
+                            "slice target must be Array or Text, got {}",
+                            other.type_name()
                         ),
-                    });
+                    }),
                 }
-                Ok(Value::Array(elems[si..ei].to_vec()))
             }
 
             Expr::Call { callee, args, .. } => {
@@ -686,8 +711,12 @@ impl Interpreter {
                         let arg_val = self.eval_expr(&args[0])?;
                         return match arg_val {
                             Value::Array(v) => Ok(Value::Number(v.len() as f64)),
+                            Value::Str(s) => Ok(Value::Number(s.chars().count() as f64)),
                             other => Err(RuntimeError {
-                                msg: format!("len() requires Array, got {}", other.type_name()),
+                                msg: format!(
+                                    "len() requires Array or Text, got {}",
+                                    other.type_name()
+                                ),
                             }),
                         };
                     }

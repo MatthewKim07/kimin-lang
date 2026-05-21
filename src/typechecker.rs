@@ -1120,13 +1120,14 @@ impl TypeChecker {
                 let idx_ty = self.check_expr(index, *span)?;
                 if !idx_ty.is_unknown() && idx_ty != Type::Number {
                     return Err(TypeError {
-                        msg: format!("array index must be Number, got {}", idx_ty.name()),
+                        msg: format!("index must be Number, got {}", idx_ty.name()),
                         line: span.line,
                         col: span.col,
                     });
                 }
                 match arr_ty {
                     Type::Array(elem) => Ok(*elem),
+                    Type::Text => Ok(Type::Text),
                     Type::Unknown => Ok(Type::Unknown),
                     other => Err(TypeError {
                         msg: format!("cannot index into value of type {}", other.name()),
@@ -1143,17 +1144,20 @@ impl TypeChecker {
                 span,
             } => {
                 let arr_ty = self.check_expr(array, *span)?;
-                let elem_ty = match arr_ty {
-                    Type::Array(elem) => *elem,
-                    Type::Unknown => Type::Unknown,
+                let is_text = matches!(arr_ty, Type::Text);
+                match &arr_ty {
+                    Type::Array(_) | Type::Text | Type::Unknown => {}
                     other => {
                         return Err(TypeError {
-                            msg: format!("slice target must be Array, got {}", other.name()),
+                            msg: format!(
+                                "slice target must be Array or Text, got {}",
+                                other.name()
+                            ),
                             line: span.line,
                             col: span.col,
                         })
                     }
-                };
+                }
                 let start_ty = self.check_expr(start, *span)?;
                 if !start_ty.is_unknown() && start_ty != Type::Number {
                     return Err(TypeError {
@@ -1170,6 +1174,13 @@ impl TypeChecker {
                         col: span.col,
                     });
                 }
+                if is_text {
+                    return Ok(Type::Text);
+                }
+                let elem_ty = match arr_ty {
+                    Type::Array(elem) => *elem,
+                    _ => Type::Unknown,
+                };
                 Ok(Type::Array(Box::new(elem_ty)))
             }
 
@@ -1186,10 +1197,13 @@ impl TypeChecker {
                         }
                         let arg_ty = self.check_expr(&args[0], *span)?;
                         match arg_ty {
-                            Type::Array(_) | Type::Unknown => return Ok(Type::Number),
+                            Type::Array(_) | Type::Text | Type::Unknown => return Ok(Type::Number),
                             other => {
                                 return Err(TypeError {
-                                    msg: format!("len() requires Array, got {}", other.name()),
+                                    msg: format!(
+                                        "len() requires Array or Text, got {}",
+                                        other.name()
+                                    ),
                                     line: span.line,
                                     col: span.col,
                                 });

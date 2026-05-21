@@ -504,43 +504,56 @@ impl Vm {
                 Instruction::Index => {
                     let idx_val = pop(stack)?;
                     let arr_val = pop(stack)?;
-                    let arr = match arr_val {
-                        Value::Array(v) => v,
+                    let n = match idx_val {
+                        Value::Number(n) => n,
+                        _ => return Err(runtime_err("index must be a Number")),
+                    };
+                    if n.fract() != 0.0 {
+                        return Err(runtime_err("index must be an integer"));
+                    }
+                    if n < 0.0 {
+                        return Err(runtime_err("index out of bounds: index is negative"));
+                    }
+                    let i = n as usize;
+                    match arr_val {
+                        Value::Array(arr) => {
+                            if i >= arr.len() {
+                                return Err(runtime_err(&format!(
+                                    "array index out of bounds: index {} but length is {}",
+                                    i,
+                                    arr.len()
+                                )));
+                            }
+                            stack.push(arr[i].clone());
+                        }
+                        Value::Str(s) => {
+                            let chars: Vec<char> = s.chars().collect();
+                            if i >= chars.len() {
+                                return Err(runtime_err(&format!(
+                                    "string index out of bounds: index {} but length is {}",
+                                    i,
+                                    chars.len()
+                                )));
+                            }
+                            stack.push(Value::Str(chars[i].to_string()));
+                        }
                         other => {
                             return Err(runtime_err(&format!(
-                                "index operator requires Array, got {}",
+                                "cannot index into value of type {}",
                                 other.type_name()
                             )))
                         }
-                    };
-                    let n = match idx_val {
-                        Value::Number(n) => n,
-                        _ => return Err(runtime_err("array index must be a Number")),
-                    };
-                    if n.fract() != 0.0 {
-                        return Err(runtime_err("array index must be an integer"));
                     }
-                    if n < 0.0 {
-                        return Err(runtime_err("array index out of bounds: index is negative"));
-                    }
-                    let i = n as usize;
-                    if i >= arr.len() {
-                        return Err(runtime_err(&format!(
-                            "array index out of bounds: index {} but length is {}",
-                            i,
-                            arr.len()
-                        )));
-                    }
-                    stack.push(arr[i].clone());
                 }
 
                 Instruction::Len => {
                     let val = pop(stack)?;
                     match val {
                         Value::Array(v) => stack.push(Value::Number(v.len() as f64)),
+                        Value::Str(s) => stack.push(Value::Number(s.chars().count() as f64)),
                         other => {
                             return Err(runtime_err(&format!(
-                                "len() requires Array, got {}",
+                                "len() requires Array or Text, got {}",
                                 other.type_name()
                             )))
                         }
@@ -551,15 +564,6 @@ impl Vm {
                     let end_val = pop(stack)?;
                     let start_val = pop(stack)?;
                     let arr_val = pop(stack)?;
-                    let elems = match arr_val {
-                        Value::Array(v) => v,
-                        other => {
-                            return Err(runtime_err(&format!(
-                                "slice target must be Array, got {}",
-                                other.type_name()
-                            )))
-                        }
-                    };
                     let s = match start_val {
                         Value::Number(n) => n,
                         _ => return Err(runtime_err("slice start must be Number")),
@@ -594,14 +598,35 @@ impl Vm {
                             si, ei
                         )));
                     }
-                    if ei > elems.len() {
-                        return Err(runtime_err(&format!(
-                            "slice end {} is out of bounds for array of length {}",
-                            ei,
-                            elems.len()
-                        )));
+                    match arr_val {
+                        Value::Array(elems) => {
+                            if ei > elems.len() {
+                                return Err(runtime_err(&format!(
+                                    "slice end {} is out of bounds for array of length {}",
+                                    ei,
+                                    elems.len()
+                                )));
+                            }
+                            stack.push(Value::Array(elems[si..ei].to_vec()));
+                        }
+                        Value::Str(str_val) => {
+                            let chars: Vec<char> = str_val.chars().collect();
+                            if ei > chars.len() {
+                                return Err(runtime_err(&format!(
+                                    "slice end {} is out of bounds for string of length {}",
+                                    ei,
+                                    chars.len()
+                                )));
+                            }
+                            stack.push(Value::Str(chars[si..ei].iter().collect()));
+                        }
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "slice target must be Array or Text, got {}",
+                                other.type_name()
+                            )))
+                        }
                     }
-                    stack.push(Value::Array(elems[si..ei].to_vec()));
                 }
 
                 Instruction::SetIndex(name) => {
