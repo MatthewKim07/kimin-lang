@@ -665,6 +665,21 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::EndsWith);
                         return Ok(());
                     }
+                    if name == "to_upper" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::ToUpper);
+                        return Ok(());
+                    }
+                    if name == "to_lower" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::ToLower);
+                        return Ok(());
+                    }
+                    if name == "trim" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Trim);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

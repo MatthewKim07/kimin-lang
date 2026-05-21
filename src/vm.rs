@@ -851,6 +851,48 @@ impl Vm {
                     stack.push(Value::Bool(t.ends_with(s.as_str())));
                 }
 
+                Instruction::ToUpper => {
+                    let val = pop(stack)?;
+                    let s = match val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "to_upper() argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Str(s.to_uppercase()));
+                }
+
+                Instruction::ToLower => {
+                    let val = pop(stack)?;
+                    let s = match val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "to_lower() argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Str(s.to_lowercase()));
+                }
+
+                Instruction::Trim => {
+                    let val = pop(stack)?;
+                    let s = match val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "trim() argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Str(s.trim().to_string()));
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

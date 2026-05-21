@@ -127,6 +127,11 @@ pub enum Instruction {
     StartsWith,
     EndsWith,
 
+    /// String transformation builtins: stack [..., text] → Text.
+    ToUpper,
+    ToLower,
+    Trim,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }
