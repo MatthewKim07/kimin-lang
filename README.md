@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-1707_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1767_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-10F-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-11A-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1707 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **1767 tests passing**.
 
 ---
 
@@ -277,7 +277,7 @@ print(sum)             // 28
 - Slice expression `arr[start..end]` — returns a new independent `Array<T>` from `start` inclusive to `end` exclusive
   - `start` and `end` must be `Number`; runtime checks: integer, non-negative, `start <= end`, `end <= len(arr)`
   - Slices can be empty (`arr[2..2]`)
-  - Slice assignment, open-ended slices (`arr[1..]`, `arr[..3]`), step slices, and string slicing are not supported
+  - Slice assignment, open-ended slices (`arr[1..]`, `arr[..3]`), and step slices are not supported
 - `len(arr)` builtin — returns the number of elements as `Number`
 - **Index assignment `arr[i] = value`** — requires `let mut` array; element type must match; array stays fixed-size
   - Runtime: integer index, non-negative, in-bounds; updates binding via `assign_existing`
@@ -326,6 +326,26 @@ print(middle[1])  // 3
 print(nums[1])    // 2
 print(nums[2])    // 88
 ```
+
+### String indexing and slicing
+
+- `len(s)` — returns character count as `Number` (Unicode scalar values / Rust `char`s)
+- `s[i]` — returns a one-character `Text` at char index `i`
+- `s[start..end]` — returns a `Text` substring, char-indexed, end-exclusive
+
+```kimin
+let s = "hello"
+print(len(s))     // 5
+print(s[0])       // h
+print(s[1..4])    // ell
+
+fn first(t: Text) -> Text {
+  return t[0]
+}
+print(first("world"))   // w
+```
+
+Indexing is by Unicode scalar value (Rust `char`), not bytes. Strings are immutable: `s[i] = "x"`, `push(s, "a")`, and `pop(s)` are all unsupported.
 
 ### Bytecode backend
 
@@ -532,7 +552,9 @@ LexError  at line 3, col 7:  unexpected character '@'
 | No slice mutation views | `arr[start..end]` returns a new array copy; mutating the slice never mutates the source |
 | No slice assignment | `arr[1..3] = value` and `arr[1..3] += value` are unsupported |
 | No open-ended or stepped slices | `arr[1..]`, `arr[..3]`, and `arr[1..5..2]` are unsupported |
-| No string slicing | Slice syntax is array-only |
+| No string mutation | `str[i] = value`, `push(str, c)`, `pop(str)` unsupported |
+| No open-ended or stepped string slices | `str[1..]`, `str[..3]`, `str[1..5..2]` unsupported |
+| String indexing is char-based | Indexes Unicode scalar values (Rust `char`s), not grapheme clusters |
 | No nested arrays | `Array<Array<T>>` is a ParseError; one level of array nesting only |
 | No array type annotation without `<T>` | `let a: Array = [1,2]` is a ParseError — `Array` must always have an element type |
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
@@ -580,7 +602,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 1707 passed, 0 failed
+# 1767 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -607,7 +629,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        1707 unit tests
+  tests.rs        1767 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -649,6 +671,9 @@ examples/
   array_annotations_errors.kimin
   array_call_expected.kimin         array_call_expected_units.kimin
   array_call_expected_errors.kimin
+  strings.kimin                     strings_loop.kimin
+  strings_functions.kimin           strings_simulate.kimin
+  string_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin

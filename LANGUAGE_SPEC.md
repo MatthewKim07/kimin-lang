@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 10D
+# Kimin Language Specification — Milestone 11A
 
-This document describes the syntax and semantics implemented through Milestone 10D.
+This document describes the syntax and semantics implemented through Milestone 11A.
 
 ---
 
@@ -723,7 +723,7 @@ print(len(middle)) // 2
   - End must be less than or equal to `len(array)`.
 - Slices create a new independent array value. Mutating the original does not mutate the slice, and mutating a mutable slice binding does not mutate the original.
 - Slices may produce empty arrays at runtime, e.g. `arr[2..2]`.
-- Slice assignment, slice compound assignment, open-ended slices, step slices, and string slicing are unsupported.
+- Slice assignment, slice compound assignment, open-ended slices, and step slices are unsupported.
 
 #### `len` builtin
 
@@ -732,9 +732,9 @@ let arr = [1, 2, 3]
 print(len(arr))   // 3
 ```
 
-- `len` takes exactly one argument of type `Array<T>`.
+- `len` takes exactly one argument of type `Array<T>` or `Text`.
 - Returns a `Number`.
-- A non-Array argument is a `TypeError`.
+- A non-Array, non-Text argument is a `TypeError`.
 
 #### Using arrays with loops
 
@@ -769,7 +769,7 @@ print(nums[1])   // 99
 #### Restrictions
 
 - **No nested arrays**: nested arrays are documented as unsupported.
-- **No type annotation syntax**: `let a: Array<Number> = [...]` is a `ParseError`; element type is inferred.
+- **`len` is a builtin** — also accepts `Text` since M11A.
 - **`len` is a builtin**, not a user-defined function. A user-defined function named `len` with a single array argument would be shadowed by the builtin.
 #### Index compound assignment
 
@@ -824,6 +824,60 @@ print(len(log))   // 2
 | `arr[i] op= value` | compile i; compile value; emit `INDEX_COMPOUND_ASSIGN name op` |
 | `push(arr, value)` | compile value; emit `ARRAY_PUSH name` (no `CALL` instruction) |
 | `pop(arr)` | emit `ARRAY_POP name` (no `CALL` instruction; pushes element) |
+| `len(s)` (Text) | compile s; emit `LEN` |
+| `s[i]` (Text) | compile s; compile i; emit `INDEX` |
+| `s[start..end]` (Text) | compile s; compile start; compile end; emit `SLICE` |
+
+---
+
+### 4.13 String Indexing and Slicing
+
+Strings support three read-only operations using the same syntax as arrays.
+
+```kimin
+let s = "hello"
+print(len(s))     // 5
+print(s[0])       // h
+print(s[1..4])    // ell
+```
+
+#### `len(s)`
+
+- Accepts a `Text` argument.
+- Returns a `Number` equal to the number of Unicode scalar values (Rust `char`s).
+- Reuses the same `LEN` bytecode instruction as `len(arr)`.
+
+#### `s[i]` — character index
+
+- The target must be `Text`; the index must be `Number`.
+- Returns a `Text` value containing exactly one character.
+- A non-Number index is a `TypeError`.
+- Runtime checks:
+  - Index must be integer-like (no fractional part).
+  - Index must be non-negative.
+  - Index must be less than `len(s)` (out-of-bounds → `RuntimeError`).
+
+#### `s[start..end]` — substring slice
+
+- The target must be `Text`; `start` and `end` must be `Number`.
+- Returns a `Text` substring, char-indexed, end-exclusive.
+- Runtime checks:
+  - Start and end must be integer-like and non-negative.
+  - `start ≤ end`.
+  - `end ≤ len(s)`.
+
+#### Unicode policy
+
+Indexing operates on Unicode scalar values (Rust `char`s). This means:
+- ASCII characters (`a`–`z`, `0`–`9`, etc.) each count as one index unit.
+- Multi-byte codepoints like `é`, `中`, `🎵` each count as one index unit.
+- Grapheme clusters composed of multiple codepoints (e.g., emoji sequences using zero-width joiners) are **not** handled as a unit; each codepoint is a separate index unit.
+
+#### Restrictions
+
+- **No string mutation**: `s[i] = "x"`, `push(s, "a")`, and `pop(s)` are all unsupported (`TypeError`).
+- **No open-ended or stepped slices**: `s[1..]`, `s[..3]`, and `s[1..5..2]` are unsupported.
+- **No char type**: single-character results are `Text` values, not a separate `Char` type.
 
 ---
 
