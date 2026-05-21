@@ -1,0 +1,19 @@
+// Build array in loop then join
+let mut parts: Array<Text> = []
+for i in range(1, 4) {
+    push(parts, "item")
+}
+let result = join(parts, "|")
+print(result)
+
+// Collect filtered words then join
+let words: Array<Text> = ["hello", "world", "hi", "there", "hey"]
+let mut h_words: Array<Text> = []
+let mut i = 0
+while i < len(words) {
+    if starts_with(words[i], "h") {
+        push(h_words, words[i])
+    }
+    i += 1
+}
+print(join(h_words, " "))

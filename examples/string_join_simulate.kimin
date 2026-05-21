@@ -1,0 +1,22 @@
+// Accumulate labels during simulation, join at end
+let mut labels: Array<Text> = []
+let dur: seconds = 3
+let dt: seconds = 1
+
+simulate dur step dt {
+    push(labels, "tick")
+}
+
+print(join(labels, "-"))
+
+// Track steps in simulate, join for report
+let mut events: Array<Text> = []
+let dur2: seconds = 5
+let dt2: seconds = 1
+
+simulate dur2 step dt2 {
+    push(events, "step")
+}
+
+let report = join(events, ", ")
+print(report)

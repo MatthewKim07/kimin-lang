@@ -1,0 +1,20 @@
+// These would each be type errors if uncommented:
+
+// join() requires exactly 2 arguments
+// join(["a", "b"])
+// join(["a", "b"], ",", "extra")
+
+// First argument must be Array<Text>, not Text
+// join("hello", ",")
+
+// First argument must be Array<Text>, not Array<Number>
+// let nums = [1, 2, 3]
+// join(nums, ",")
+
+// Second argument must be Text, not a Number
+// let words: Array<Text> = ["a", "b"]
+// join(words, 42)
+
+// Valid program to confirm the error file itself is runnable:
+let parts: Array<Text> = ["ok"]
+print(join(parts, ""))

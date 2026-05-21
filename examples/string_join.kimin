@@ -1,0 +1,23 @@
+// Basic join examples
+let words: Array<Text> = ["hello", "world", "kimin"]
+let result = join(words, ", ")
+print(result)
+
+let csv = join(["one", "two", "three"], ",")
+print(csv)
+
+let spaced = join(["a", "b", "c"], " ")
+print(spaced)
+
+// Empty delimiter = concatenation
+let concat = join(["foo", "bar", "baz"], "")
+print(concat)
+
+// Empty array = empty string
+let empty: Array<Text> = []
+let empty_result = join(empty, "-")
+print(empty_result)
+
+// Single element = no delimiter used
+let single = join(["only"], ",")
+print(single)

@@ -1,0 +1,17 @@
+// Round-trip: split then join
+let original = "apple,banana,cherry"
+let parts = split(original, ",")
+let rejoined = join(parts, ",")
+print(rejoined)
+
+// Split on space, join with dash
+let sentence = "the quick brown fox"
+let words = split(sentence, " ")
+let dashed = join(words, "-")
+print(dashed)
+
+// Split into chars, join with separator
+let word = "hello"
+let chars = split(word, "")
+let dotted = join(chars, ".")
+print(dotted)

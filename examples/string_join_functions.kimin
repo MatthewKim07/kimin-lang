@@ -1,0 +1,24 @@
+// join inside a function
+fn build_csv(items: Array<Text>) -> Text {
+    return join(items, ",")
+}
+
+let row = build_csv(["name", "age", "city"])
+print(row)
+
+// Function that splits and rejoins with different delimiter
+fn reformat(text: Text, from_delim: Text, to_delim: Text) -> Text {
+    let parts = split(text, from_delim)
+    return join(parts, to_delim)
+}
+
+let result = reformat("a-b-c", "-", "::")
+print(result)
+
+// Function captures delimiter
+fn make_joiner(delim: Text) -> Text {
+    let words: Array<Text> = ["x", "y", "z"]
+    return join(words, delim)
+}
+
+print(make_joiner(" | "))
