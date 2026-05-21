@@ -17953,6 +17953,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::ToLower
             | crate::bytecode::Instruction::Trim
             | crate::bytecode::Instruction::Split
+            | crate::bytecode::Instruction::Join
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -21463,4 +21464,824 @@ fn existing_string_features_still_ok_after_split() {
     assert_eq!(interp.get_var("n").unwrap(), Value::Number(5.0));
     assert_eq!(interp.get_var("c").unwrap(), Value::Str("h".to_string()));
     assert_eq!(interp.get_var("sub").unwrap(), Value::Str("el".to_string()));
+}
+
+// =============================================================================
+// M11E: join(Array<Text>, Text) -> Text
+// =============================================================================
+
+// --- Parser audit ---
+
+#[test]
+fn parse_join_call() {
+    assert!(check("let parts = [\"a\", \"b\"]\njoin(parts, \",\")").is_ok());
+}
+
+#[test]
+fn parse_join_with_split_call() {
+    assert!(check("let s = join(split(\"a,b\", \",\"), \"-\")").is_ok());
+}
+
+#[test]
+fn parse_join_in_let_initializer() {
+    assert!(check("let parts = [\"a\", \"b\"]\nlet s: Text = join(parts, \",\")").is_ok());
+}
+
+#[test]
+fn parse_join_in_return() {
+    assert!(check("fn csv(parts: Array<Text>) -> Text { return join(parts, \",\") }").is_ok());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_join_array_text_text_ok() {
+    assert!(check("let parts = [\"a\", \"b\"]\njoin(parts, \",\")").is_ok());
+}
+
+#[test]
+fn type_join_returns_text() {
+    assert!(check("let s: Text = join([\"a\", \"b\"], \",\")").is_ok());
+}
+
+#[test]
+fn type_join_empty_array_text_ok() {
+    assert!(check("let empty: Array<Text> = []\njoin(empty, \",\")").is_ok());
+}
+
+#[test]
+fn type_join_wrong_arity_zero_error() {
+    let err = check("join()").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("2") && msg.contains("0"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_wrong_arity_one_error() {
+    let err = check("let parts = [\"a\"]\njoin(parts)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("2") && msg.contains("1"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_wrong_arity_three_error() {
+    let err = check("let parts = [\"a\"]\njoin(parts, \",\", \"extra\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("2") && msg.contains("3"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_first_arg_number_error() {
+    let err = check("join(42, \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_first_arg_text_error() {
+    // Text is not Array<Text>
+    let err = check("join(\"a,b\", \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>") && msg.contains("Text"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_first_arg_array_number_error() {
+    let err = check("join([1, 2, 3], \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>") && msg.contains("Array"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_first_arg_array_bool_error() {
+    let err = check("join([true, false], \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_first_arg_array_unit_error() {
+    let err = check("let arr = [1, 2]\njoin(arr, \",\")").unwrap_err();
+    // arr is Array<Number>, not Array<Text>
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_second_arg_number_error() {
+    let err = check("join([\"a\", \"b\"], 42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_second_arg_bool_error() {
+    let err = check("join([\"a\", \"b\"], true)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Text") && msg.contains("Bool"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_join_split_result_ok() {
+    assert!(check("let s = join(split(\"a,b\", \",\"), \"-\")").is_ok());
+}
+
+#[test]
+fn type_join_then_string_utils_ok() {
+    assert!(check("let s = join([\"hello\", \"world\"], \" \")\ncontains(s, \"world\")").is_ok());
+    assert!(check("starts_with(join([\"a\", \"b\"], \",\"), \"a\")").is_ok());
+    assert!(check("ends_with(join([\"a\", \"b\"], \",\"), \"b\")").is_ok());
+}
+
+#[test]
+fn type_join_then_len_index_slice_ok() {
+    assert!(check("len(join([\"a\", \"b\"], \",\"))").is_ok());
+    assert!(check("join([\"a\", \"b\"], \",\")[0]").is_ok());
+    assert!(check("join([\"a\", \"b\"], \",\")[0..2]").is_ok());
+}
+
+#[test]
+fn type_split_still_ok_after_join() {
+    assert!(check("split(\"a,b\", \",\")").is_ok());
+}
+
+#[test]
+fn type_string_transforms_still_ok_after_join() {
+    assert!(check("to_upper(\"hello\")").is_ok());
+    assert!(check("to_lower(\"HELLO\")").is_ok());
+    assert!(check("trim(\"  hi  \")").is_ok());
+}
+
+#[test]
+fn type_array_features_still_ok_after_join() {
+    assert!(check("let mut arr: Array<Text> = []\npush(arr, \"a\")\npop(arr)").is_ok());
+}
+
+// --- Interpreter ---
+
+#[test]
+fn interp_join_basic_dash() {
+    let interp = run("let s = join([\"a\", \"b\", \"c\"], \"-\")").unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a-b-c".to_string())
+    );
+}
+
+#[test]
+fn interp_join_comma() {
+    let interp = run("let s = join([\"apple\", \"banana\", \"cherry\"], \",\")").unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("apple,banana,cherry".to_string())
+    );
+}
+
+#[test]
+fn interp_join_empty_delimiter() {
+    let interp = run("let s = join([\"a\", \"b\", \"c\"], \"\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("abc".to_string()));
+}
+
+#[test]
+fn interp_join_empty_array() {
+    let interp = run("let empty: Array<Text> = []\nlet s = join(empty, \",\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("".to_string()));
+}
+
+#[test]
+fn interp_join_one_element() {
+    let interp = run("let s = join([\"only\"], \",\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("only".to_string()));
+}
+
+#[test]
+fn interp_join_split_result() {
+    let interp = run("let parts = split(\"a,b,c\", \",\")\nlet s = join(parts, \"|\")").unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a|b|c".to_string())
+    );
+}
+
+#[test]
+fn interp_join_repeated_empty_elements() {
+    // ["a", "", "b"] joined with "," -> "a,,b"
+    let interp = run("let s = join([\"a\", \"\", \"b\"], \",\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("a,,b".to_string()));
+}
+
+#[test]
+fn interp_join_variables() {
+    let src = "let parts = [\"x\", \"y\", \"z\"]\nlet delim = \"-\"\nlet s = join(parts, delim)";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("x-y-z".to_string())
+    );
+}
+
+#[test]
+fn interp_join_nested_with_split() {
+    let src = "let csv = \"a,b,c\"\nlet parts = split(csv, \",\")\nlet s = join(parts, \"|\")";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a|b|c".to_string())
+    );
+}
+
+#[test]
+fn interp_join_then_contains() {
+    let interp = run("let b = contains(join([\"hello\", \"world\"], \" \"), \"world\")").unwrap();
+    assert_eq!(interp.get_var("b").unwrap(), Value::Bool(true));
+}
+
+#[test]
+fn interp_join_then_len() {
+    let interp = run("let n = len(join([\"a\", \"b\"], \",\"))").unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(3.0));
+}
+
+#[test]
+fn interp_join_then_index() {
+    let interp = run("let c = join([\"a\", \"b\"], \",\")[0]").unwrap();
+    assert_eq!(interp.get_var("c").unwrap(), Value::Str("a".to_string()));
+}
+
+#[test]
+fn interp_join_then_slice() {
+    let interp = run("let sub = join([\"a\", \"b\", \"c\"], \",\")[0..3]").unwrap();
+    assert_eq!(
+        interp.get_var("sub").unwrap(),
+        Value::Str("a,b".to_string())
+    );
+}
+
+#[test]
+fn interp_join_original_array_unchanged() {
+    let src = "let parts = [\"a\", \"b\", \"c\"]\nlet s = join(parts, \"-\")\nlet n = len(parts)";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n").unwrap(), Value::Number(3.0));
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a-b-c".to_string())
+    );
+}
+
+// --- Edge cases ---
+
+#[test]
+fn join_empty_delimiter() {
+    let interp = run("let s = join([\"a\", \"b\", \"c\"], \"\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("abc".to_string()));
+}
+
+#[test]
+fn join_empty_array() {
+    let interp = run("let e: Array<Text> = []\nlet s = join(e, \",\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("".to_string()));
+}
+
+#[test]
+fn join_one_element() {
+    let interp = run("let s = join([\"solo\"], \":\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("solo".to_string()));
+}
+
+#[test]
+fn join_repeated_empty_elements() {
+    let interp = run("let s = join([\"a\", \"\", \"b\"], \",\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("a,,b".to_string()));
+}
+
+#[test]
+fn join_split_round_trip_comma() {
+    // join(split("a,,b", ","), ",") -> "a,,b"
+    let interp = run("let s = join(split(\"a,,b\", \",\"), \",\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("a,,b".to_string()));
+}
+
+#[test]
+fn join_split_round_trip_empty_delimiter() {
+    // join(split("abc", ""), "") -> "abc"
+    let interp = run("let s = join(split(\"abc\", \"\"), \"\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("abc".to_string()));
+}
+
+// --- Bytecode ---
+
+#[test]
+fn bytecode_join_emits_join() {
+    let prog = compile_prog("join([\"a\", \"b\"], \",\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Join)));
+}
+
+#[test]
+fn bytecode_join_arg_order() {
+    // parts array compiled first, delimiter second
+    let prog = compile_prog("join([\"a\", \"b\"], \"-\")");
+    // ARRAY instruction must appear before the JOIN instruction
+    let instrs = &prog.main.instructions;
+    let array_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::Array { .. }));
+    let join_pos = instrs.iter().position(|i| matches!(i, Instruction::Join));
+    assert!(array_pos.is_some() && join_pos.is_some());
+    assert!(array_pos.unwrap() < join_pos.unwrap());
+}
+
+#[test]
+fn bytecode_join_no_call_instruction() {
+    let prog = compile_prog("join([\"a\", \"b\"], \",\")");
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_join_inside_function() {
+    let src = "fn csv(parts: Array<Text>) -> Text { return join(parts, \",\") }";
+    let prog = compile_prog(src);
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "csv").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Join)));
+}
+
+#[test]
+fn bytecode_join_inside_if() {
+    let src = "let parts = [\"a\", \"b\"]\nif starts_with(join(parts, \",\"), \"a\") { let x = 1 }";
+    let prog = compile_prog(src);
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Join)));
+}
+
+#[test]
+fn bytecode_join_inside_simulate() {
+    let src =
+        "let dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt { let s = join([\"a\", \"b\"], \",\") }";
+    let prog = compile_prog(src);
+    assert!(prog.simulate_bodies.iter().any(|sc| sc
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Join))));
+}
+
+#[test]
+fn bytecode_existing_string_builtins_unchanged_after_join() {
+    let prog =
+        compile_prog("contains(\"a\",\"a\")\nstarts_with(\"a\",\"a\")\nends_with(\"a\",\"a\")\nto_upper(\"a\")\nto_lower(\"A\")\ntrim(\"  a  \")\nsplit(\"a\",\",\")");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Contains)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::StartsWith)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::EndsWith)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::ToUpper)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::ToLower)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Trim)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Split)));
+}
+
+#[test]
+fn bytecode_split_unchanged_after_join() {
+    let prog = compile_prog("split(\"a,b\", \",\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Split)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn disassemble_join_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("join([\"a\", \"b\"], \",\")");
+    let output = disassemble(&prog);
+    assert!(
+        output.contains("JOIN"),
+        "expected JOIN in disassembly, got:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("CALL"),
+        "CALL should not appear, got:\n{}",
+        output
+    );
+}
+
+// --- VM ---
+
+#[test]
+fn vm_join_basic_dash() {
+    let out = vm_run("print(join([\"a\", \"b\", \"c\"], \"-\"))").unwrap();
+    assert_eq!(out, vec!["a-b-c"]);
+}
+
+#[test]
+fn vm_join_comma() {
+    let out = vm_run("print(join([\"apple\", \"banana\"], \",\"))").unwrap();
+    assert_eq!(out, vec!["apple,banana"]);
+}
+
+#[test]
+fn vm_join_empty_delimiter() {
+    let out = vm_run("print(join([\"a\", \"b\", \"c\"], \"\"))").unwrap();
+    assert_eq!(out, vec!["abc"]);
+}
+
+#[test]
+fn vm_join_empty_array() {
+    let out = vm_run("let e: Array<Text> = []\nprint(join(e, \",\"))").unwrap();
+    assert_eq!(out, vec![""]);
+}
+
+#[test]
+fn vm_join_one_element() {
+    let out = vm_run("print(join([\"only\"], \",\"))").unwrap();
+    assert_eq!(out, vec!["only"]);
+}
+
+#[test]
+fn vm_join_split_result() {
+    let out = vm_run("print(join(split(\"a,b,c\", \",\"), \"|\"))").unwrap();
+    assert_eq!(out, vec!["a|b|c"]);
+}
+
+#[test]
+fn vm_join_repeated_empty_elements() {
+    let out = vm_run("print(join([\"a\", \"\", \"b\"], \",\"))").unwrap();
+    assert_eq!(out, vec!["a,,b"]);
+}
+
+#[test]
+fn vm_join_variables() {
+    let src = "let parts = [\"x\", \"y\"]\nlet d = \"-\"\nprint(join(parts, d))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["x-y"]);
+}
+
+#[test]
+fn vm_join_nested_with_split() {
+    let out = vm_run("print(join(split(\"a,b,c\", \",\"), \"|\"))").unwrap();
+    assert_eq!(out, vec!["a|b|c"]);
+}
+
+#[test]
+fn vm_join_stack_clean() {
+    // join result discarded as expression statement — stack must stay clean
+    let out = vm_run("join([\"a\", \"b\"], \",\")\nprint(\"ok\")").unwrap();
+    assert_eq!(out, vec!["ok"]);
+}
+
+#[test]
+fn vm_join_matches_tree() {
+    let src = "print(join([\"a\", \"b\", \"c\"], \"-\"))";
+    let vm_out = vm_run(src).unwrap();
+    // tree-walk result
+    let interp = run("let s = join([\"a\", \"b\", \"c\"], \"-\")").unwrap();
+    let tree_val = match interp.get_var("s").unwrap() {
+        Value::Str(s) => s,
+        other => panic!("expected Str, got {:?}", other),
+    };
+    assert_eq!(vm_out, vec![tree_val]);
+}
+
+// --- Unicode ---
+
+#[test]
+fn interp_join_unicode() {
+    let interp = run("let s = join([\"cafe\", \"ete\"], \" \")").unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("cafe ete".to_string())
+    );
+}
+
+#[test]
+fn interp_join_split_empty_delimiter_unicode_round_trip() {
+    // split("abc", "") -> ["a","b","c"]; join(_, "") -> "abc"
+    let interp = run("let s = join(split(\"abc\", \"\"), \"\")").unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("abc".to_string()));
+}
+
+#[test]
+fn vm_join_unicode() {
+    let out = vm_run("print(join([\"cafe\", \"ete\"], \" \"))").unwrap();
+    assert_eq!(out, vec!["cafe ete"]);
+}
+
+#[test]
+fn vm_join_split_empty_delimiter_unicode_round_trip() {
+    let out = vm_run("print(join(split(\"abc\", \"\"), \"\"))").unwrap();
+    assert_eq!(out, vec!["abc"]);
+}
+
+// --- Functions / closures ---
+
+#[test]
+fn fn_join_array_text_param() {
+    let src = "fn csv(parts: Array<Text>) -> Text { return join(parts, \",\") }\nlet s = csv([\"a\", \"b\", \"c\"])";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a,b,c".to_string())
+    );
+}
+
+#[test]
+fn fn_join_returns_text() {
+    let src = "fn dash(parts: Array<Text>) -> Text { return join(parts, \"-\") }\nlet s: Text = dash([\"x\", \"y\"])";
+    assert!(run(src).is_ok());
+}
+
+#[test]
+fn closure_join_captured_delimiter() {
+    let src = "let delimiter = \"-\"\nfn dash(parts: Array<Text>) -> Text { return join(parts, delimiter) }\nprint(dash([\"a\", \"b\"]))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a-b"]);
+}
+
+#[test]
+fn vm_matches_tree_join_functions() {
+    let src = "fn csv(parts: Array<Text>) -> Text { return join(parts, \",\") }\nprint(csv([\"a\", \"b\", \"c\"]))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a,b,c"]);
+}
+
+// --- Loops ---
+
+#[test]
+fn join_after_for_loop_build_array() {
+    let src = "let parts = [\"a\", \"b\", \"c\"]\nlet mut upper: Array<Text> = []\nfor i in range(0, len(parts)) { push(upper, to_upper(parts[i])) }\nlet s = join(upper, \"-\")";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("A-B-C".to_string())
+    );
+}
+
+#[test]
+fn join_in_while_loop() {
+    let src = "let mut parts: Array<Text> = []\nlet mut i: Number = 0\nwhile i < 3 { push(parts, \"x\")\ni += 1 }\nlet s = join(parts, \",\")";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("x,x,x".to_string())
+    );
+}
+
+#[test]
+fn join_with_break_continue_result() {
+    let src = "let source = [\"a\", \"skip\", \"b\"]\nlet mut out: Array<Text> = []\nfor i in range(0, len(source)) { if source[i] == \"skip\" { continue }\npush(out, source[i]) }\nlet s = join(out, \"-\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("s").unwrap(), Value::Str("a-b".to_string()));
+}
+
+#[test]
+fn join_result_used_in_string_utils() {
+    let src = "let s = join([\"hello\", \"world\"], \" \")\nlet b = contains(s, \"world\")";
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("b").unwrap(), Value::Bool(true));
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_build_array_then_join() {
+    let src = "let mut parts: Array<Text> = []\nlet labels = [\"a\", \"b\", \"c\"]\nlet mut i: Number = 0\nlet duration: seconds = 3\nlet dt: seconds = 1\nsimulate duration step dt { push(parts, labels[i])\ni += 1 }\nlet s = join(parts, \",\")";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a,b,c".to_string())
+    );
+}
+
+#[test]
+fn simulate_join_inside_body() {
+    let src = "let parts = [\"x\", \"y\"]\nlet dur: seconds = 1\nlet dt: seconds = 1\nlet mut result: Text = \"\"\nsimulate dur step dt { result = join(parts, \"-\") }";
+    let interp = run(src).unwrap();
+    assert_eq!(
+        interp.get_var("result").unwrap(),
+        Value::Str("x-y".to_string())
+    );
+}
+
+#[test]
+fn vm_matches_tree_join_simulate() {
+    let src = "let mut parts: Array<Text> = []\nlet labels = [\"a\", \"b\", \"c\"]\nlet mut i: Number = 0\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt { push(parts, labels[i])\ni += 1 }\nprint(join(parts, \",\"))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["a,b,c"]);
+}
+
+// --- Interactions with split and string builtins ---
+
+#[test]
+fn join_split_round_trip() {
+    let interp = run("let s = join(split(\"a,b,c\", \",\"), \",\")").unwrap();
+    assert_eq!(
+        interp.get_var("s").unwrap(),
+        Value::Str("a,b,c".to_string())
+    );
+}
+
+#[test]
+fn join_result_contains() {
+    let out = vm_run("print(contains(join([\"a\", \"b\", \"c\"], \",\"), \"b\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn join_result_starts_with() {
+    let out = vm_run("print(starts_with(join([\"a\", \"b\"], \"-\"), \"a\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn join_result_ends_with() {
+    let out = vm_run("print(ends_with(join([\"a\", \"b\"], \"-\"), \"b\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn join_result_to_upper() {
+    let out = vm_run("print(to_upper(join([\"a\", \"b\"], \"-\")))").unwrap();
+    assert_eq!(out, vec!["A-B"]);
+}
+
+#[test]
+fn join_result_len() {
+    let out = vm_run("print(len(join([\"a\", \"b\"], \",\")))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn join_result_index() {
+    let out = vm_run("print(join([\"a\", \"b\"], \",\")[0])").unwrap();
+    assert_eq!(out, vec!["a"]);
+}
+
+#[test]
+fn join_result_slice() {
+    let out = vm_run("print(join([\"a\", \"b\", \"c\"], \",\")[0..3])").unwrap();
+    assert_eq!(out, vec!["a,b"]);
+}
+
+#[test]
+fn split_still_ok_after_join() {
+    let out = vm_run("print(len(split(\"a,b,c\", \",\")))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn existing_string_features_still_ok_after_join() {
+    let out = vm_run("let s = \"hello\"\nprint(len(s))\nprint(s[0])\nprint(s[1..3])").unwrap();
+    assert_eq!(out, vec!["5", "h", "el"]);
+}
+
+#[test]
+fn existing_array_features_still_ok_after_join() {
+    let src = "let arr = [1, 2, 3]\nprint(len(arr))\nprint(arr[1])\nlet mut marr: Array<Number> = []\npush(marr, 42)\nprint(pop(marr))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3", "2", "42"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn join_wrong_arity_message() {
+    let err = check("join([\"a\"])").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("join") && msg.contains("2"), "got: {}", msg);
+}
+
+#[test]
+fn join_first_arg_error_message() {
+    let err = check("join(42, \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn join_first_arg_wrong_array_element_message() {
+    let err = check("join([1, 2, 3], \",\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Array<Text>"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn join_second_arg_error_message() {
+    let err = check("join([\"a\", \"b\"], 42)").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("join") && msg.contains("Text") && msg.contains("Number"),
+        "got: {}",
+        msg
+    );
 }
