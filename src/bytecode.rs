@@ -94,6 +94,12 @@ pub enum Instruction {
     Array {
         count: usize,
     },
+    /// Build a map from the top N key-value pairs on the stack.
+    /// Entries compiled as key1, value1, key2, value2, ... left-to-right.
+    /// Duplicate keys: later entry in source order wins.
+    Map {
+        count: usize,
+    },
     /// Index into an array. Stack: [..., array, index] → element.
     Index,
     /// Return the length of an array. Stack: [..., array] → Number.

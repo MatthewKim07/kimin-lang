@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::bytecode::{BytecodeProgram, Chunk, Constant, Instruction};
@@ -501,47 +501,97 @@ impl Vm {
                     stack.push(Value::Array(elements));
                 }
 
+                Instruction::Map { count } => {
+                    // Pairs were pushed key1,val1,key2,val2,... left-to-right.
+                    // Pop count pairs (top-of-stack = last pair), then reverse to source order.
+                    let mut pairs: Vec<(String, Value)> = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let val = pop(stack)?;
+                        let key = match pop(stack)? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(runtime_err(&format!(
+                                    "map key must be Text, got {}",
+                                    other.type_name()
+                                )))
+                            }
+                        };
+                        pairs.push((key, val));
+                    }
+                    // Reverse to restore source order, then insert so later duplicates win.
+                    pairs.reverse();
+                    let mut map = BTreeMap::new();
+                    for (k, v) in pairs {
+                        map.insert(k, v);
+                    }
+                    stack.push(Value::Map(map));
+                }
+
                 Instruction::Index => {
                     let idx_val = pop(stack)?;
                     let arr_val = pop(stack)?;
-                    let n = match idx_val {
-                        Value::Number(n) => n,
-                        _ => return Err(runtime_err("index must be a Number")),
-                    };
-                    if n.fract() != 0.0 {
-                        return Err(runtime_err("index must be an integer"));
-                    }
-                    if n < 0.0 {
-                        return Err(runtime_err("index out of bounds: index is negative"));
-                    }
-                    let i = n as usize;
                     match arr_val {
-                        Value::Array(arr) => {
-                            if i >= arr.len() {
-                                return Err(runtime_err(&format!(
-                                    "array index out of bounds: index {} but length is {}",
-                                    i,
-                                    arr.len()
-                                )));
+                        Value::Map(map) => {
+                            let key = match idx_val {
+                                Value::Str(s) => s,
+                                other => {
+                                    return Err(runtime_err(&format!(
+                                        "map key must be Text, got {}",
+                                        other.type_name()
+                                    )))
+                                }
+                            };
+                            match map.get(&key) {
+                                Some(v) => stack.push(v.clone()),
+                                None => {
+                                    return Err(runtime_err(&format!(
+                                        "map key '{}' not found",
+                                        key
+                                    )))
+                                }
                             }
-                            stack.push(arr[i].clone());
                         }
-                        Value::Str(s) => {
-                            let chars: Vec<char> = s.chars().collect();
-                            if i >= chars.len() {
-                                return Err(runtime_err(&format!(
-                                    "string index out of bounds: index {} but length is {}",
-                                    i,
-                                    chars.len()
-                                )));
+                        arr_val => {
+                            let n = match idx_val {
+                                Value::Number(n) => n,
+                                _ => return Err(runtime_err("index must be a Number")),
+                            };
+                            if n.fract() != 0.0 {
+                                return Err(runtime_err("index must be an integer"));
                             }
-                            stack.push(Value::Str(chars[i].to_string()));
-                        }
-                        other => {
-                            return Err(runtime_err(&format!(
-                                "cannot index into value of type {}",
-                                other.type_name()
-                            )))
+                            if n < 0.0 {
+                                return Err(runtime_err("index out of bounds: index is negative"));
+                            }
+                            let i = n as usize;
+                            match arr_val {
+                                Value::Array(arr) => {
+                                    if i >= arr.len() {
+                                        return Err(runtime_err(&format!(
+                                            "array index out of bounds: index {} but length is {}",
+                                            i,
+                                            arr.len()
+                                        )));
+                                    }
+                                    stack.push(arr[i].clone());
+                                }
+                                Value::Str(s) => {
+                                    let chars: Vec<char> = s.chars().collect();
+                                    if i >= chars.len() {
+                                        return Err(runtime_err(&format!(
+                                            "string index out of bounds: index {} but length is {}",
+                                            i,
+                                            chars.len()
+                                        )));
+                                    }
+                                    stack.push(Value::Str(chars[i].to_string()));
+                                }
+                                other => {
+                                    return Err(runtime_err(&format!(
+                                        "cannot index into value of type {}",
+                                        other.type_name()
+                                    )))
+                                }
+                            }
                         }
                     }
                 }

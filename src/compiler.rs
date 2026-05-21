@@ -714,6 +714,15 @@ impl BytecodeCompiler {
                 });
             }
 
+            Expr::MapLiteral { entries, .. } => {
+                let count = entries.len();
+                for (key, val) in entries {
+                    self.compile_expr(key)?;
+                    self.compile_expr(val)?;
+                }
+                self.chunk.emit(Instruction::Map { count });
+            }
+
             Expr::Index { array, index, .. } => {
                 self.compile_expr(array)?;
                 self.compile_expr(index)?;

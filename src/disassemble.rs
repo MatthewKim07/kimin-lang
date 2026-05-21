@@ -124,6 +124,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         }
         Instruction::Simulate { body_idx } => format!("SIMULATE #{}", body_idx),
         Instruction::Array { count } => format!("ARRAY {}", count),
+        Instruction::Map { count } => format!("MAP {}", count),
         Instruction::Index => "INDEX".to_string(),
         Instruction::Len => "LEN".to_string(),
         Instruction::Slice => "SLICE".to_string(),
