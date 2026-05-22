@@ -480,6 +480,51 @@ impl Interpreter {
                 Ok(loop_result)
             }
 
+            Stmt::ForEach {
+                var_name,
+                iterable,
+                body,
+                ..
+            } => {
+                let iter_val = self.eval_expr(iterable)?;
+                let elements = match iter_val {
+                    Value::Array(elems) => elems,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("for-each requires Array, got {}", other.type_name()),
+                        })
+                    }
+                };
+                // Snapshot: `elements` is already a clone from eval_expr.
+                let outer = Rc::clone(&self.env);
+                let mut loop_result = ExecFlow::Normal;
+
+                for elem in elements {
+                    // Fresh body env per iteration; loop variable defined inside.
+                    let body_env = Env::new_child(Rc::clone(&outer));
+                    body_env.borrow_mut().define(var_name.clone(), elem);
+                    self.env = Rc::clone(&body_env);
+                    let result = self.exec_stmts(body);
+                    self.env = Rc::clone(&outer);
+
+                    match result? {
+                        ExecFlow::Normal => {}
+                        ExecFlow::Break => {
+                            loop_result = ExecFlow::Normal;
+                            break;
+                        }
+                        ExecFlow::Continue => {}
+                        flow @ ExecFlow::Return(_) => {
+                            loop_result = flow;
+                            break;
+                        }
+                    }
+                }
+
+                self.env = outer;
+                Ok(loop_result)
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
