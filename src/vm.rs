@@ -1121,6 +1121,39 @@ impl Vm {
                     stack.push(Value::Array(vs));
                 }
 
+                Instruction::RemoveKey(name) => {
+                    let key_val = pop(stack)?;
+                    let key = match key_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "remove() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    let mut map = match current {
+                        Value::Map(m) => m,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "remove() first argument must be Map, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let removed = map
+                        .remove(&key)
+                        .ok_or_else(|| runtime_err(&format!("map key '{}' not found", key)))?;
+                    current_env
+                        .borrow_mut()
+                        .assign_existing(&name, Value::Map(map));
+                    stack.push(removed);
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

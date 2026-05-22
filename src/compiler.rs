@@ -708,6 +708,14 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Values);
                         return Ok(());
                     }
+                    if name == "remove" && args.len() == 2 {
+                        if let Expr::Variable { name: var_name, .. } = &args[0] {
+                            let var_name = var_name.clone();
+                            self.compile_expr(&args[1])?;
+                            self.chunk.emit(Instruction::RemoveKey(var_name));
+                            return Ok(());
+                        }
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

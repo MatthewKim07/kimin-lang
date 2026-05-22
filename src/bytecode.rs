@@ -159,6 +159,12 @@ pub enum Instruction {
     /// matching the order of Keys.
     Values,
 
+    /// Remove a key from a named mutable map variable and push the removed value.
+    /// Stack: [..., key] → removed_value.
+    /// The map variable `name` is mutated in the env chain.
+    /// Missing key → RuntimeError.
+    RemoveKey(String),
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }
