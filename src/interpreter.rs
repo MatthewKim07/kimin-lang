@@ -1155,6 +1155,58 @@ impl Interpreter {
                             .collect();
                         return Ok(Value::Str(strs?.join(delimiter.as_str())));
                     }
+
+                    if name == "has_key" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("has_key expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let map = match self.eval_expr(&args[0])? {
+                            Value::Map(m) => m,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "has_key() first argument must be Map, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let key = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "has_key() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        return Ok(Value::Bool(map.contains_key(&key)));
+                    }
+
+                    if name == "keys" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("keys expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let map = match self.eval_expr(&args[0])? {
+                            Value::Map(m) => m,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "keys() argument must be Map, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let ks: Vec<Value> = map.keys().map(|k| Value::Str(k.clone())).collect();
+                        return Ok(Value::Array(ks));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;

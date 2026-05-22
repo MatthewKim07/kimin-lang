@@ -1694,6 +1694,60 @@ impl TypeChecker {
                         }
                         return Ok(Type::Text);
                     }
+
+                    // `has_key` builtin: has_key(Map<Text,V>, Text) -> Bool
+                    if name == "has_key" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("has_key expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t0 = self.check_expr(&args[0], *span)?;
+                        if !t0.is_unknown() && !matches!(t0, Type::Map(_, _)) {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "has_key() first argument must be Map, got {}",
+                                    t0.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t1 = self.check_expr(&args[1], *span)?;
+                        if !t1.is_unknown() && t1 != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "has_key() second argument must be Text, got {}",
+                                    t1.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Bool);
+                    }
+
+                    // `keys` builtin: keys(Map<Text,V>) -> Array<Text>
+                    if name == "keys" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("keys expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t0 = self.check_expr(&args[0], *span)?;
+                        if !t0.is_unknown() && !matches!(t0, Type::Map(_, _)) {
+                            return Err(TypeError {
+                                msg: format!("keys() argument must be Map, got {}", t0.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Array(Box::new(Type::Text)));
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;
