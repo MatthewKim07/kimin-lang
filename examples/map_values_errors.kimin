@@ -1,0 +1,12 @@
+// Runnable section: valid values usage.
+
+let scores = {"alice": 10}
+let vals = values(scores)
+
+print(vals[0])
+
+// Uncomment to test wrong arity (TypeError):
+// values()
+
+// Uncomment to test non-map (TypeError):
+// values("not a map")

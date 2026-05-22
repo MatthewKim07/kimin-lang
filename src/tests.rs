@@ -17961,6 +17961,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Join
             | crate::bytecode::Instruction::HasKey
             | crate::bytecode::Instruction::Keys
+            | crate::bytecode::Instruction::Values
             | crate::bytecode::Instruction::Map { .. }
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
@@ -25556,4 +25557,728 @@ fn keys_result_mutation_does_not_mutate_map() {
     )
     .unwrap();
     assert_eq!(out, vec!["2"]);
+}
+
+// ============================================================
+// M12E: values(map) -> Array<V>
+// ============================================================
+
+// --- Section 2: Parser ---
+
+#[test]
+fn parse_values_call() {
+    assert!(check("let m = {\"a\": 1}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn parse_values_map_literal_arg() {
+    assert!(check("let vs = values({\"a\": 1})").is_ok());
+}
+
+#[test]
+fn parse_values_index() {
+    assert!(check("let m = {\"a\": 1}\nlet v = values(m)[0]").is_ok());
+}
+
+#[test]
+fn parse_values_in_let_initializer() {
+    assert!(check("let m = {\"a\": 1}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn parse_values_in_return() {
+    assert!(check("let m = {\"a\": 1}\nfn f() -> Array<Number> {\n  return values(m)\n}").is_ok());
+}
+
+#[test]
+fn parse_values_in_if_condition() {
+    assert!(check("let m = {\"a\": 1}\nif len(values(m)) == 1 {\n  print(m[\"a\"])\n}").is_ok());
+}
+
+#[test]
+fn parse_map_builtins_still_parse_after_values() {
+    assert!(check(
+        "let m = {\"a\": 1}\nlet b = has_key(m, \"a\")\nlet ks = keys(m)\nlet vs = values(m)"
+    )
+    .is_ok());
+}
+
+// --- Section 3: Typechecker ---
+
+#[test]
+fn type_values_number_map_ok() {
+    assert!(check("let m = {\"a\": 10, \"b\": 20}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn type_values_returns_array_number() {
+    // values of Number map is Array<Number>; can index and add.
+    assert!(check(
+        "let m = {\"a\": 10}\nlet vs = values(m)\nlet mut total: Number = 0\ntotal += vs[0]"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_values_text_map_ok() {
+    assert!(check("let m = {\"a\": \"hello\"}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn type_values_returns_array_text() {
+    // values of Text map is Array<Text>; can be joined.
+    assert!(check(
+        "let m = {\"b\": \"banana\", \"a\": \"apple\"}\nlet vs = values(m)\nprint(join(vs, \",\"))"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_values_bool_map_ok() {
+    assert!(check("let m = {\"a\": true, \"b\": false}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn type_values_array_value_map_ok() {
+    assert!(check("let m = {\"a\": [\"x\", \"y\"]}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn type_values_unit_map_ok() {
+    assert!(check("let d: meters = 10\nlet m = {\"d\": d}\nlet vs = values(m)").is_ok());
+}
+
+#[test]
+fn type_values_wrong_arity_zero_error() {
+    assert!(check("values()").is_err());
+}
+
+#[test]
+fn type_values_wrong_arity_two_error() {
+    assert!(check("let m = {\"a\": 1}\nvalues(m, \"extra\")").is_err());
+}
+
+#[test]
+fn type_values_non_map_error() {
+    assert!(check("values(\"not a map\")").is_err());
+}
+
+#[test]
+fn type_values_empty_map_literal_still_error() {
+    assert!(check("let m = {}\nlet vs = values(m)").is_err());
+}
+
+#[test]
+fn type_keys_still_ok_after_values() {
+    assert!(check("let m = {\"a\": 1}\nlet ks = keys(m)").is_ok());
+}
+
+#[test]
+fn type_has_key_still_ok_after_values() {
+    assert!(check("let m = {\"a\": 1}\nlet b = has_key(m, \"a\")").is_ok());
+}
+
+#[test]
+fn type_map_read_still_ok_after_values() {
+    assert!(check("let m = {\"a\": 1}\nlet v = m[\"a\"]").is_ok());
+}
+
+#[test]
+fn type_map_assignment_still_ok_after_values() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 2").is_ok());
+}
+
+#[test]
+fn type_map_compound_still_ok_after_values() {
+    assert!(check("let mut m = {\"a\": 0}\nm[\"a\"] += 1").is_ok());
+}
+
+// --- Section 4: Interpreter ---
+
+#[test]
+fn interp_values_number_map() {
+    let out =
+        vm_run("let m = {\"a\": 10, \"b\": 20}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])")
+            .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn interp_values_text_map() {
+    let out = vm_run(
+        "let m = {\"b\": \"banana\", \"a\": \"apple\"}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["apple", "banana"]);
+}
+
+#[test]
+fn interp_values_bool_map() {
+    let out = vm_run(
+        "let m = {\"b\": false, \"a\": true}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn interp_values_sorted_key_order() {
+    // "alice" < "bob" < "carol" → values in that key order.
+    let out = vm_run(
+        "let m = {\"carol\": 3, \"alice\": 1, \"bob\": 2}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])\nprint(vs[2])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn interp_values_after_insert() {
+    let out = vm_run(
+        "let mut m = {\"b\": 20}\nm[\"a\"] = 10\nlet vs = values(m)\nprint(len(vs))\nprint(vs[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "10"]);
+}
+
+#[test]
+fn interp_values_after_update() {
+    let out =
+        vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = 99\nlet vs = values(m)\nprint(vs[0])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn interp_values_after_compound_update() {
+    let out = vm_run("let mut m = {\"a\": 10}\nm[\"a\"] += 5\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_values_does_not_mutate_map() {
+    let out = vm_run("let m = {\"a\": 7}\nlet _ = values(m)\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_values_then_index() {
+    let out = vm_run("let m = {\"x\": 42}\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_values_then_len() {
+    let out = vm_run("let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nprint(len(values(m)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_values_then_join_for_text_values() {
+    let out =
+        vm_run("let m = {\"b\": \"banana\", \"a\": \"apple\"}\nprint(join(values(m), \",\"))")
+            .unwrap();
+    assert_eq!(out, vec!["apple,banana"]);
+}
+
+#[test]
+fn interp_values_wrong_type_runtime_error_if_unchecked_possible() {
+    let result = vm_run_unchecked("values(\"not a map\")");
+    assert!(result.is_err());
+}
+
+// --- Section 5: Deterministic order ---
+
+#[test]
+fn values_sorted_order_literal_unsorted() {
+    let out = vm_run(
+        "let m = {\"z\": 3, \"a\": 1, \"m\": 2}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])\nprint(vs[2])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn values_order_matches_keys_order() {
+    // keys and values iterate BTreeMap in the same order.
+    let out = vm_run(
+        "let m = {\"bob\": 20, \"alice\": 10}\nlet ks = keys(m)\nlet vs = values(m)\nprint(ks[0])\nprint(vs[0])\nprint(ks[1])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["alice", "10", "bob", "20"]);
+}
+
+#[test]
+fn values_sorted_order_after_insert() {
+    let out = vm_run(
+        "let mut m = {\"b\": 2}\nm[\"a\"] = 1\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn values_duplicate_literal_key_only_once() {
+    let out = vm_run("let m = {\"a\": 1, \"a\": 99}\nprint(len(values(m)))\nprint(values(m)[0])")
+        .unwrap();
+    assert_eq!(out, vec!["1", "99"]);
+}
+
+#[test]
+fn vm_values_sorted_order_literal_unsorted() {
+    let out = vm_run(
+        "let m = {\"z\": 3, \"a\": 1, \"m\": 2}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])\nprint(vs[2])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn vm_values_order_matches_keys_order() {
+    let out =
+        vm_run("let m = {\"bob\": 20, \"alice\": 10}\nprint(keys(m)[0])\nprint(values(m)[0])")
+            .unwrap();
+    assert_eq!(out, vec!["alice", "10"]);
+}
+
+// --- Section 6: Bytecode ---
+
+#[test]
+fn bytecode_values_emits_values() {
+    let prog = compile_prog("let m = {\"a\": 1}\nlet vs = values(m)");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Values));
+    assert!(has, "expected Values instruction");
+}
+
+#[test]
+fn bytecode_values_no_call_instruction() {
+    let prog = compile_prog("let m = {\"a\": 1}\nlet vs = values(m)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "values should not emit a CALL instruction");
+}
+
+#[test]
+fn bytecode_values_inside_function() {
+    let prog = compile_prog(
+        "let m = {\"a\": 1}\nfn f() -> Array<Number> {\n  return values(m)\n}\nprint(f()[0])",
+    );
+    let fn_chunk = prog
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("function f not found");
+    let has = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Values));
+    assert!(has, "function chunk should contain Values");
+}
+
+#[test]
+fn bytecode_values_inside_if() {
+    let prog = compile_prog("let m = {\"a\": 1}\nif len(values(m)) == 1 {\n  print(m[\"a\"])\n}");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Values));
+    assert!(has, "main chunk should contain Values inside if condition");
+}
+
+#[test]
+fn bytecode_values_inside_simulate() {
+    let prog = compile_prog(
+        "let m = {\"a\": 1}\nlet mut total: Number = 0\nlet dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {\n  total = len(values(m))\n}",
+    );
+    let sim = prog
+        .simulate_bodies
+        .first()
+        .expect("simulate body not found");
+    let has = sim
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Values));
+    assert!(has, "simulate body should contain Values");
+}
+
+#[test]
+fn bytecode_has_key_keys_unchanged_after_values() {
+    let prog = compile_prog(
+        "let m = {\"a\": 1}\nlet b = has_key(m, \"a\")\nlet ks = keys(m)\nlet vs = values(m)",
+    );
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::HasKey)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Keys)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Values)));
+}
+
+#[test]
+fn bytecode_map_read_assign_compound_unchanged_after_values() {
+    let prog = compile_prog(
+        "let mut m = {\"a\": 0}\nlet v = m[\"a\"]\nm[\"a\"] = 5\nm[\"a\"] += 2\nlet vs = values(m)",
+    );
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Map { .. })));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Index)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::SetIndex(_))));
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. })));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Values)));
+}
+
+#[test]
+fn disassemble_values_stable() {
+    use crate::disassemble::disassemble_instruction;
+    assert_eq!(disassemble_instruction(&Instruction::Values), "VALUES");
+}
+
+// --- Section 7: VM ---
+
+#[test]
+fn vm_values_number_map() {
+    let out = vm_run(
+        "let m = {\"alice\": 10, \"bob\": 20}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn vm_values_text_map() {
+    let out =
+        vm_run("let m = {\"b\": \"banana\", \"a\": \"apple\"}\nprint(join(values(m), \",\"))")
+            .unwrap();
+    assert_eq!(out, vec!["apple,banana"]);
+}
+
+#[test]
+fn vm_values_bool_map() {
+    let out =
+        vm_run("let m = {\"b\": false, \"a\": true}\nprint(values(m)[0])\nprint(values(m)[1])")
+            .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn vm_values_sorted_order() {
+    let out = vm_run(
+        "let m = {\"z\": 3, \"a\": 1, \"m\": 2}\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])\nprint(vs[2])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn vm_values_after_insert() {
+    let out = vm_run(
+        "let mut m = {\"b\": 20}\nm[\"a\"] = 10\nprint(len(values(m)))\nprint(values(m)[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "10"]);
+}
+
+#[test]
+fn vm_values_after_compound_update() {
+    let out = vm_run("let mut m = {\"a\": 10}\nm[\"a\"] += 5\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_values_then_join_for_text_values() {
+    let out =
+        vm_run("let m = {\"b\": \"banana\", \"a\": \"apple\"}\nprint(join(values(m), \"-\"))")
+            .unwrap();
+    assert_eq!(out, vec!["apple-banana"]);
+}
+
+#[test]
+fn vm_values_stack_clean() {
+    let out =
+        vm_run("let m = {\"a\": 1, \"b\": 2}\nlet vs = values(m)\nprint(vs[0])\nprint(m[\"b\"])")
+            .unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_values_wrong_type_error() {
+    let result = vm_run_unchecked("values(\"not a map\")");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_map_builtins_still_ok_after_values() {
+    let out = vm_run(
+        "let m = {\"alice\": 10, \"bob\": 20}\nprint(has_key(m, \"alice\"))\nprint(join(keys(m), \",\"))\nprint(values(m)[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "alice,bob", "10"]);
+}
+
+#[test]
+fn vm_matches_tree_values() {
+    let src = "let m = {\"bob\": 20, \"alice\": 10}\nprint(values(m)[0])\nprint(values(m)[1])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+// --- Section 8: Map mutation interaction ---
+
+#[test]
+fn values_reflect_inserted_key() {
+    let out = vm_run(
+        "let mut m = {\"alice\": 10}\nm[\"bob\"] = 20\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn values_reflect_plain_update() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = 99\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn values_reflect_compound_update() {
+    let out =
+        vm_run("let mut m = {\"alice\": 10}\nm[\"alice\"] += 5\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn values_does_not_mutate_map() {
+    let out = vm_run("let m = {\"a\": 7}\nlet _ = values(m)\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn keys_has_key_still_work_after_values() {
+    let out = vm_run(
+        "let m = {\"alice\": 10}\nprint(has_key(m, \"alice\"))\nprint(join(keys(m), \",\"))\nprint(values(m)[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "alice", "10"]);
+}
+
+#[test]
+fn map_assignment_still_works_after_values() {
+    let out = vm_run("let mut m = {\"a\": 0}\nm[\"a\"] = 42\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn map_compound_still_works_after_values() {
+    let out = vm_run("let mut m = {\"a\": 0}\nm[\"a\"] += 7\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+// --- Section 9: Functions / closures ---
+
+#[test]
+fn fn_values_local_map() {
+    let out = vm_run(
+        "fn get_values() -> Array<Number> {\n  let scores = {\"alice\": 10, \"bob\": 20}\n  return values(scores)\n}\nlet vs = get_values()\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn fn_values_return_array_number() {
+    let out = vm_run(
+        "fn get_vals() -> Array<Number> {\n  let m = {\"b\": 20, \"a\": 10}\n  return values(m)\n}\nprint(get_vals()[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn closure_values_captured_map() {
+    let out = vm_run(
+        "let scores = {\"alice\": 10}\nfn vals() -> Array<Number> {\n  return values(scores)\n}\nprint(vals()[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn values_function_result_index() {
+    let out = vm_run(
+        "let m = {\"alice\": 10, \"bob\": 20}\nfn get_vals() -> Array<Number> {\n  return values(m)\n}\nlet vs = get_vals()\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_matches_tree_values_functions() {
+    let src =
+        "let m = {\"a\": 1}\nfn get_v() -> Array<Number> { return values(m) }\nprint(get_v()[0])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Section 10: Loop interaction ---
+
+#[test]
+fn values_result_for_loop() {
+    let out = vm_run(
+        "let scores = {\"alice\": 10, \"bob\": 20}\nlet vals = values(scores)\nlet mut total: Number = 0\nfor i in range(0, len(vals)) {\n  total += vals[i]\n}\nprint(total)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn values_result_while_loop() {
+    let out = vm_run(
+        "let scores = {\"alice\": 10, \"bob\": 20}\nlet vals = values(scores)\nlet mut total: Number = 0\nlet mut i: Number = 0\nwhile i < len(vals) {\n  total += vals[i]\n  i += 1\n}\nprint(total)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn values_with_break_continue() {
+    assert!(check(
+        "let m = {\"a\": 10, \"b\": 20}\nlet vs = values(m)\nfor i in range(0, len(vs)) {\n  if i == 1 {\n    break\n  }\n}"
+    )
+    .is_ok());
+}
+
+#[test]
+fn values_result_accumulates_numbers() {
+    let out = vm_run(
+        "let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet vs = values(m)\nlet mut total: Number = 0\nfor i in range(0, len(vs)) {\n  total += vs[i]\n}\nprint(total)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Section 11: Simulate interaction ---
+
+#[test]
+fn simulate_values_result_indexing() {
+    let out = vm_run(
+        "let scores = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet vals = values(scores)\nlet mut i: Number = 0\nlet mut total: Number = 0\nlet duration: seconds = 3\nlet dt: seconds = 1\nsimulate duration step dt {\n  total += vals[i]\n  i += 1\n}\nprint(total)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn simulate_values_called_inside_body() {
+    let out = vm_run(
+        "let m = {\"a\": 1}\nlet mut total: Number = 0\nlet dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {\n  let vs = values(m)\n  total = vs[0]\n}\nprint(total)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_matches_tree_values_simulate() {
+    let src = "let scores = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet vals = values(scores)\nlet mut i: Number = 0\nlet mut total: Number = 0\nlet duration: seconds = 3\nlet dt: seconds = 1\nsimulate duration step dt {\n  total += vals[i]\n  i += 1\n}\nprint(total)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Section 12: String / array interactions ---
+
+#[test]
+fn values_result_len_ok() {
+    let out = vm_run("let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nprint(len(values(m)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn values_result_index_ok() {
+    let out = vm_run("let m = {\"alice\": 10}\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn values_text_map_join_ok() {
+    let out =
+        vm_run("let m = {\"b\": \"banana\", \"a\": \"apple\"}\nprint(join(values(m), \",\"))")
+            .unwrap();
+    assert_eq!(out, vec!["apple,banana"]);
+}
+
+#[test]
+fn values_text_map_string_builtin_ok() {
+    let out = vm_run("let m = {\"a\": \"alice\"}\nprint(to_upper(values(m)[0]))").unwrap();
+    assert_eq!(out, vec!["ALICE"]);
+}
+
+#[test]
+fn values_result_push_pop_after_binding_ok() {
+    let out =
+        vm_run("let m = {\"a\": 1, \"b\": 2}\nlet mut vs = values(m)\npush(vs, 3)\nprint(len(vs))")
+            .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn values_result_mutation_does_not_mutate_map() {
+    // Pushing to bound values copy does not affect original map.
+    let out = vm_run(
+        "let m = {\"a\": 1, \"b\": 2}\nlet mut vs = values(m)\npush(vs, 3)\nprint(len(values(m)))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn existing_string_features_still_ok_after_values() {
+    assert!(check("let s = \"hello\"\nlet c = s[0]\nlet sub = s[1..3]").is_ok());
+}
+
+#[test]
+fn existing_array_features_still_ok_after_values() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] = 99\nlet s = a[0..2]").is_ok());
+}
+
+#[test]
+fn existing_split_join_still_ok_after_values() {
+    let out = vm_run("let parts = split(\"a,b,c\", \",\")\nprint(join(parts, \"-\"))").unwrap();
+    assert_eq!(out, vec!["a-b-c"]);
+}
+
+// --- Section 13: Error messages ---
+
+#[test]
+fn values_wrong_arity_message() {
+    let err = check("values()").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("values") && (msg.contains("1") || msg.contains("argument")),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn values_arg_message() {
+    let err = check("values(\"not a map\")").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("Map") || msg.contains("values"),
+        "got: {}",
+        msg
+    );
 }

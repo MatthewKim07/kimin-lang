@@ -1,0 +1,14 @@
+let scores = {"a": 1, "b": 2, "c": 3}
+let vals = values(scores)
+let mut i: Number = 0
+let mut total: Number = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  total += vals[i]
+  i += 1
+}
+
+print(total)

@@ -1,0 +1,8 @@
+let scores = {"bob": 20, "alice": 10}
+
+let names = keys(scores)
+let vals = values(scores)
+
+print(join(names, ","))
+print(vals[0])
+print(vals[1])

@@ -1,0 +1,9 @@
+let mut scores = {"alice": 10}
+
+scores["bob"] = 20
+scores["alice"] += 5
+
+let vals = values(scores)
+
+print(vals[0])
+print(vals[1])
