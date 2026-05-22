@@ -745,53 +745,86 @@ impl TypeChecker {
                     });
                 }
 
-                let elem_ty = match var_ty {
-                    Type::Array(elem) => *elem,
-                    Type::Unknown => Type::Unknown,
-                    other => {
-                        return Err(TypeError {
-                            msg: format!(
-                                "index compound assignment target '{}' is not an array, got {}",
-                                name,
-                                other.name()
-                            ),
-                            line: span.line,
-                            col: span.col,
-                        });
-                    }
-                };
-
-                let idx_ty = self.check_expr(index, *span)?;
-                if !idx_ty.is_unknown() && idx_ty != Type::Number {
-                    return Err(TypeError {
-                        msg: format!("array index must be Number, got {}", idx_ty.name()),
-                        line: span.line,
-                        col: span.col,
-                    });
-                }
-
-                let rhs_ty = self.check_expr(value, *span)?;
                 let binary_op = match op {
                     CompoundAssignOp::Add => BinaryOp::Add,
                     CompoundAssignOp::Subtract => BinaryOp::Sub,
                     CompoundAssignOp::Multiply => BinaryOp::Mul,
                     CompoundAssignOp::Divide => BinaryOp::Div,
                 };
-                let result_ty = self.check_binary(&binary_op, elem_ty.clone(), rhs_ty, *span)?;
-                let compatible = result_ty.is_unknown()
-                    || elem_ty.is_unknown()
-                    || result_ty == elem_ty
-                    || (matches!(&elem_ty, Type::NumberWithUnit(_)) && result_ty == Type::Number);
-                if !compatible {
-                    return Err(TypeError {
-                        msg: format!(
-                            "array element has type {} but compound assignment result has type {}",
-                            elem_ty.name(),
-                            result_ty.name()
-                        ),
-                        line: span.line,
-                        col: span.col,
-                    });
+
+                match var_ty {
+                    Type::Array(elem_ty) => {
+                        let idx_ty = self.check_expr(index, *span)?;
+                        if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("array index must be Number, got {}", idx_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let rhs_ty = self.check_expr(value, *span)?;
+                        let result_ty =
+                            self.check_binary(&binary_op, *elem_ty.clone(), rhs_ty, *span)?;
+                        let compatible = result_ty.is_unknown()
+                            || elem_ty.is_unknown()
+                            || result_ty == *elem_ty
+                            || (matches!(&*elem_ty, Type::NumberWithUnit(_))
+                                && result_ty == Type::Number);
+                        if !compatible {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "array element has type {} but compound assignment result has type {}",
+                                    elem_ty.name(),
+                                    result_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                    }
+                    Type::Map(_, val_ty) => {
+                        let key_ty = self.check_expr(index, *span)?;
+                        if !key_ty.is_unknown() && key_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("map index key must be Text, got {}", key_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let rhs_ty = self.check_expr(value, *span)?;
+                        let result_ty =
+                            self.check_binary(&binary_op, *val_ty.clone(), rhs_ty, *span)?;
+                        let compatible = result_ty.is_unknown()
+                            || val_ty.is_unknown()
+                            || result_ty == *val_ty
+                            || (matches!(&*val_ty, Type::NumberWithUnit(_))
+                                && result_ty == Type::Number);
+                        if !compatible {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "map value has type {} but compound assignment result has type {}",
+                                    val_ty.name(),
+                                    result_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                    }
+                    Type::Unknown => {
+                        self.check_expr(index, *span)?;
+                        self.check_expr(value, *span)?;
+                    }
+                    other => {
+                        return Err(TypeError {
+                            msg: format!(
+                                "cannot index-compound-assign into value of type {}",
+                                other.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
                 }
                 Ok(())
             }
