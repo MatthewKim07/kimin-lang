@@ -1,0 +1,32 @@
+// for_each.kimin — basic for-each loop over arrays
+
+// Iterate over a Number array
+let scores = [85, 92, 78, 95, 88]
+let mut total: Number = 0
+for score in scores {
+    total += score
+}
+print(total)
+
+// Iterate over a Text array
+let names = ["alice", "bob", "carol"]
+for name in names {
+    print(name)
+}
+
+// Iterate over a Bool array
+let flags = [true, false, true, true]
+let mut true_count: Number = 0
+for f in flags {
+    if f {
+        true_count += 1
+    }
+}
+print(true_count)
+
+// Iterate over an inline literal
+let mut product: Number = 1
+for x in [2, 3, 4] {
+    product *= x
+}
+print(product)

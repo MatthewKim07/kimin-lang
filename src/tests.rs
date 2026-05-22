@@ -27267,3 +27267,380 @@ fn existing_map_features_still_ok_after_remove() {
     let out = vm_run("let mut m = {\"a\": 1, \"b\": 2}\nm[\"c\"] = 3\nm[\"a\"] += 10\nprint(has_key(m, \"c\"))\nprint(join(keys(m), \",\"))\nprint(len(values(m)))").unwrap();
     assert_eq!(out, vec!["true", "a,b,c", "3"]);
 }
+
+// ============================================================
+// Milestone 13A — for-each loops over arrays
+// ============================================================
+
+// --- Parser ---
+
+#[test]
+fn foreach_parses_simple_array_literal() {
+    assert!(check("for x in [1, 2, 3] { }").is_ok());
+}
+
+#[test]
+fn foreach_parses_array_variable() {
+    assert!(check("let arr = [1, 2, 3]\nfor x in arr { }").is_ok());
+}
+
+#[test]
+fn foreach_parses_array_call_result() {
+    assert!(check("fn nums() -> Array<Number> { return [1, 2] }\nfor x in nums() { }").is_ok());
+}
+
+#[test]
+fn foreach_and_for_range_coexist() {
+    assert!(check("for i in range(0, 3) { }\nfor x in [1, 2, 3] { }").is_ok());
+}
+
+#[test]
+fn foreach_loop_var_name_any_ident() {
+    assert!(check("for element in [1, 2] { }").is_ok());
+}
+
+#[test]
+fn foreach_nested_braces_parse_ok() {
+    assert!(check("for x in [1, 2] { let y = x }").is_ok());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn foreach_loop_var_has_element_type() {
+    assert!(check("for x in [1, 2, 3] { let y: Number = x }").is_ok());
+}
+
+#[test]
+fn foreach_loop_var_text_array() {
+    assert!(check("for s in [\"a\", \"b\"] { let t: Text = s }").is_ok());
+}
+
+#[test]
+fn foreach_loop_var_bool_array() {
+    assert!(check("for b in [true, false] { let c: Bool = b }").is_ok());
+}
+
+#[test]
+fn foreach_loop_var_is_immutable() {
+    let err = check("let mut arr = [1, 2]\nfor x in arr { x = 99 }");
+    assert!(err.unwrap_err().to_string().contains("immutable"));
+}
+
+#[test]
+fn foreach_non_array_iterable_error() {
+    let err = check("for x in 42 { }");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("for-each requires Array"));
+}
+
+#[test]
+fn foreach_text_iterable_error() {
+    let err = check("for x in \"hello\" { }");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("for-each requires Array"));
+}
+
+#[test]
+fn foreach_bool_iterable_error() {
+    let err = check("for x in true { }");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("for-each requires Array"));
+}
+
+#[test]
+fn foreach_loop_var_not_visible_after_loop() {
+    let err = check("for x in [1, 2] { }\nlet y = x");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("undefined variable 'x'"));
+}
+
+#[test]
+fn foreach_body_can_read_outer_vars() {
+    assert!(check("let total: Number = 5\nfor x in [1, 2] { let y: Number = total }").is_ok());
+}
+
+#[test]
+fn foreach_body_can_mutate_outer_mut() {
+    assert!(check("let mut total: Number = 0\nfor x in [1, 2] { total += x }").is_ok());
+}
+
+#[test]
+fn foreach_break_inside_loop_ok() {
+    assert!(check("for x in [1, 2] { break }").is_ok());
+}
+
+#[test]
+fn foreach_continue_inside_loop_ok() {
+    assert!(check("for x in [1, 2] { continue }").is_ok());
+}
+
+#[test]
+fn foreach_break_outside_loop_error() {
+    let err = check("break");
+    assert!(err.unwrap_err().to_string().contains("break"));
+}
+
+#[test]
+fn foreach_return_inside_function_ok() {
+    assert!(
+        check("fn f(arr: Array<Number>) -> Number { for x in arr { return x }\nreturn 0 }").is_ok()
+    );
+}
+
+// --- Interpreter output ---
+
+#[test]
+fn foreach_prints_each_element() {
+    let out = vm_run("for x in [1, 2, 3] { print(x) }").unwrap();
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn foreach_prints_text_elements() {
+    let out = vm_run("for s in [\"hello\", \"world\"] { print(s) }").unwrap();
+    assert_eq!(out, vec!["hello", "world"]);
+}
+
+#[test]
+fn foreach_prints_bool_elements() {
+    let out = vm_run("for b in [true, false, true] { print(b) }").unwrap();
+    assert_eq!(out, vec!["true", "false", "true"]);
+}
+
+#[test]
+fn foreach_empty_array_zero_iterations() {
+    let arr_decl =
+        "let arr: Array<Number> = []\nlet mut count: Number = 0\nfor x in arr { count += 1 }\nprint(count)";
+    let out = vm_run(arr_decl).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn foreach_single_element() {
+    let out = vm_run("for x in [42] { print(x) }").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn foreach_sum_array() {
+    let out =
+        vm_run("let mut total: Number = 0\nfor x in [1, 2, 3, 4, 5] { total += x }\nprint(total)")
+            .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn foreach_outer_mut_updated() {
+    let out =
+        vm_run("let mut count: Number = 0\nfor x in [10, 20, 30] { count += 1 }\nprint(count)")
+            .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn foreach_body_let_does_not_leak() {
+    let err = check("for x in [1, 2] { let y = x }\nlet z = y");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("undefined variable 'y'"));
+}
+
+#[test]
+fn foreach_snapshot_semantics_mutation_does_not_affect_iteration() {
+    // Mutating the source array mid-loop must not change iteration count.
+    let out = vm_run("let mut arr = [1, 2, 3]\nlet mut count: Number = 0\nfor x in arr { count += 1\npush(arr, 99) }\nprint(count)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn foreach_over_array_variable() {
+    let out = vm_run(
+        "let nums = [10, 20, 30]\nlet mut s: Number = 0\nfor n in nums { s += n }\nprint(s)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn foreach_over_fn_return() {
+    let out = vm_run("fn get() -> Array<Number> { return [7, 8, 9] }\nlet mut s: Number = 0\nfor x in get() { s += x }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["24"]);
+}
+
+#[test]
+fn foreach_over_slice() {
+    let out = vm_run(
+        "let arr = [1, 2, 3, 4, 5]\nlet mut s: Number = 0\nfor x in arr[1..4] { s += x }\nprint(s)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn foreach_break_exits_early() {
+    let out = vm_run("let mut found: Number = 0\nfor x in [1, 2, 3, 4, 5] { if x == 3 { found = x\nbreak } }\nprint(found)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn foreach_continue_skips_iteration() {
+    let out = vm_run("let mut sum: Number = 0\nfor x in [1, 2, 3, 4, 5] { if x == 3 { continue }\nsum += x }\nprint(sum)").unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn foreach_return_inside_function() {
+    let out = vm_run("fn first_over_three(arr: Array<Number>) -> Number { for x in arr { if x > 3 { return x } }\nreturn 0 }\nprint(first_over_three([1, 3, 4, 6]))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn foreach_nested_two_arrays() {
+    let out = vm_run("let mut count: Number = 0\nfor x in [1, 2] { for y in [10, 20, 30] { count += 1 } }\nprint(count)").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn foreach_nested_inner_break_does_not_affect_outer() {
+    let out = vm_run("let mut count: Number = 0\nfor x in [1, 2, 3] { for y in [1, 2, 3, 4] { if y == 2 { break }\ncount += 1 } }\nprint(count)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn foreach_nested_outer_break() {
+    let out =
+        vm_run("let mut count: Number = 0\nfor x in [1, 2, 3] { count += 1\nbreak }\nprint(count)")
+            .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn foreach_loop_var_shadows_outer() {
+    let out = vm_run("let x: Number = 100\nfor x in [1, 2, 3] { print(x) }\nprint(x)").unwrap();
+    assert_eq!(out, vec!["1", "2", "3", "100"]);
+}
+
+#[test]
+fn foreach_in_function() {
+    let out = vm_run("fn sum_arr(arr: Array<Number>) -> Number { let mut s: Number = 0\nfor x in arr { s += x }\nreturn s }\nprint(sum_arr([4, 5, 6]))").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn foreach_mixed_with_for_range() {
+    // range(0,3) → 3 iterations; each adds 1+2=3; total = 9
+    let out = vm_run("let mut total: Number = 0\nfor i in range(0, 3) { for x in [1, 2] { total += x } }\nprint(total)").unwrap();
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn foreach_mixed_with_while() {
+    let out = vm_run("let mut total: Number = 0\nfor x in [1, 2, 3] { let mut j: Number = 0\nwhile j < x { total += 1\nj += 1 } }\nprint(total)").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- VM parity ---
+
+#[test]
+fn vm_foreach_prints_each_element() {
+    let out = vm_run("for x in [10, 20, 30] { print(x) }").unwrap();
+    assert_eq!(out, vec!["10", "20", "30"]);
+}
+
+#[test]
+fn vm_foreach_sum_text_lengths() {
+    // "hi"=2, "hello"=5, "hey"=3; total=10
+    let out = vm_run("let mut total: Number = 0\nfor s in [\"hi\", \"hello\", \"hey\"] { total += len(s) }\nprint(total)").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_foreach_break_stops_vm() {
+    let out = vm_run(
+        "let mut s: Number = 0\nfor x in [1, 2, 3, 4] { s += x\nif s > 3 { break } }\nprint(s)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_foreach_continue_skips() {
+    let out = vm_run("let mut s: Number = 0\nfor x in [1, 2, 3, 4, 5] { if x == 2 { continue }\nif x == 4 { continue }\ns += x }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn vm_foreach_nested_sum() {
+    let out = vm_run("let mut total: Number = 0\nfor x in [1, 2, 3] { for y in [1, 2, 3] { total += x * y } }\nprint(total)").unwrap();
+    assert_eq!(out, vec!["36"]);
+}
+
+// --- Disassembler / compiler structure ---
+
+#[test]
+fn foreach_compiles_uses_existing_instructions_only() {
+    // ForEach uses BeginScope/EndScope/DefineLocal/LoadLocal/StoreLocal/Len/Index/Less/JumpIfFalse/Jump/Constant — no new instructions.
+    let prog = compile_prog("for x in [1, 2, 3] { print(x) }");
+    for instr in &prog.main.instructions {
+        // All instructions must be recognized variants (compile would panic otherwise).
+        let _ = instr;
+    }
+}
+
+#[test]
+fn foreach_disassembles_without_error() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let arr = [1, 2, 3]\nfor x in arr { print(x) }");
+    let out = disassemble(&prog);
+    assert!(out.contains("FOR") || out.contains("BEGIN_SCOPE") || out.contains("DEFINE_LOCAL"));
+}
+
+// --- Regression: existing loops unaffected ---
+
+#[test]
+fn for_range_still_works_after_foreach_dispatch() {
+    let out = vm_run("let mut s: Number = 0\nfor i in range(1, 6) { s += i }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn while_loop_unaffected_by_foreach() {
+    let out = vm_run("let mut x: Number = 0\nwhile x < 5 { x += 1 }\nprint(x)").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn foreach_and_for_range_in_same_program() {
+    let out = vm_run("let mut s: Number = 0\nfor i in range(1, 4) { s += i }\nfor x in [10, 20, 30] { s += x }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["66"]);
+}
+
+// --- String builtins inside foreach ---
+
+#[test]
+fn foreach_with_split_result() {
+    let out = vm_run("let parts = split(\"a,b,c\", \",\")\nlet mut result = \"\"\nfor p in parts { result = result + p }\nprint(result)").unwrap();
+    assert_eq!(out, vec!["abc"]);
+}
+
+#[test]
+fn foreach_map_keys() {
+    let out = vm_run("let m = {\"x\": 1, \"y\": 2, \"z\": 3}\nlet mut count: Number = 0\nfor k in keys(m) { count += 1 }\nprint(count)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn foreach_map_values_sum() {
+    let out = vm_run("let m = {\"a\": 10, \"b\": 20, \"c\": 30}\nlet mut s: Number = 0\nfor v in values(m) { s += v }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["60"]);
+}

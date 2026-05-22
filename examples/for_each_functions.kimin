@@ -1,0 +1,43 @@
+// for_each_functions.kimin — for-each inside functions
+
+fn sum(arr: Array<Number>) -> Number {
+    let mut total: Number = 0
+    for x in arr {
+        total += x
+    }
+    return total
+}
+
+fn max_val(arr: Array<Number>) -> Number {
+    let mut m: Number = arr[0]
+    for x in arr {
+        if x > m {
+            m = x
+        }
+    }
+    return m
+}
+
+fn contains_text(haystack: Array<Text>, needle: Text) -> Bool {
+    for s in haystack {
+        if s == needle {
+            return true
+        }
+    }
+    return false
+}
+
+fn first_positive(arr: Array<Number>) -> Number {
+    for x in arr {
+        if x > 0 {
+            return x
+        }
+    }
+    return 0
+}
+
+print(sum([3, 1, 4, 1, 5, 9]))
+print(max_val([4, 7, 2, 9, 1]))
+print(contains_text(["apple", "banana", "cherry"], "banana"))
+print(contains_text(["apple", "banana", "cherry"], "grape"))
+print(first_positive([0, 0, 5, 3]))

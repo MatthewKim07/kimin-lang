@@ -1,0 +1,37 @@
+// for_each_maps.kimin — for-each over map keys and values
+
+let inventory = {"apples": 5, "bananas": 3, "cherries": 12, "dates": 8}
+
+// Iterate over keys
+let mut key_count: Number = 0
+for k in keys(inventory) {
+    key_count += 1
+}
+print(key_count)
+
+// Sum all values
+let mut total_items: Number = 0
+for v in values(inventory) {
+    total_items += v
+}
+print(total_items)
+
+// Find keys with value above threshold
+let threshold: Number = 6
+let mut above: Array<Text> = []
+for k in keys(inventory) {
+    if inventory[k] > threshold {
+        push(above, k)
+    }
+}
+print(join(above, ", "))
+
+// Count items by iterating values
+let prices = {"alpha": 10, "beta": 20, "gamma": 30}
+let mut expensive: Number = 0
+for price in values(prices) {
+    if price > 15 {
+        expensive += 1
+    }
+}
+print(expensive)

@@ -1,0 +1,43 @@
+// for_each_break_continue.kimin — break and continue in for-each loops
+
+// break: stop at first match
+let values = [10, 20, 30, 40, 50]
+let mut found: Number = 0
+for v in values {
+    if v > 25 {
+        found = v
+        break
+    }
+}
+print(found)
+
+// continue: skip certain elements
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+let mut even_sum: Number = 0
+for n in numbers {
+    // Skip if remainder of n/2 is nonzero (approximate: skip odds)
+    // Kimin has no modulo; check if n > n - 1 is always true so use explicit list trick
+    // Instead skip every element where n < 3 or n > 8
+    if n < 3 {
+        continue
+    }
+    if n > 8 {
+        continue
+    }
+    even_sum += n
+}
+print(even_sum)
+
+// Nested: break inner only
+let outer = [1, 2, 3]
+let inner = [10, 20, 30, 40]
+let mut count: Number = 0
+for x in outer {
+    for y in inner {
+        if y > 20 {
+            break
+        }
+        count += 1
+    }
+}
+print(count)

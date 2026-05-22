@@ -1,0 +1,38 @@
+// for_each_errors.kimin — valid programs demonstrating for-each error guards
+
+// Guard: check before iterating (arrays are always valid to iterate)
+fn safe_sum(arr: Array<Number>) -> Number {
+    let mut total: Number = 0
+    for x in arr {
+        total += x
+    }
+    return total
+}
+
+print(safe_sum([1, 2, 3, 4, 5]))
+print(safe_sum([]))
+
+// Guard: empty check via len before accessing elements
+fn first_or_default(arr: Array<Number>, default: Number) -> Number {
+    if len(arr) == 0 {
+        return default
+    }
+    for x in arr {
+        return x
+    }
+    return default
+}
+
+print(first_or_default([42, 99], 0))
+print(first_or_default([], 7))
+
+// Guard: break on condition to avoid processing invalid states
+let data = [1, 2, 0, 4, 5]
+let mut result: Number = 0
+for d in data {
+    if d == 0 {
+        break
+    }
+    result += d
+}
+print(result)

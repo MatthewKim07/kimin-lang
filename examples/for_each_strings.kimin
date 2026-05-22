@@ -1,0 +1,36 @@
+// for_each_strings.kimin — for-each with string operations
+
+// Iterate over split result
+let sentence = "the quick brown fox"
+let words = split(sentence, " ")
+let mut long_word_count: Number = 0
+for word in words {
+    if len(word) > 3 {
+        long_word_count += 1
+    }
+}
+print(long_word_count)
+
+// Build a joined result from filtered words
+let items = ["apple", "fig", "banana", "kiwi", "cherry"]
+let mut long_items: Array<Text> = []
+for item in items {
+    if len(item) > 4 {
+        push(long_items, item)
+    }
+}
+print(join(long_items, ", "))
+
+// Count total characters across an array of strings
+let parts = ["hello", "world", "kimin"]
+let mut total_chars: Number = 0
+for p in parts {
+    total_chars += len(p)
+}
+print(total_chars)
+
+// Uppercase all elements using split output
+let tags = split("rust,kimin,systems", ",")
+for tag in tags {
+    print(to_upper(tag))
+}
