@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 12E
+# Kimin Language Specification — Milestone 12F
 
-This document describes the syntax and semantics implemented through Milestone 12E.
+This document describes the syntax and semantics implemented through Milestone 12F.
 
 ---
 
@@ -1138,9 +1138,9 @@ counts["b"] *= 2
 - The key must already exist at runtime. Missing-key map compound assignment raises `RuntimeError`.
 - `Stmt::IndexCompoundAssign` is reused; the interpreter and VM dispatch on `Array` vs `Map` at runtime.
 
-#### Map builtins (Milestones 12D–12E)
+#### Map builtins (Milestones 12D–12F)
 
-Three built-in functions operate on maps:
+Four built-in functions operate on maps:
 
 **`has_key(map, key) -> Bool`**
 
@@ -1155,7 +1155,7 @@ print(has_key(scores, "carol"))   // false
 - First argument must be `Map<Text, V>`; second must be `Text`.
 - Wrong arity or wrong argument type is a `TypeError` (static) and `RuntimeError` (runtime).
 - Missing key returns `false` — never a `RuntimeError`.
-- Useful as a guard before compound assignment on potentially absent keys.
+- Useful as a guard before compound assignment or `remove` on potentially absent keys.
 
 **`keys(map) -> Array<Text>`**
 
@@ -1189,29 +1189,48 @@ print(vals[1])   // 20  (bob's score)
 - Does not mutate the map.
 - Result array can be used with `len`, array indexing, and `for` loops; Text-value maps can use `join`.
 
-Use `keys` and `values` together for full map traversal:
+**`remove(map, key) -> V`**
+
+Removes the entry at `key` from `map` and returns the removed value. The map must be declared `let mut`.
 
 ```kimin
-let scores = {"alice": 10, "bob": 20}
-let vals = values(scores)
+let mut scores = {"alice": 10, "bob": 20}
+let v = remove(scores, "bob")
+print(v)                          // 20
+print(has_key(scores, "bob"))     // false
+```
+
+- First argument must be a plain mutable map variable identifier — expressions like `remove({...}, "k")` are a `TypeError`.
+- First argument variable must be `let mut`; immutable map → `TypeError` with message `"cannot remove from immutable map 'name'"`.
+- Second argument must be `Text`; wrong type is a `TypeError`.
+- Return type is `V`, the map's value type.
+- Missing key at runtime → `RuntimeError` with message `"map key 'k' not found"`. Use `has_key` to guard.
+- After `remove`, `has_key(map, key)` returns `false` and `len(keys(map))` decreases by one.
+- Unlike `m["k"] = v` (plain assignment), `remove` cannot reinsert a missing key — it only removes existing entries.
+
+Use `keys` + `remove` to drain a map:
+
+```kimin
+let mut scores = {"alice": 10, "bob": 20}
+let ks = keys(scores)
 let mut total: Number = 0
 
-for i in range(0, len(vals)) {
-  total += vals[i]
+for i in range(0, len(ks)) {
+  total += remove(scores, ks[i])
 }
 
 print(total)   // 30
 ```
 
-All three builtins are intercepted before normal function dispatch — no `CALL` instruction is emitted. Bytecode: `HAS_KEY` pops key then map, pushes `Bool`; `KEYS` pops map, pushes `Array<Text>`; `VALUES` pops map, pushes `Array<V>`.
+All four builtins are intercepted before normal function dispatch — no `CALL` instruction is emitted. Bytecode: `HAS_KEY` pops key then map, pushes `Bool`; `KEYS` pops map, pushes `Array<Text>`; `VALUES` pops map, pushes `Array<V>`; `REMOVE_KEY name` pops key, loads map `name` from env, removes, pushes removed value.
 
 #### Restrictions
 
 - **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`.
 - **No non-Text keys**: `{1: "a"}` is a `TypeError`.
-- **No `remove` builtin**: `remove(map, key)` is not implemented.
 - **No explicit `Map<K,V>` type annotation syntax**: deferred to a future milestone.
 - **No map iteration**: maps cannot be directly iterated with `for`; use `keys(map)` or `values(map)` and iterate the resulting array.
+- **`remove` missing key is RuntimeError**: use `has_key` to guard before `remove` if key existence is uncertain.
 
 ---
 

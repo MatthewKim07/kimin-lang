@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2719_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2781_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-12E-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-12F-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2719 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2781 tests passing**.
 
 ---
 
@@ -460,9 +460,10 @@ Two builtins operate on maps:
 - `has_key(map, key) -> Bool` — returns `true` if key exists; `false` if missing (never RuntimeError)
 - `keys(map) -> Array<Text>` — returns all keys in sorted (alphabetical) order
 - `values(map) -> Array<V>` — returns all values in sorted-key order, matching `keys(map)`
+- `remove(map, key) -> V` — removes and returns the value at `key`; `RuntimeError` if key missing; `let mut` required
 
 ```kimin
-let scores = {"bob": 20, "alice": 10}
+let mut scores = {"bob": 20, "alice": 10}
 
 print(join(keys(scores), ","))    // alice,bob
 print(values(scores)[0])          // 10
@@ -471,23 +472,27 @@ print(values(scores)[1])          // 20
 if has_key(scores, "carol") {
   print(scores["carol"])
 }
+
+let removed = remove(scores, "bob")
+print(removed)                    // 20
+print(has_key(scores, "bob"))     // false
 ```
 
-Use `keys` and `values` together to iterate over a map:
+Use `keys` and `remove` to drain a map:
 
 ```kimin
-let scores = {"alice": 10, "bob": 20}
-let vals = values(scores)
+let mut scores = {"alice": 10, "bob": 20}
+let ks = keys(scores)
 let mut total: Number = 0
 
-for i in range(0, len(vals)) {
-  total += vals[i]
+for i in range(0, len(ks)) {
+  total += remove(scores, ks[i])
 }
 
 print(total)   // 30
 ```
 
-**Current limitations:** Nested maps and non-Text keys are not yet supported. Missing keys on compound assignment are still a runtime error because the previous value must exist. `remove(map, key)` is not yet implemented.
+**Current limitations:** Nested maps and non-Text keys are not yet supported. Missing keys on compound assignment or `remove` are runtime errors.
 
 ### Bytecode backend
 
@@ -702,7 +707,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
-| No `remove` builtin | `remove(map, key)` is not implemented |
+| `remove` missing key is RuntimeError | `remove(map, key)` panics at runtime if the key is absent; use `has_key` to guard |
 | No map iteration | Maps cannot be directly iterated with `for`; use a separate keys array |
 | No explicit `Map<K,V>` annotation | Map type is inferred from the literal; `let m: Map<Text, Number>` is a ParseError |
 | No nested maps | `{"outer": {"inner": 1}}` is a TypeError |
@@ -754,6 +759,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 12C | Map index compound assignment (`map["key"] += value`, etc.) | ✅ |
 | 12D | Map builtins: `has_key(map, key) -> Bool`, `keys(map) -> Array<Text>` | ✅ |
 | 12E | Map builtin: `values(map) -> Array<V>` | ✅ |
+| 12F | Map builtin: `remove(map, key) -> V` | ✅ |
 
 ---
 
@@ -761,7 +767,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2719 passed, 0 failed
+# 2781 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -788,7 +794,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2719 unit tests
+  tests.rs        2781 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
