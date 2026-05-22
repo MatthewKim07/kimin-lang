@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 12D
+# Kimin Language Specification — Milestone 12E
 
-This document describes the syntax and semantics implemented through Milestone 12D.
+This document describes the syntax and semantics implemented through Milestone 12E.
 
 ---
 
@@ -1138,9 +1138,9 @@ counts["b"] *= 2
 - The key must already exist at runtime. Missing-key map compound assignment raises `RuntimeError`.
 - `Stmt::IndexCompoundAssign` is reused; the interpreter and VM dispatch on `Array` vs `Map` at runtime.
 
-#### Map builtins (Milestone 12D)
+#### Map builtins (Milestones 12D–12E)
 
-Two built-in functions operate on maps:
+Three built-in functions operate on maps:
 
 **`has_key(map, key) -> Bool`**
 
@@ -1172,15 +1172,46 @@ print(join(names, ","))   // alice,bob
 - Wrong arity or wrong argument type is a `TypeError` (static) and `RuntimeError` (runtime).
 - Result array can be used with `len`, `join`, array indexing, and `for` loops.
 
-Both builtins are intercepted before normal function dispatch — no `CALL` instruction is emitted. Bytecode: `HAS_KEY` pops key then map, pushes `Bool`; `KEYS` pops map, pushes `Array<Text>`.
+**`values(map) -> Array<V>`**
+
+Returns all values of `map` as an `Array<V>` in the same deterministic sorted-key order as `keys(map)`.
+
+```kimin
+let scores = {"bob": 20, "alice": 10}
+let vals = values(scores)
+print(vals[0])   // 10  (alice's score — "alice" sorts before "bob")
+print(vals[1])   // 20  (bob's score)
+```
+
+- Argument must be `Map<Text, V>`; result type is `Array<V>` where `V` is the map's value type.
+- Value order matches BTreeMap iteration order — same as `keys(map)` order.
+- Wrong arity or wrong argument type is a `TypeError` (static) and `RuntimeError` (runtime).
+- Does not mutate the map.
+- Result array can be used with `len`, array indexing, and `for` loops; Text-value maps can use `join`.
+
+Use `keys` and `values` together for full map traversal:
+
+```kimin
+let scores = {"alice": 10, "bob": 20}
+let vals = values(scores)
+let mut total: Number = 0
+
+for i in range(0, len(vals)) {
+  total += vals[i]
+}
+
+print(total)   // 30
+```
+
+All three builtins are intercepted before normal function dispatch — no `CALL` instruction is emitted. Bytecode: `HAS_KEY` pops key then map, pushes `Bool`; `KEYS` pops map, pushes `Array<Text>`; `VALUES` pops map, pushes `Array<V>`.
 
 #### Restrictions
 
 - **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`.
 - **No non-Text keys**: `{1: "a"}` is a `TypeError`.
-- **No `values`/`remove` builtins**: deferred to a future milestone.
+- **No `remove` builtin**: `remove(map, key)` is not implemented.
 - **No explicit `Map<K,V>` type annotation syntax**: deferred to a future milestone.
-- **No map iteration**: maps cannot be directly iterated with `for`; use `keys(map)` to get a key array and iterate that.
+- **No map iteration**: maps cannot be directly iterated with `for`; use `keys(map)` or `values(map)` and iterate the resulting array.
 
 ---
 
