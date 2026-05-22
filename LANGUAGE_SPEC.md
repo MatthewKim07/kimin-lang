@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 12C
+# Kimin Language Specification — Milestone 12D
 
-This document describes the syntax and semantics implemented through Milestone 12C.
+This document describes the syntax and semantics implemented through Milestone 12D.
 
 ---
 
@@ -1138,13 +1138,49 @@ counts["b"] *= 2
 - The key must already exist at runtime. Missing-key map compound assignment raises `RuntimeError`.
 - `Stmt::IndexCompoundAssign` is reused; the interpreter and VM dispatch on `Array` vs `Map` at runtime.
 
+#### Map builtins (Milestone 12D)
+
+Two built-in functions operate on maps:
+
+**`has_key(map, key) -> Bool`**
+
+Returns `true` if `key` exists in `map`, `false` otherwise.
+
+```kimin
+let scores = {"alice": 10, "bob": 20}
+print(has_key(scores, "alice"))   // true
+print(has_key(scores, "carol"))   // false
+```
+
+- First argument must be `Map<Text, V>`; second must be `Text`.
+- Wrong arity or wrong argument type is a `TypeError` (static) and `RuntimeError` (runtime).
+- Missing key returns `false` — never a `RuntimeError`.
+- Useful as a guard before compound assignment on potentially absent keys.
+
+**`keys(map) -> Array<Text>`**
+
+Returns all keys of `map` as an `Array<Text>` in lexicographic (alphabetical) order.
+
+```kimin
+let scores = {"bob": 20, "alice": 10}
+let names = keys(scores)
+print(join(names, ","))   // alice,bob
+```
+
+- Argument must be `Map<Text, V>`; result is always `Array<Text>`.
+- Key order is deterministic: BTreeMap lexicographic order (same order as map display).
+- Wrong arity or wrong argument type is a `TypeError` (static) and `RuntimeError` (runtime).
+- Result array can be used with `len`, `join`, array indexing, and `for` loops.
+
+Both builtins are intercepted before normal function dispatch — no `CALL` instruction is emitted. Bytecode: `HAS_KEY` pops key then map, pushes `Bool`; `KEYS` pops map, pushes `Array<Text>`.
+
 #### Restrictions
 
 - **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`.
 - **No non-Text keys**: `{1: "a"}` is a `TypeError`.
-- **No map builtins**: `has_key`, `keys`, `values`, `remove` are not implemented.
+- **No `values`/`remove` builtins**: deferred to a future milestone.
 - **No explicit `Map<K,V>` type annotation syntax**: deferred to a future milestone.
-- **No map iteration**: maps cannot be directly iterated with `for`; use a keys array.
+- **No map iteration**: maps cannot be directly iterated with `for`; use `keys(map)` to get a key array and iterate that.
 
 ---
 

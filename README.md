@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2497_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2589_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-12C-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-12D-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2497 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2589 tests passing**.
 
 ---
 
@@ -670,7 +670,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
-| No map builtins | `has_key`, `keys`, `values`, `remove` are not implemented |
+| No values/remove builtins | `values(map)`, `remove(map, key)` are not implemented; use `has_key`/`keys` instead |
 | No map iteration | Maps cannot be directly iterated with `for`; use a separate keys array |
 | No explicit `Map<K,V>` annotation | Map type is inferred from the literal; `let m: Map<Text, Number>` is a ParseError |
 | No nested maps | `{"outer": {"inner": 1}}` is a TypeError |
@@ -720,6 +720,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 12A | Map literals and map indexing reads (`{"key": value}`, `map["key"]`) | ✅ |
 | 12B | Map mutation by key (`map["key"] = value`) | ✅ |
 | 12C | Map index compound assignment (`map["key"] += value`, etc.) | ✅ |
+| 12D | Map builtins: `has_key(map, key) -> Bool`, `keys(map) -> Array<Text>` | ✅ |
 
 ---
 
@@ -727,7 +728,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2497 passed, 0 failed
+# 2589 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -754,7 +755,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2497 unit tests
+  tests.rs        2589 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
