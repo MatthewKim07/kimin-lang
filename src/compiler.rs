@@ -530,6 +530,125 @@ impl BytecodeCompiler {
                 self.locals_stack.pop();
             }
 
+            Stmt::ForEach {
+                var_name,
+                iterable,
+                body,
+                ..
+            } => {
+                // Lowering layout:
+                //   BEGIN_SCOPE (outer — holds array snapshot and index counter)
+                //     <iterable>
+                //     DEFINE_LOCAL __kimin_foreach_iter_N
+                //     CONSTANT 0
+                //     DEFINE_LOCAL __kimin_foreach_idx_N
+                //   @loop_start:
+                //     LOAD_LOCAL __kimin_foreach_idx_N
+                //     LOAD_LOCAL __kimin_foreach_iter_N
+                //     LEN
+                //     LESS
+                //     JUMP_IF_FALSE @loop_end
+                //     BEGIN_SCOPE (body — holds loop variable)
+                //       LOAD_LOCAL __kimin_foreach_iter_N
+                //       LOAD_LOCAL __kimin_foreach_idx_N
+                //       INDEX
+                //       DEFINE_LOCAL var_name
+                //       <body>  ← break → EndScope(s) + Jump(@loop_end)
+                //               ← continue → EndScope(s) + Jump(@increment)
+                //     END_SCOPE (body)
+                //   @increment:
+                //     LOAD_LOCAL __kimin_foreach_idx_N
+                //     CONSTANT 1
+                //     ADD
+                //     STORE_LOCAL __kimin_foreach_idx_N
+                //     JUMP @loop_start
+                //   @loop_end:
+                //   END_SCOPE (outer)
+
+                let sentinel_n = self.locals_stack.len();
+                let iter_name = format!("__kimin_foreach_iter_{}", sentinel_n);
+                let idx_name = format!("__kimin_foreach_idx_{}", sentinel_n);
+
+                // Outer scope: array snapshot + index counter.
+                self.chunk.emit(Instruction::BeginScope);
+                self.locals_stack.push(HashSet::new());
+
+                self.compile_expr(iterable)?;
+                self.locals_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(iter_name.clone());
+                self.chunk.emit(Instruction::DefineLocal(iter_name.clone()));
+
+                let zero_idx = self.chunk.add_constant(Constant::Number(0.0));
+                self.chunk.emit(Instruction::Constant(zero_idx));
+                self.locals_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(idx_name.clone());
+                self.chunk.emit(Instruction::DefineLocal(idx_name.clone()));
+
+                // Condition: idx < len(iter).
+                let loop_start = self.chunk.instructions.len();
+                self.chunk.emit(Instruction::LoadLocal(idx_name.clone()));
+                self.chunk.emit(Instruction::LoadLocal(iter_name.clone()));
+                self.chunk.emit(Instruction::Len);
+                self.chunk.emit(Instruction::Less);
+                let jump_if_false_idx = self.chunk.emit(Instruction::JumpIfFalse(0));
+
+                // Body scope: loop variable.
+                let scope_depth_before_body = self.locals_stack.len();
+                self.chunk.emit(Instruction::BeginScope);
+                self.locals_stack.push(HashSet::new());
+
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    scope_depth_before_body,
+                });
+
+                // Load iter[idx] and define as the loop variable.
+                self.chunk.emit(Instruction::LoadLocal(iter_name.clone()));
+                self.chunk.emit(Instruction::LoadLocal(idx_name.clone()));
+                self.chunk.emit(Instruction::Index);
+                self.locals_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(var_name.clone());
+                self.chunk.emit(Instruction::DefineLocal(var_name.clone()));
+
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+
+                let ctx = self.loop_stack.pop().expect("loop_stack underflow");
+                self.locals_stack.pop();
+                self.chunk.emit(Instruction::EndScope); // close body scope (normal exit)
+
+                // @increment — continue jumps here.
+                let increment_target = self.chunk.instructions.len();
+                self.chunk.emit(Instruction::LoadLocal(idx_name.clone()));
+                let one_idx = self.chunk.add_constant(Constant::Number(1.0));
+                self.chunk.emit(Instruction::Constant(one_idx));
+                self.chunk.emit(Instruction::Add);
+                self.chunk.emit(Instruction::StoreLocal(idx_name.clone()));
+                self.chunk.emit(Instruction::Jump(loop_start));
+
+                // @loop_end — break jumps here; outer scope closed.
+                let loop_end = self.chunk.instructions.len();
+                self.chunk.emit(Instruction::EndScope); // close outer scope
+
+                self.chunk.instructions[jump_if_false_idx] = Instruction::JumpIfFalse(loop_end);
+                for idx in ctx.break_jumps {
+                    self.chunk.instructions[idx] = Instruction::Jump(loop_end);
+                }
+                for idx in ctx.continue_jumps {
+                    self.chunk.instructions[idx] = Instruction::Jump(increment_target);
+                }
+
+                self.locals_stack.pop();
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
