@@ -25349,3 +25349,211 @@ fn keys_arg_message() {
     };
     assert!(msg.contains("Map") || msg.contains("keys"), "got: {}", msg);
 }
+
+// --- M12D audit gap fill ---
+
+// Parser gaps
+
+#[test]
+fn parse_string_array_builtins_still_parse_after_map_builtins() {
+    assert!(check(
+        "let s = \"hello\"\nlet b = contains(s, \"ell\")\nlet a = [1, 2]\nprint(len(a))"
+    )
+    .is_ok());
+}
+
+// Typechecker gaps
+
+#[test]
+fn type_has_key_array_values_ok() {
+    assert!(check("let m = {\"a\": [\"x\", \"y\"]}\nlet b = has_key(m, \"a\")").is_ok());
+}
+
+#[test]
+fn type_has_key_second_arg_bool_error() {
+    assert!(check("let m = {\"a\": 1}\nhas_key(m, true)").is_err());
+}
+
+#[test]
+fn type_keys_number_values_ok() {
+    assert!(check("let m = {\"a\": 10, \"b\": 20}\nlet ks = keys(m)").is_ok());
+}
+
+#[test]
+fn type_keys_text_values_ok() {
+    assert!(check("let m = {\"a\": \"hello\"}\nlet ks = keys(m)").is_ok());
+}
+
+#[test]
+fn type_keys_array_values_ok() {
+    assert!(check("let m = {\"a\": [\"x\", \"y\"]}\nlet ks = keys(m)").is_ok());
+}
+
+#[test]
+fn type_keys_empty_map_literal_still_error() {
+    assert!(check("let m = {}").is_err());
+}
+
+#[test]
+fn type_array_string_builtins_still_ok_after_map_builtins() {
+    assert!(check(
+        "let s = \"hello\"\nlet b = starts_with(s, \"h\")\nlet a = [1, 2, 3]\nlet sl = a[0..2]"
+    )
+    .is_ok());
+}
+
+// Interpreter gaps
+
+#[test]
+fn interp_has_key_after_plain_update() {
+    // Plain assignment update; key still exists.
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = 42\nprint(has_key(m, \"a\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn interp_has_key_does_not_mutate_map() {
+    // has_key is read-only; map value unchanged after call.
+    let out = vm_run("let m = {\"a\": 7}\nlet _ = has_key(m, \"a\")\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_keys_after_update() {
+    // Plain assignment update; key count unchanged.
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = 99\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// Deterministic key order gaps
+
+#[test]
+fn keys_duplicate_literal_key_only_once() {
+    // Duplicate key in literal: last value wins, key appears once.
+    let out =
+        vm_run("let m = {\"a\": 1, \"a\": 99}\nprint(len(keys(m)))\nprint(keys(m)[0])").unwrap();
+    assert_eq!(out, vec!["1", "a"]);
+}
+
+// Bytecode gaps
+
+#[test]
+fn bytecode_has_key_inside_if() {
+    let prog = compile_prog("let m = {\"a\": 1}\nif has_key(m, \"a\") {\n  print(m[\"a\"])\n}");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::HasKey));
+    assert!(has, "main chunk should contain HasKey inside if condition");
+}
+
+#[test]
+fn bytecode_map_read_assign_compound_unchanged_after_builtins() {
+    let prog =
+        compile_prog("let mut m = {\"a\": 0}\nlet v = m[\"a\"]\nm[\"a\"] = 5\nm[\"a\"] += 2");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Map { .. })));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Index)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::SetIndex(_))));
+    assert!(instrs
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. })));
+}
+
+#[test]
+fn bytecode_array_string_builtins_unchanged_after_map_builtins() {
+    let prog =
+        compile_prog("let s = \"a,b\"\nlet parts = split(s, \",\")\nprint(join(parts, \"-\"))");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Split)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Join)));
+}
+
+// VM gaps
+
+#[test]
+fn vm_has_key_missing_returns_false() {
+    let out = vm_run("let m = {\"a\": 1}\nprint(has_key(m, \"missing\"))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn vm_map_read_assign_compound_still_ok_after_builtins() {
+    let out =
+        vm_run("let mut m = {\"x\": 10}\nm[\"x\"] = 20\nm[\"x\"] += 5\nprint(m[\"x\"])").unwrap();
+    assert_eq!(out, vec!["25"]);
+}
+
+// Function gaps
+
+#[test]
+fn fn_has_key_return_bool() {
+    let out = vm_run(
+        "let m = {\"a\": 1}\nfn probe(k: Text) -> Bool {\n  return has_key(m, k)\n}\nprint(probe(\"a\"))\nprint(probe(\"z\"))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn fn_keys_return_array_text() {
+    let out = vm_run(
+        "let m = {\"b\": 2, \"a\": 1}\nfn get_names() -> Array<Text> {\n  return keys(m)\n}\nprint(join(get_names(), \",\"))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["a,b"]);
+}
+
+#[test]
+fn keys_function_result_index() {
+    let out = vm_run(
+        "let m = {\"alice\": 10}\nfn names() -> Array<Text> {\n  return keys(m)\n}\nlet ks = names()\nprint(ks[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+// Simulate gap
+
+#[test]
+fn simulate_keys_called_inside_body() {
+    let out = vm_run(
+        "let m = {\"a\": 1}\nlet mut count: Number = 0\nlet dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {\n  let ks = keys(m)\n  count = len(ks)\n}\nprint(count)",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// String/array interaction gaps
+
+#[test]
+fn keys_result_len_ok() {
+    let out = vm_run("let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn keys_result_index_ok() {
+    let out = vm_run("let m = {\"alice\": 10}\nlet ks = keys(m)\nprint(ks[0])").unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+#[test]
+fn keys_result_push_pop_after_binding_ok() {
+    let out = vm_run(
+        "let m = {\"a\": 1, \"b\": 2}\nlet mut ks = keys(m)\npush(ks, \"c\")\nprint(len(ks))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn keys_result_mutation_does_not_mutate_map() {
+    // Pushing to bound keys copy does not affect original map.
+    let out = vm_run(
+        "let m = {\"a\": 1, \"b\": 2}\nlet mut ks = keys(m)\npush(ks, \"c\")\nprint(len(keys(m)))",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
