@@ -69,7 +69,7 @@ impl Parser {
         } else if matches!(self.current_kind(), TokenKind::While) {
             self.parse_while()
         } else if matches!(self.current_kind(), TokenKind::For) {
-            self.parse_for_range()
+            self.parse_for_stmt()
         } else if matches!(self.current_kind(), TokenKind::Break) {
             self.parse_break()
         } else if matches!(self.current_kind(), TokenKind::Continue) {
@@ -215,7 +215,7 @@ impl Parser {
         })
     }
 
-    fn parse_for_range(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_for_stmt(&mut self) -> Result<Stmt, ParseError> {
         let span = self.current_span();
         self.advance(); // consume `for`
 
@@ -232,39 +232,41 @@ impl Parser {
         }
         self.advance(); // consume `in`
 
-        // `range` identifier.
-        match self.current_kind() {
-            TokenKind::Ident(n) if n == "range" => {}
-            _ => return Err(self.error("expected 'range(start, end)' after 'in'")),
+        // Dispatch: `range(` → ForRange; anything else → ForEach.
+        let is_range = matches!(self.current_kind(), TokenKind::Ident(n) if n == "range")
+            && matches!(self.peek_kind(), TokenKind::LParen);
+
+        if is_range {
+            self.advance(); // consume `range`
+            self.expect_kind(TokenKind::LParen, "expected '(' after 'range'")?;
+            let start = self.parse_expr()?;
+            self.expect_kind(TokenKind::Comma, "expected ',' between range arguments")?;
+            let end = self.parse_expr()?;
+            // Reject three-argument range.
+            if matches!(self.current_kind(), TokenKind::Comma) {
+                return Err(self.error(
+                    "range takes exactly 2 arguments (start, end); 3-argument range is not supported",
+                ));
+            }
+            self.expect_kind(TokenKind::RParen, "expected ')' after range arguments")?;
+            let body = self.parse_fn_body()?;
+            Ok(Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                span,
+            })
+        } else {
+            let iterable = self.parse_expr()?;
+            let body = self.parse_fn_body()?;
+            Ok(Stmt::ForEach {
+                var_name,
+                iterable,
+                body,
+                span,
+            })
         }
-        self.advance(); // consume `range`
-
-        self.expect_kind(TokenKind::LParen, "expected '(' after 'range'")?;
-
-        let start = self.parse_expr()?;
-
-        self.expect_kind(TokenKind::Comma, "expected ',' between range arguments")?;
-
-        let end = self.parse_expr()?;
-
-        // Reject three-argument range: next token must be `)`.
-        if matches!(self.current_kind(), TokenKind::Comma) {
-            return Err(self.error(
-                "range takes exactly 2 arguments (start, end); 3-argument range is not supported",
-            ));
-        }
-
-        self.expect_kind(TokenKind::RParen, "expected ')' after range arguments")?;
-
-        let body = self.parse_fn_body()?;
-
-        Ok(Stmt::ForRange {
-            var_name,
-            start,
-            end,
-            body,
-            span,
-        })
     }
 
     fn parse_break(&mut self) -> Result<Stmt, ParseError> {

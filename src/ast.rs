@@ -218,6 +218,15 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// An array for-each loop: `for <var> in <array_expr> { ... }`
+    /// Evaluates the iterable once (snapshot); iterates over each element in order.
+    /// The loop variable is immutable and loop-local.
+    ForEach {
+        var_name: String,
+        iterable: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
     /// Array element assignment: `arr[index] = value`. Only valid for `let mut` arrays.
     /// The target must be an identifier naming a mutable array variable.
     IndexAssign {
