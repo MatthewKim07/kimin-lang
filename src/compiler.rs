@@ -703,6 +703,11 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Keys);
                         return Ok(());
                     }
+                    if name == "values" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Values);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

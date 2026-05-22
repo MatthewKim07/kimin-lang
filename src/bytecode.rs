@@ -154,6 +154,11 @@ pub enum Instruction {
     /// Keys are in deterministic sorted (BTreeMap lexicographic) order.
     Keys,
 
+    /// Return all values of a map as Array<V>. Stack: [..., map] → Array<V>.
+    /// Values are in deterministic sorted-key (BTreeMap lexicographic) order,
+    /// matching the order of Keys.
+    Values,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }

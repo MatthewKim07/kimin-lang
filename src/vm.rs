@@ -1106,6 +1106,21 @@ impl Vm {
                     stack.push(Value::Array(ks));
                 }
 
+                Instruction::Values => {
+                    let map_val = pop(stack)?;
+                    let map = match map_val {
+                        Value::Map(m) => m,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "values() argument must be Map, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let vs: Vec<Value> = map.values().cloned().collect();
+                    stack.push(Value::Array(vs));
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

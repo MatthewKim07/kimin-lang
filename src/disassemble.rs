@@ -155,6 +155,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Join => "JOIN".to_string(),
         Instruction::HasKey => "HAS_KEY".to_string(),
         Instruction::Keys => "KEYS".to_string(),
+        Instruction::Values => "VALUES".to_string(),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }
