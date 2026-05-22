@@ -1,0 +1,10 @@
+let mut counts = {"a": 0}
+
+fn inc() {
+  counts["a"] += 1
+}
+
+inc()
+inc()
+
+print(counts["a"])

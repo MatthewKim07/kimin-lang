@@ -1,0 +1,6 @@
+let mut user = {"name": "alice"}
+
+user["name"] += " kim"
+
+print(user["name"])
+print(to_upper(user["name"]))

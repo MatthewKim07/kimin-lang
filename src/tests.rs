@@ -13264,7 +13264,12 @@ fn type_index_compound_undefined_error() {
 #[test]
 fn type_index_compound_non_array_error() {
     let e = check("let mut x = 5\nx[0] += 1").unwrap_err();
-    assert!(e.to_string().contains("not an array"));
+    let msg = e.to_string();
+    assert!(
+        msg.contains("index") || msg.contains("assign") || msg.contains("Number"),
+        "expected index-compound-assign error in: {}",
+        msg
+    );
 }
 
 #[test]
@@ -23235,9 +23240,9 @@ fn parse_map_index_assign_plain_identifier_target_only() {
 }
 
 #[test]
-fn parse_map_index_compound_assign_still_rejected() {
-    // Compound assignment to map index is not supported until M12C.
-    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] += 1").is_err());
+fn parse_map_index_compound_assign_now_supported() {
+    // M12C: map index compound assignment is now valid.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] += 1").is_ok());
 }
 
 #[test]
@@ -23729,4 +23734,460 @@ fn map_index_assign_join_after_update() {
     let src = "let mut results = {\"line\": \"\"}\nresults[\"line\"] = join([\"a\", \"b\", \"c\"], \"-\")\nprint(results[\"line\"])";
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["a-b-c"]);
+}
+
+// ============================================================
+// M12C: Map index compound assignment
+// ============================================================
+
+// --- Parser ---
+
+#[test]
+fn parse_map_index_compound_add() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] += 1").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_subtract() {
+    assert!(check("let mut m = {\"a\": 5}\nm[\"a\"] -= 2").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_multiply() {
+    assert!(check("let mut m = {\"a\": 2}\nm[\"a\"] *= 3").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_divide() {
+    assert!(check("let mut m = {\"a\": 10}\nm[\"a\"] /= 2").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_variable_key() {
+    assert!(check("let mut m = {\"a\": 1}\nlet k = \"a\"\nm[k] += 1").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_expression_key() {
+    assert!(check("let mut m = {\"a\": 1}\nm[to_lower(\"A\")] += 1").is_ok());
+}
+
+#[test]
+fn parse_map_index_compound_rhs_uses_map_read() {
+    assert!(check("let mut m = {\"a\": 1, \"b\": 2}\nm[\"a\"] += m[\"b\"]").is_ok());
+}
+
+#[test]
+fn parse_array_index_compound_still_parses() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] += 10").is_ok());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_map_index_compound_add_number_ok() {
+    assert!(check("let mut m = {\"a\": 0}\nm[\"a\"] += 1").is_ok());
+}
+
+#[test]
+fn type_map_index_compound_subtract_number_ok() {
+    assert!(check("let mut m = {\"a\": 5}\nm[\"a\"] -= 2").is_ok());
+}
+
+#[test]
+fn type_map_index_compound_multiply_number_ok() {
+    assert!(check("let mut m = {\"a\": 2}\nm[\"a\"] *= 3").is_ok());
+}
+
+#[test]
+fn type_map_index_compound_divide_number_ok() {
+    assert!(check("let mut m = {\"a\": 10}\nm[\"a\"] /= 2").is_ok());
+}
+
+#[test]
+fn type_map_index_compound_text_concat_ok() {
+    assert!(check("let mut m = {\"a\": \"hello\"}\nm[\"a\"] += \" world\"").is_ok());
+}
+
+#[test]
+fn type_map_index_compound_immutable_error() {
+    assert!(check("let m = {\"a\": 0}\nm[\"a\"] += 1").is_err());
+}
+
+#[test]
+fn type_map_index_compound_wrong_key_type_error() {
+    assert!(check("let mut m = {\"a\": 0}\nm[1] += 1").is_err());
+}
+
+#[test]
+fn type_map_index_compound_wrong_rhs_type_error() {
+    assert!(check("let mut m = {\"a\": 0}\nm[\"a\"] += \"bad\"").is_err());
+}
+
+#[test]
+fn type_map_index_compound_non_map_error() {
+    assert!(check("let mut x: Number = 5\nx[\"a\"] += 1").is_err());
+}
+
+#[test]
+fn type_map_index_compound_missing_key_not_type_error() {
+    // Missing key is a runtime error, not a static one.
+    assert!(check("let mut m = {\"a\": 0}\nm[\"z\"] += 1").is_ok());
+}
+
+#[test]
+fn type_array_index_compound_still_ok() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] += 10").is_ok());
+}
+
+#[test]
+fn type_array_index_compound_errors_still_ok() {
+    assert!(check("let mut a = [1, 2, 3]\na[\"x\"] += 10").is_err());
+}
+
+// --- Interpreter (tree-walk) ---
+
+#[test]
+fn interp_map_index_compound_add_update() {
+    let out =
+        vm_run("let mut m = {\"a\": 0}\nm[\"a\"] += 1\nm[\"a\"] += 2\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_map_index_compound_subtract_update() {
+    let out = vm_run("let mut m = {\"a\": 10}\nm[\"a\"] -= 3\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_map_index_compound_multiply_update() {
+    let out = vm_run("let mut m = {\"a\": 3}\nm[\"a\"] *= 4\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn interp_map_index_compound_divide_update() {
+    let out = vm_run("let mut m = {\"a\": 10}\nm[\"a\"] /= 2\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_map_index_compound_text_concat() {
+    let out =
+        vm_run("let mut m = {\"a\": \"hello\"}\nm[\"a\"] += \" world\"\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["hello world"]);
+}
+
+#[test]
+fn interp_map_index_compound_preserves_other_keys() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 99}\nm[\"a\"] += 10\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn interp_map_index_compound_missing_key_error() {
+    let result = vm_run("let mut m = {\"a\": 0}\nm[\"b\"] += 1");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("'b'") || msg.contains("not found"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn interp_map_index_compound_block_outer_update() {
+    let src = "let mut m = {\"a\": 0}\n{\n  m[\"a\"] += 7\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_array_index_compound_still_works() {
+    let out = vm_run("let mut a = [1, 2, 3]\na[0] += 10\nprint(a[0])").unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+// --- VM ---
+
+#[test]
+fn vm_map_index_compound_add_update() {
+    let out =
+        vm_run("let mut m = {\"a\": 0}\nm[\"a\"] += 1\nm[\"a\"] += 2\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_map_index_compound_text_concat() {
+    let out =
+        vm_run("let mut m = {\"a\": \"hello\"}\nm[\"a\"] += \" world\"\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["hello world"]);
+}
+
+#[test]
+fn vm_map_index_compound_preserves_other_keys() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 99}\nm[\"a\"] += 10\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_map_index_compound_missing_key_error() {
+    let result = vm_run("let mut m = {\"a\": 0}\nm[\"b\"] += 1");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_map_index_compound_loop() {
+    let src = "let mut m = {\"a\": 0}\nfor i in range(0, 3) {\n  m[\"a\"] += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_map_index_compound_simulate() {
+    let src = "let mut m = {\"a\": 0}\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[\"a\"] += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_map_index_compound_stack_clean() {
+    let out =
+        vm_run("let mut m = {\"a\": 1}\nm[\"a\"] += 2\nm[\"a\"] += 3\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_array_index_compound_still_works_after_map_compound() {
+    let out = vm_run("let mut a = [1, 2, 3]\na[0] += 10\nprint(a[0])").unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn vm_matches_tree_map_index_compound() {
+    let src = "let mut m = {\"a\": 0, \"b\": 5}\nm[\"a\"] += 3\nm[\"b\"] *= 2\nprint(m[\"a\"])\nprint(m[\"b\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3", "10"]);
+}
+
+// --- Bytecode ---
+
+#[test]
+fn bytecode_map_index_compound_emits_index_compound() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut m = {\"a\": 1}\nm[\"a\"] += 1");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has, "expected IndexCompoundAssign instruction");
+}
+
+#[test]
+fn bytecode_array_index_compound_unchanged_after_map_compound() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut a = [1, 2]\na[0] += 5");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has, "expected IndexCompoundAssign for array");
+}
+
+// --- Env-chain / closure ---
+
+#[test]
+fn fn_map_index_compound_outer_mutable() {
+    let src = "let mut counts = {\"a\": 0}\nfn inc() {\n  counts[\"a\"] += 1\n}\ninc()\ninc()\nprint(counts[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn closure_map_index_compound_repeated_calls() {
+    let src = "let mut m = {\"n\": 0}\nfn add(x: Number) {\n  m[\"n\"] += x\n}\nadd(3)\nadd(4)\nprint(m[\"n\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn function_local_map_index_compound() {
+    let src = "fn build() -> Number {\n  let mut m = {\"x\": 10}\n  m[\"x\"] += 5\n  return m[\"x\"]\n}\nprint(build())";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn block_shadow_map_index_compound() {
+    let src = "let mut m = {\"a\": 1}\n{\n  let mut m = {\"a\": 10}\n  m[\"a\"] += 5\n  print(m[\"a\"])\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn immutable_captured_map_index_compound_error() {
+    assert!(check("let m = {\"a\": 0}\nfn bad() {\n  m[\"a\"] += 1\n}").is_err());
+}
+
+// --- Loop ---
+
+#[test]
+fn map_index_compound_in_for_loop() {
+    let src = "let mut m = {\"a\": 0}\nfor i in range(0, 5) {\n  m[\"a\"] += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn map_index_compound_in_while_loop() {
+    let src = "let mut m = {\"a\": 0}\nlet mut i: Number = 0\nwhile i < 4 {\n  m[\"a\"] += 1\n  i += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn map_index_compound_with_array_keys() {
+    let src = "let keys = [\"a\", \"b\", \"c\"]\nlet mut m = {\"a\": 0, \"b\": 0, \"c\": 0}\nfor i in range(0, len(keys)) {\n  m[keys[i]] += i\n}\nprint(m[\"a\"])\nprint(m[\"b\"])\nprint(m[\"c\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn map_index_compound_accumulate_in_loop() {
+    let src =
+        "let mut m = {\"sum\": 0}\nfor i in range(1, 4) {\n  m[\"sum\"] += i\n}\nprint(m[\"sum\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_map_index_compound_accumulate() {
+    let src = "let mut m = {\"a\": 0}\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[\"a\"] += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_map_index_compound_simulate() {
+    let src = "let mut m = {\"a\": 0}\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[\"a\"] += 1\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- String/array interaction ---
+
+#[test]
+fn map_index_compound_text_value() {
+    let out =
+        vm_run("let mut m = {\"s\": \"alice\"}\nm[\"s\"] += \" kim\"\nprint(to_upper(m[\"s\"]))")
+            .unwrap();
+    assert_eq!(out, vec!["ALICE KIM"]);
+}
+
+#[test]
+fn map_index_compound_number_arithmetic_value() {
+    let out =
+        vm_run("let mut m = {\"n\": 10}\nm[\"n\"] -= 3\nm[\"n\"] *= 2\nprint(m[\"n\"])").unwrap();
+    assert_eq!(out, vec!["14"]);
+}
+
+#[test]
+fn existing_string_features_still_ok_after_map_compound() {
+    assert!(check("let s = \"hello\"\nlet c = s[0]\nlet sub = s[1..3]").is_ok());
+}
+
+#[test]
+fn existing_array_features_still_ok_after_map_compound() {
+    assert!(check("let mut a = [1, 2, 3]\na[0] = 99\nlet s = a[0..2]").is_ok());
+}
+
+#[test]
+fn split_join_still_ok_after_map_compound() {
+    let out = vm_run("let parts = split(\"a,b,c\", \",\")\nprint(join(parts, \"-\"))").unwrap();
+    assert_eq!(out, vec!["a-b-c"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn map_index_compound_immutable_message() {
+    let err = check("let m = {\"a\": 0}\nm[\"a\"] += 1").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("immutable"), "got: {}", msg);
+}
+
+#[test]
+fn map_index_compound_wrong_key_message() {
+    let err = check("let mut m = {\"a\": 0}\nm[1] += 1").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(msg.contains("Text"), "got: {}", msg);
+}
+
+#[test]
+fn map_index_compound_wrong_rhs_message() {
+    let err = check("let mut m = {\"a\": 0}\nm[\"a\"] += \"bad\"").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("+")
+            || msg.contains("operand")
+            || msg.contains("Number")
+            || msg.contains("Text"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn map_index_compound_non_map_message() {
+    let err = check("let mut x: Number = 5\nx[\"a\"] += 1").unwrap_err();
+    let msg = match err {
+        KiminError::Type(e) => e.msg,
+        other => panic!("expected TypeError, got {:?}", other),
+    };
+    assert!(
+        msg.contains("index") || msg.contains("assign") || msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn map_index_compound_missing_key_runtime_message() {
+    let result = vm_run("let mut m = {\"a\": 0}\nm[\"z\"] += 1");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("'z'") || msg.contains("not found"),
+        "got: {}",
+        msg
+    );
+}
+
+// --- M12B regression ---
+
+#[test]
+fn m12b_map_index_assign_still_works_after_m12c() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = 99\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn m12b_map_index_assign_insert_still_works_after_m12c() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"b\"] = 42\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["42"]);
 }

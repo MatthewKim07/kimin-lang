@@ -1,0 +1,18 @@
+// Runnable section: valid map compound assignment.
+
+let mut counts = {"a": 0}
+counts["a"] += 1
+print(counts["a"])
+
+// Uncomment to test missing key (RuntimeError):
+// counts["b"] += 1
+
+// Uncomment to test immutable map (TypeError):
+// let bad = {"a": 0}
+// bad["a"] += 1
+
+// Uncomment to test wrong key type (TypeError):
+// counts[1] += 1
+
+// Uncomment to test wrong value type (TypeError):
+// counts["a"] += "bad"

@@ -1,0 +1,8 @@
+let mut counts = {"a": 0, "b": 5}
+
+counts["a"] += 1
+counts["a"] += 2
+counts["b"] *= 2
+
+print(counts["a"])
+print(counts["b"])
