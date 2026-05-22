@@ -65,6 +65,10 @@ fn fmt_constant(c: &Constant) -> String {
     }
 }
 
+pub fn disassemble_instruction(instr: &Instruction) -> String {
+    fmt_instruction(instr)
+}
+
 fn fmt_instruction(instr: &Instruction) -> String {
     match instr {
         Instruction::Constant(i) => format!("CONSTANT #{}", i),
@@ -149,6 +153,8 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Trim => "TRIM".to_string(),
         Instruction::Split => "SPLIT".to_string(),
         Instruction::Join => "JOIN".to_string(),
+        Instruction::HasKey => "HAS_KEY".to_string(),
+        Instruction::Keys => "KEYS".to_string(),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

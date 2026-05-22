@@ -1067,6 +1067,45 @@ impl Vm {
                     stack.push(Value::Str(strs?.join(delimiter.as_str())));
                 }
 
+                Instruction::HasKey => {
+                    let key_val = pop(stack)?;
+                    let map_val = pop(stack)?;
+                    let key = match key_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "has_key() second argument must be Text, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let map = match map_val {
+                        Value::Map(m) => m,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "has_key() first argument must be Map, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    stack.push(Value::Bool(map.contains_key(&key)));
+                }
+
+                Instruction::Keys => {
+                    let map_val = pop(stack)?;
+                    let map = match map_val {
+                        Value::Map(m) => m,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "keys() argument must be Map, got {}",
+                                other.type_name()
+                            )))
+                        }
+                    };
+                    let ks: Vec<Value> = map.keys().map(|k| Value::Str(k.clone())).collect();
+                    stack.push(Value::Array(ks));
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

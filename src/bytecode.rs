@@ -146,6 +146,14 @@ pub enum Instruction {
     /// Empty array → ""; empty delimiter → concatenation.
     Join,
 
+    /// Check if a key exists in a map. Stack: [..., map, key] → Bool.
+    /// Missing key returns false (not a RuntimeError).
+    HasKey,
+
+    /// Return all keys of a map as Array<Text>. Stack: [..., map] → Array<Text>.
+    /// Keys are in deterministic sorted (BTreeMap lexicographic) order.
+    Keys,
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }

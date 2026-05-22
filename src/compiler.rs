@@ -692,6 +692,17 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Join);
                         return Ok(());
                     }
+                    if name == "has_key" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::HasKey);
+                        return Ok(());
+                    }
+                    if name == "keys" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Keys);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.
