@@ -1778,6 +1778,70 @@ impl TypeChecker {
                             }
                         }
                     }
+
+                    // `remove` builtin: remove(map, key) -> V
+                    if name == "remove" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("remove expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let map_name = match &args[0] {
+                            Expr::Variable { name, .. } => name.clone(),
+                            _ => {
+                                return Err(TypeError {
+                                    msg: "remove() first argument must be a mutable map variable"
+                                        .into(),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        };
+                        let (map_ty, map_mutable) = self
+                            .env
+                            .get(&map_name)
+                            .map(|vi| (vi.ty.clone(), vi.mutable))
+                            .ok_or_else(|| TypeError {
+                                msg: format!("undefined variable '{}'", map_name),
+                                line: span.line,
+                                col: span.col,
+                            })?;
+                        if !map_mutable {
+                            return Err(TypeError {
+                                msg: format!("cannot remove from immutable map '{}'", map_name),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let val_ty = match map_ty {
+                            Type::Map(_, v) => *v,
+                            Type::Unknown => Type::Unknown,
+                            other => {
+                                return Err(TypeError {
+                                    msg: format!(
+                                        "remove() first argument must be Map, got {}",
+                                        other.name()
+                                    ),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        };
+                        let key_ty = self.check_expr(&args[1], *span)?;
+                        if !key_ty.is_unknown() && key_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "remove() second argument must be Text, got {}",
+                                    key_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(val_ty);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;
