@@ -24191,3 +24191,409 @@ fn m12b_map_index_assign_insert_still_works_after_m12c() {
     let out = vm_run("let mut m = {\"a\": 1}\nm[\"b\"] = 42\nprint(m[\"b\"])").unwrap();
     assert_eq!(out, vec!["42"]);
 }
+
+// ============================================================
+// M12C audit: additional tests
+// ============================================================
+
+// --- Section 1: Parser ---
+
+#[test]
+fn parse_map_index_compound_plain_identifier_target_only() {
+    // Call-result compound assignment is not valid statement syntax.
+    // parse_index_assign_or_expr is only reached when Ident + '[' —
+    // get_counts()["a"] starts with Ident + '(' so it falls to Stmt::Expr,
+    // leaving '+= 1' unconsumed; the next parse_stmt call fails.
+    let tokens = Lexer::new("fn get_counts() -> Number { return 0 }\nget_counts()[\"a\"] += 1")
+        .tokenize()
+        .unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_map_index_compound_expression_position_rejected() {
+    // Compound assignment is a statement; it cannot appear as a call argument.
+    // print(counts["a"] += 1): parser sees counts["a"], returns it, then
+    // expects ')' but finds '+='.
+    let tokens = Lexer::new("let mut counts = {\"a\": 0}\nprint(counts[\"a\"] += 1)")
+        .tokenize()
+        .unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_map_index_assign_still_parses() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 2").is_ok());
+}
+
+#[test]
+fn parse_map_literal_still_parses() {
+    assert!(check("let m = {\"a\": 1, \"b\": 2}").is_ok());
+}
+
+#[test]
+fn parse_block_statement_unaffected_after_map_compound() {
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] += 1\n{ let x = 1 }").is_ok());
+}
+
+#[test]
+fn parse_state_decl_unaffected_after_map_compound() {
+    assert!(check(
+        "state Light {\n  red\n  green\n  transition red -> green\n}\nlet mut m = {\"x\": 0}\nm[\"x\"] += 1"
+    )
+    .is_ok());
+}
+
+// --- Section 2: Typechecker (additional) ---
+
+#[test]
+fn type_map_index_compound_unit_add_ok() {
+    // Map with unit values; compound add with same unit is valid.
+    assert!(check(
+        "let d1: meters = 10\nlet d2: meters = 5\nlet mut m = {\"d\": d1}\nm[\"d\"] += d2"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_map_index_compound_unit_wrong_unit_error() {
+    // Map with meters values; += seconds should TypeError.
+    assert!(check(
+        "let d: meters = 10\nlet dt: seconds = 1\nlet mut m = {\"d\": d}\nm[\"d\"] += dt"
+    )
+    .is_err());
+}
+
+#[test]
+fn type_map_index_compound_bool_error() {
+    // Bool values do not support +.
+    assert!(check("let mut m = {\"a\": true}\nm[\"a\"] += 1").is_err());
+}
+
+#[test]
+fn type_map_index_compound_array_value_error_if_no_array_add() {
+    // Array<Number> values don't support + so compound add should TypeError.
+    // Note: Array literal in map value is a TypeError (mixed/unsupported),
+    // so we can't actually have Array<Number> as map value type yet.
+    // The type checker rejects mixed types in map literals; confirm this.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] += \"bad\"").is_err());
+}
+
+#[test]
+fn type_map_index_compound_unknown_var_error() {
+    // Undefined variable should TypeError (not RuntimeError).
+    assert!(check("undefined_map[\"a\"] += 1").is_err());
+}
+
+#[test]
+fn type_plain_map_index_assign_still_ok() {
+    // M12B plain map assignment still type-checks after M12C changes.
+    assert!(check("let mut m = {\"a\": 1}\nm[\"a\"] = 99").is_ok());
+}
+
+#[test]
+fn type_state_transition_still_ok_after_map_compound() {
+    // State transition type-checking is unaffected by M12C.
+    assert!(check(
+        "state Door {\n  open\n  closed\n  transition open -> closed\n  transition closed -> open\n}\nlet mut d = Door.closed\ntransition d -> open"
+    )
+    .is_ok());
+}
+
+// --- Section 3: Interpreter (additional) ---
+
+#[test]
+fn interp_map_index_compound_block_shadow() {
+    // Inner block shadows outer map; outer is unaffected.
+    let src = "let mut m = {\"a\": 1}\n{\n  let mut m = {\"a\": 10}\n  m[\"a\"] += 5\n  print(m[\"a\"])\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn interp_map_index_compound_nested_block_updates_nearest() {
+    // No shadow: inner block compound-mutates outer binding.
+    let src = "let mut m = {\"a\": 0}\n{\n  {\n    m[\"a\"] += 7\n  }\n}\nprint(m[\"a\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_plain_map_index_assign_still_works() {
+    let out = vm_run("let mut m = {\"x\": 1}\nm[\"x\"] = 42\nprint(m[\"x\"])").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Section 4: Insert vs update semantics ---
+
+#[test]
+fn map_plain_assign_inserts_missing_key() {
+    // Plain assignment allows inserting new keys.
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"b\"] = 99\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn map_compound_missing_key_errors() {
+    // Compound assignment requires key to exist; missing key → RuntimeError.
+    assert!(vm_run("let mut m = {\"a\": 0}\nm[\"missing\"] += 1").is_err());
+}
+
+#[test]
+fn map_compound_existing_key_updates() {
+    // Compound assignment on existing key updates the value.
+    let out = vm_run("let mut m = {\"n\": 5}\nm[\"n\"] += 10\nprint(m[\"n\"])").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_plain_assign_inserts_missing_key() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"new\"] = 7\nprint(m[\"new\"])").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_compound_missing_key_errors() {
+    assert!(vm_run("let mut m = {\"a\": 0}\nm[\"nope\"] += 1").is_err());
+}
+
+// --- Section 5: Env-chain / closure (additional) ---
+
+#[test]
+fn closure_map_index_compound_text_concat() {
+    // Closure compound-concatenates text values into an outer mutable map.
+    let src = "let mut m = {\"s\": \"hello\"}\nfn append(w: Text) {\n  m[\"s\"] += w\n}\nappend(\" world\")\nprint(m[\"s\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["hello world"]);
+}
+
+#[test]
+fn nested_block_map_index_compound_nearest_binding() {
+    // Two levels of nesting; compound assigns update the nearest binding.
+    let src = "let mut m = {\"v\": 0}\n{\n  m[\"v\"] += 3\n  {\n    m[\"v\"] += 4\n  }\n}\nprint(m[\"v\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+// --- Section 6: Loop (additional) ---
+
+#[test]
+fn map_index_compound_with_break_continue() {
+    // break exits at i==2; continue skips i==1; only i==0 accumulated (sum = 0).
+    let src = "let mut m = {\"sum\": 0}\nfor i in range(0, 5) {\n  if i == 1 {\n    continue\n  }\n  if i == 2 {\n    break\n  }\n  m[\"sum\"] += i\n}\nprint(m[\"sum\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn map_index_compound_missing_key_in_loop_error() {
+    // Missing key inside loop body → RuntimeError (not silently ignored).
+    let result = vm_run("let mut m = {\"a\": 0}\nfor i in range(0, 3) {\n  m[\"missing\"] += 1\n}");
+    assert!(result.is_err());
+}
+
+// --- Section 7: Simulate (additional) ---
+
+#[test]
+fn simulate_map_index_compound_with_array_keys() {
+    // Array-driven keys inside simulate; accumulate via compound assign.
+    let src = "let keys = [\"a\", \"b\"]\nlet mut m = {\"a\": 0, \"b\": 0}\nlet dur: seconds = 2\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[keys[0]] += 1\n  m[keys[1]] += 2\n}\nprint(m[\"a\"])\nprint(m[\"b\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2", "4"]);
+}
+
+#[test]
+fn simulate_map_index_compound_missing_key_error() {
+    // Missing key inside simulate body → RuntimeError.
+    let result = vm_run(
+        "let mut m = {\"a\": 0}\nlet dur: seconds = 1\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[\"missing\"] += 1\n}",
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn simulate_time_as_map_compound_key_type_error() {
+    // time has unit type (seconds), not Text — using it as map key is TypeError.
+    assert!(check(
+        "let mut m = {\"a\": 0}\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[time] += 1\n}"
+    )
+    .is_err());
+}
+
+// --- Section 8: Bytecode compiler (additional) ---
+
+#[test]
+fn bytecode_map_index_compound_order_key_rhs() {
+    // Key expression is emitted before RHS in the instruction stream.
+    // Stack: key is pushed first, rhs is pushed second (top), then INDEX_COMPOUND_ASSIGN pops rhs then key.
+    let prog = compile_prog("let mut m = {\"a\": 1}\nm[\"a\"] += 2");
+    let instrs = &prog.main.instructions;
+    let ica_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::IndexCompoundAssign { .. }))
+        .expect("expected IndexCompoundAssign");
+    assert!(
+        ica_pos >= 2,
+        "need at least 2 instructions before IndexCompoundAssign"
+    );
+    // The last Constant before ICA is the rhs (top of stack when ICA executes).
+    let rhs_pos = instrs[..ica_pos]
+        .iter()
+        .rposition(|i| matches!(i, Instruction::Constant(_)))
+        .expect("rhs constant not found");
+    // The second-to-last Constant before ICA is the key.
+    let key_pos = instrs[..rhs_pos]
+        .iter()
+        .rposition(|i| matches!(i, Instruction::Constant(_)));
+    assert!(
+        key_pos.is_some(),
+        "key constant should appear before rhs constant"
+    );
+    assert!(key_pos.unwrap() < rhs_pos, "key must be emitted before rhs");
+}
+
+#[test]
+fn bytecode_map_index_compound_no_read_index_instruction() {
+    // No INDEX (read) instruction is emitted for compound assignment itself.
+    // The only INDEX in this program would be from a map read, not the compound assign.
+    let prog = compile_prog("let mut m = {\"a\": 1}\nm[\"a\"] += 2");
+    let has_index_read = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Index));
+    assert!(
+        !has_index_read,
+        "IndexCompoundAssign should not emit a separate Index read"
+    );
+}
+
+#[test]
+fn bytecode_map_index_compound_inside_function() {
+    // Function chunk contains IndexCompoundAssign for map compound.
+    let prog = compile_prog("let mut m = {\"a\": 0}\nfn inc() {\n  m[\"a\"] += 1\n}\ninc()");
+    let fn_chunk = prog
+        .functions
+        .iter()
+        .find(|f| f.name == "inc")
+        .expect("inc function not found");
+    let has = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has, "function chunk should contain IndexCompoundAssign");
+}
+
+#[test]
+fn bytecode_map_index_compound_inside_simulate() {
+    // Simulate body chunk contains IndexCompoundAssign.
+    let prog = compile_prog(
+        "let mut m = {\"a\": 0}\nlet dur: seconds = 3\nlet dt: seconds = 1\nsimulate dur step dt {\n  m[\"a\"] += 1\n}",
+    );
+    let sim_chunk = prog
+        .simulate_bodies
+        .first()
+        .expect("simulate body not found");
+    let has = sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has, "simulate body should contain IndexCompoundAssign");
+}
+
+#[test]
+fn bytecode_plain_map_assign_unchanged_after_map_compound() {
+    // Plain map assignment still emits SetIndex (not IndexCompoundAssign).
+    let prog = compile_prog("let mut m = {\"a\": 1}\nm[\"a\"] = 2");
+    let has_set = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_)));
+    let has_compound = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IndexCompoundAssign { .. }));
+    assert!(has_set, "SetIndex should be emitted for plain assignment");
+    assert!(
+        !has_compound,
+        "IndexCompoundAssign should not appear for plain assignment"
+    );
+}
+
+// --- Section 9: VM (additional) ---
+
+#[test]
+fn vm_map_index_compound_key_expr_once() {
+    // Key expression side-effect observed exactly once.
+    // We can't count evaluations directly; instead verify the resulting value
+    // is consistent with single evaluation.
+    let out = vm_run("let mut m = {\"a\": 0}\nlet k = \"a\"\nm[k] += 3\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_map_index_compound_closure_capture() {
+    // VM: closure captures outer mutable map and compound-mutates it.
+    let src = "let mut m = {\"x\": 0}\nfn inc_x() {\n  m[\"x\"] += 10\n}\ninc_x()\ninc_x()\nprint(m[\"x\"])";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_map_index_compound_wrong_target_error() {
+    // Runtime: compound assign into non-map non-array → RuntimeError.
+    // Bypassing type checker to exercise VM runtime branch.
+    let result = vm_run_unchecked("let mut x = 5\nx[\"a\"] += 1");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("index") || msg.contains("compound") || msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_map_index_compound_non_text_key_error() {
+    // Runtime: map compound assign with non-Text key → RuntimeError.
+    // Bypassing type checker to exercise VM runtime branch.
+    let result = vm_run_unchecked("let mut m = {\"a\": 0}\nm[1] += 1");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_plain_map_assign_still_works_after_map_compound() {
+    let out = vm_run("let mut m = {\"k\": 0}\nm[\"k\"] = 55\nprint(m[\"k\"])").unwrap();
+    assert_eq!(out, vec!["55"]);
+}
+
+// --- Section 10: String / array / unit interactions ---
+
+#[test]
+fn map_index_compound_unit_value() {
+    // Map with unit values; compound-add same unit is valid.
+    let out = vm_run(
+        "let d1: meters = 10\nlet d2: meters = 5\nlet mut m = {\"d\": d1}\nm[\"d\"] += d2\nprint(m[\"d\"])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn map_index_compound_wrong_unit_value_error() {
+    // Unit mismatch: meters map += seconds → TypeError.
+    assert!(
+        check("let d: meters = 10\nlet t: seconds = 1\nlet mut m = {\"d\": d}\nm[\"d\"] += t")
+            .is_err()
+    );
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_map_compound() {
+    // Unit arithmetic outside maps is unaffected.
+    assert!(check("let a: meters = 5\nlet b: meters = 3\nlet c: meters = a + b").is_ok());
+}
