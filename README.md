@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2829_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2884_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-12F-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-13A-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2829 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2884 tests passing**.
 
 ---
 
@@ -241,10 +241,34 @@ for i in range(1, 11) {
 print(total)  // 55
 ```
 
+**For-each loops over arrays:**
+```
+let names = ["alice", "bob", "carol"]
+for name in names {
+    print(name)
+}
+
+// Works with any Array<T>; loop variable type is T
+let mut sum: Number = 0
+for x in [1, 2, 3, 4, 5] {
+    sum += x
+}
+print(sum)  // 15
+
+// Iterate over keys(map), values(map), split(...), slices, fn return values
+for word in split("a,b,c", ",") {
+    print(word)
+}
+```
+
 - `while`: condition must be `Bool`; any other type → TypeError
 - `for i in range(start, end)`: iterates `i` from `start` (inclusive) to `end` (exclusive) by 1
   - `start` and `end` must be `Number`; loop variable is immutable and loop-local
   - Zero iterations if `start >= end`
+- `for item in array_expr`: evaluates `array_expr` once (snapshot); iterates over each element
+  - `array_expr` must be `Array<T>`; loop variable is `T`, immutable and loop-local
+  - Mutations to the source array inside the body do not change iteration count (snapshot semantics)
+  - Empty array → zero iterations; no error
 - `break`: exits the nearest enclosing loop
 - `continue`: skips the rest of the body; in for loops, jumps to the increment step
 - Both target the **nearest** enclosing loop only; no labels
@@ -760,6 +784,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 12D | Map builtins: `has_key(map, key) -> Bool`, `keys(map) -> Array<Text>` | ✅ |
 | 12E | Map builtin: `values(map) -> Array<V>` | ✅ |
 | 12F | Map builtin: `remove(map, key) -> V` | ✅ |
+| 13A | For-each loops over arrays (`for item in array_expr { ... }`) | ✅ |
 
 ---
 
@@ -767,7 +792,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2829 passed, 0 failed
+# 2884 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -794,7 +819,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2829 unit tests
+  tests.rs        2884 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -864,6 +889,19 @@ examples/
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin
   vm_dynamic_calls.kimin            vm_dynamic_adder.kimin
+  map_builtins.kimin                map_builtins_mutation.kimin
+  map_builtins_loop.kimin           map_builtins_simulate.kimin
+  map_builtins_errors.kimin
+  map_values.kimin                  map_values_loop.kimin
+  map_values_function.kimin         map_values_simulate.kimin
+  map_values_errors.kimin
+  map_remove.kimin                  map_remove_loop.kimin
+  map_remove_function.kimin         map_remove_simulate.kimin
+  map_remove_errors.kimin
+  for_each.kimin                    for_each_break_continue.kimin
+  for_each_functions.kimin          for_each_nested.kimin
+  for_each_strings.kimin            for_each_maps.kimin
+  for_each_errors.kimin
 ```
 
 <details>

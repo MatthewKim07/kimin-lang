@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 12F
+# Kimin Language Specification — Milestone 13A
 
-This document describes the syntax and semantics implemented through Milestone 12F.
+This document describes the syntax and semantics implemented through Milestone 13A.
 
 ---
 
@@ -607,6 +607,82 @@ The compiler emits:
 5. `BeginScope` (body) — body statements
 6. `EndScope` (body)
 7. `@increment:` `LoadLocal i`, `CONSTANT 1`, `ADD`, `StoreLocal i`, `Jump(@loop_start)`
+8. `@loop_end:` `EndScope` (outer)
+
+`break` jumps to `@loop_end`; `continue` jumps to `@increment`. No new VM instructions.
+
+---
+
+### 4.12 For-Each Loops
+
+A for-each loop iterates over every element of an array expression:
+
+```kimin
+for item in array_expr {
+    <body>
+}
+```
+
+The loop variable `item` takes the value of each element in order, from index 0 to the last.
+
+```kimin
+let scores = [85, 92, 78, 95]
+let mut total: Number = 0
+for score in scores {
+    total += score
+}
+print(total)   // 350
+
+// Works with any Array<T>
+for word in split("hello world kimin", " ") {
+    print(len(word))
+}
+
+// Iterate over map keys or values
+let m = {"a": 1, "b": 2, "c": 3}
+let mut s: Number = 0
+for v in values(m) {
+    s += v
+}
+print(s)   // 6
+```
+
+**Static rules:**
+- `array_expr` must have type `Array<T>`. Any other type → `TypeError: for-each requires Array, got ...`.
+- The loop variable type is `T` (the element type of `Array<T>`).
+- The loop variable is immutable. Assigning to it inside the body → `TypeError`.
+- The loop variable is loop-local. It is not visible after the loop body.
+- `break` and `continue` are valid inside a for-each body (same rules as while/for-range).
+- `break`/`continue` do not cross function or simulate boundaries.
+
+**Runtime rules:**
+- `array_expr` is evaluated exactly once before the first iteration (snapshot semantics).
+- Mutations to the source array inside the body (e.g. via `push`) do not affect the iteration count or element order — the loop iterates over the snapshot.
+- Empty array → zero iterations; no error.
+- `break` exits the loop immediately.
+- `continue` skips the rest of the current iteration and jumps to the index-increment step.
+- `return` inside a for-each body propagates out to the enclosing function.
+- Mutations to outer mutable variables persist across iterations.
+
+**Error examples:**
+```kimin
+for x in 42 { }             // TypeError: for-each requires Array, got Number
+for x in "hello" { }        // TypeError: for-each requires Array, got Text
+for x in [1, 2] { x = 99 } // TypeError: cannot assign to immutable variable 'x'
+for x in [1, 2] { }
+print(x)                    // TypeError: undefined variable 'x'
+```
+
+**Bytecode lowering:**
+
+The compiler emits (no new bytecode instructions):
+1. `BeginScope` (outer) — holds hidden `__kimin_foreach_iter_N` (array snapshot) and `__kimin_foreach_idx_N` (index counter)
+2. `array_expr` → `DefineLocal __kimin_foreach_iter_N`
+3. `CONSTANT 0` → `DefineLocal __kimin_foreach_idx_N`
+4. `@loop_start:` `LoadLocal idx`, `LoadLocal iter`, `LEN`, `LESS`, `JumpIfFalse(@loop_end)`
+5. `BeginScope` (body) — `LoadLocal iter`, `LoadLocal idx`, `INDEX`, `DefineLocal item` — then body statements
+6. `EndScope` (body)
+7. `@increment:` `LoadLocal idx`, `CONSTANT 1`, `ADD`, `StoreLocal idx`, `Jump(@loop_start)`
 8. `@loop_end:` `EndScope` (outer)
 
 `break` jumps to `@loop_end`; `continue` jumps to `@increment`. No new VM instructions.
@@ -1588,7 +1664,9 @@ inner_transition = "transition" IDENT "->" IDENT
 transition_stmt = "transition" IDENT "->" IDENT
 simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 while_stmt      = "while" expr "{" stmt* "}"
-for_stmt        = "for" IDENT "in" "range" "(" expr "," expr ")" "{" stmt* "}"
+for_stmt        = for_range_stmt | for_each_stmt
+for_range_stmt  = "for" IDENT "in" "range" "(" expr "," expr ")" "{" stmt* "}"
+for_each_stmt   = "for" IDENT "in" expr "{" stmt* "}"
 break_stmt      = "break"
 continue_stmt   = "continue"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body
@@ -1648,6 +1726,7 @@ Language semantics are defined by the tree-walk interpreter (`kimin run`). The b
 - **While loops** (M9B): `while <Bool-expr> { ... }` — lowered to `JumpIfFalse`/`Jump`/`BeginScope`/`EndScope`; no new VM instructions
 - **Break and continue** (M9C): both desugar to `EndScope × N + Jump`; jump targets patched by `LoopContext`; no new VM instructions
 - **For/range loops** (M9D): `for i in range(start, end) { ... }` — outer `BeginScope` holds loop var + sentinel; condition, body, increment, `Jump`; `continue` jumps to increment; `break` jumps to `EndScope(outer)`; no new VM instructions
+- **For-each loops** (M13A): `for item in array_expr { ... }` — outer `BeginScope` holds `__kimin_foreach_iter_N` (array snapshot) and `__kimin_foreach_idx_N` (index counter); condition via `LEN`+`LESS`; inner `BeginScope` defines loop var via `INDEX`+`DefineLocal`; `continue` jumps to index-increment; `break` jumps to `EndScope(outer)`; no new VM instructions
 - **Arrays** (M9E): `[e1, e2, e3]` → `ARRAY count`; `arr[i]` → `INDEX`; `len(arr)` → `LEN`; all three are new VM instructions
 - **Array mutation by index** (M10A): `arr[i] = value` compiles index first, then value, then emits `SET_INDEX name`; VM looks up the existing array binding, validates the index, replaces the element, and writes the updated array back through the env chain
 - **Array index compound assignment** (M10B): `arr[i] += value` and friends compile index first, then rhs, then emit `INDEX_COMPOUND_ASSIGN name op`; VM evaluates the index once, reads the old element, applies the compound operator, and writes the updated array back through the env chain
