@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2393_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-2456_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-12B-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-12C-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2393 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **2456 tests passing**.
 
 ---
 
@@ -443,7 +443,19 @@ print(scores["alice"])   // 20
 print(scores["bob"])     // 5
 ```
 
-**Current limitations:** Nested maps and non-Text keys are not yet supported.
+Map index compound assignment is also supported on `let mut` map bindings:
+
+```kimin
+let mut counts = {"a": 0, "b": 5}
+counts["a"] += 1
+counts["a"] += 2
+counts["b"] *= 2
+
+print(counts["a"])   // 3
+print(counts["b"])   // 10
+```
+
+**Current limitations:** Nested maps and non-Text keys are not yet supported. Missing keys on compound assignment are still a runtime error because the previous value must exist.
 
 ### Bytecode backend
 
@@ -658,13 +670,13 @@ LexError  at line 3, col 7:  unexpected character '@'
 | `len`/`push`/`pop` shadow user functions | These builtins take precedence over any user-defined functions with those names |
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
-| No map compound assignment | `m["k"] += v` is unsupported; use `m["k"] = m["k"] + v` |
 | No map builtins | `has_key`, `keys`, `values`, `remove` are not implemented |
 | No map iteration | Maps cannot be directly iterated with `for`; use a separate keys array |
 | No explicit `Map<K,V>` annotation | Map type is inferred from the literal; `let m: Map<Text, Number>` is a ParseError |
 | No nested maps | `{"outer": {"inner": 1}}` is a TypeError |
 | No non-Text map keys | `{1: "a"}` is a TypeError; keys must be Text |
 | Empty map literal always TypeError | No annotation context to infer element type |
+| Missing-key map compound assignment is runtime-only | `m["k"] += v` requires an existing key; it raises `RuntimeError` if the key is absent |
 
 ---
 
@@ -707,6 +719,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 11E | `join(parts, delimiter) -> Text` builtin | ✅ |
 | 12A | Map literals and map indexing reads (`{"key": value}`, `map["key"]`) | ✅ |
 | 12B | Map mutation by key (`map["key"] = value`) | ✅ |
+| 12C | Map index compound assignment (`map["key"] += value`, etc.) | ✅ |
 
 ---
 
@@ -714,7 +727,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2393 passed, 0 failed
+# 2456 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -741,7 +754,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        2393 unit tests
+  tests.rs        2456 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -804,6 +817,9 @@ examples/
   map_mutation.kimin                map_mutation_function.kimin
   map_mutation_loop.kimin           map_mutation_simulate.kimin
   map_mutation_errors.kimin
+  map_compound.kimin                map_compound_text.kimin
+  map_compound_function.kimin       map_compound_loop.kimin
+  map_compound_simulate.kimin       map_compound_errors.kimin
   bytecode_demo.kimin               bytecode_functions.kimin
   vm_demo.kimin                     vm_recursion.kimin
   vm_simulate_state.kimin           vm_closure_capture.kimin

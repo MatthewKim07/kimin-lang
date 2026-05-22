@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 12B
+# Kimin Language Specification — Milestone 12C
 
-This document describes the syntax and semantics implemented through Milestone 12B.
+This document describes the syntax and semantics implemented through Milestone 12C.
 
 ---
 
@@ -1119,6 +1119,24 @@ scores["bob"] = 5
 - Assigning to an existing key replaces its value.
 - Assigning to a missing key inserts a new entry.
 - `Stmt::IndexAssign` is reused; the interpreter and VM dispatch on `Array` vs `Map` at runtime.
+
+#### Map index compound assignment (Milestone 12C)
+
+Mutable maps also support compound assignment on existing keys:
+
+```kimin
+let mut counts = {"a": 0, "b": 5}
+counts["a"] += 1
+counts["a"] += 2
+counts["b"] *= 2
+```
+
+- Supported operators: `+=`, `-=`, `*=`, `/=`.
+- The map binding must be declared with `let mut`.
+- The key expression must have type `Text`.
+- The right-hand side participates in the same operator rules as ordinary compound assignment.
+- The key must already exist at runtime. Missing-key map compound assignment raises `RuntimeError`.
+- `Stmt::IndexCompoundAssign` is reused; the interpreter and VM dispatch on `Array` vs `Map` at runtime.
 
 #### Restrictions
 
