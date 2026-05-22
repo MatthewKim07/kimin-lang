@@ -1,0 +1,14 @@
+// Runnable section: valid has_key and keys usage.
+
+let scores = {"alice": 10}
+print(has_key(scores, "alice"))
+print(join(keys(scores), ","))
+
+// Uncomment to test wrong arity (TypeError):
+// has_key(scores)
+
+// Uncomment to test wrong key type (TypeError):
+// has_key(scores, 1)
+
+// Uncomment to test non-map (TypeError):
+// keys("not a map")

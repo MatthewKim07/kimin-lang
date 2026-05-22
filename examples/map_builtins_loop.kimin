@@ -1,0 +1,9 @@
+let scores = {"alice": 10, "bob": 20}
+let names = keys(scores)
+let mut total: Number = 0
+
+for i in range(0, len(names)) {
+  total += scores[names[i]]
+}
+
+print(total)

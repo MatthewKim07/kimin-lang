@@ -1,0 +1,14 @@
+let mut counts = {"a": 0}
+
+if has_key(counts, "b") {
+  counts["b"] += 1
+} else {
+  counts["b"] = 1
+}
+
+counts["a"] += 1
+
+let names = keys(counts)
+print(join(names, ","))
+print(counts["a"])
+print(counts["b"])

@@ -1,0 +1,8 @@
+let scores = {"alice": 10, "bob": 20}
+
+print(has_key(scores, "alice"))
+print(has_key(scores, "carol"))
+
+let names = keys(scores)
+print(len(names))
+print(join(names, ","))
