@@ -1228,6 +1228,59 @@ impl Interpreter {
                         let vs: Vec<Value> = map.values().cloned().collect();
                         return Ok(Value::Array(vs));
                     }
+
+                    if name == "remove" {
+                        if args.len() != 2 {
+                            return Err(RuntimeError {
+                                msg: format!("remove expects 2 arguments, got {}", args.len()),
+                            });
+                        }
+                        let map_name = match &args[0] {
+                            Expr::Variable { name, .. } => name.clone(),
+                            _ => {
+                                return Err(RuntimeError {
+                                    msg: "remove() first argument must be a mutable map variable"
+                                        .into(),
+                                })
+                            }
+                        };
+                        let key = match self.eval_expr(&args[1])? {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "remove() second argument must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let current =
+                            self.env
+                                .borrow()
+                                .get(&map_name)
+                                .ok_or_else(|| RuntimeError {
+                                    msg: format!("undefined variable '{}'", map_name),
+                                })?;
+                        let mut map = match current {
+                            Value::Map(m) => m,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "remove() first argument must be Map, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let removed = map.remove(&key).ok_or_else(|| RuntimeError {
+                            msg: format!("map key '{}' not found", key),
+                        })?;
+                        self.env
+                            .borrow_mut()
+                            .assign_existing(&map_name, Value::Map(map));
+                        return Ok(removed);
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
