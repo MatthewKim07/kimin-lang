@@ -1748,6 +1748,36 @@ impl TypeChecker {
                         }
                         return Ok(Type::Array(Box::new(Type::Text)));
                     }
+
+                    // `values` builtin: values(Map<Text,V>) -> Array<V>
+                    if name == "values" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("values expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t0 = self.check_expr(&args[0], *span)?;
+                        match &t0 {
+                            Type::Map(_, v) => {
+                                return Ok(Type::Array(v.clone()));
+                            }
+                            other if other.is_unknown() => {
+                                return Ok(Type::Unknown);
+                            }
+                            other => {
+                                return Err(TypeError {
+                                    msg: format!(
+                                        "values() argument must be Map, got {}",
+                                        other.name()
+                                    ),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        }
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;

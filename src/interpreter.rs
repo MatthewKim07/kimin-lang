@@ -1207,6 +1207,27 @@ impl Interpreter {
                         let ks: Vec<Value> = map.keys().map(|k| Value::Str(k.clone())).collect();
                         return Ok(Value::Array(ks));
                     }
+
+                    if name == "values" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("values expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let map = match self.eval_expr(&args[0])? {
+                            Value::Map(m) => m,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "values() argument must be Map, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let vs: Vec<Value> = map.values().cloned().collect();
+                        return Ok(Value::Array(vs));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
