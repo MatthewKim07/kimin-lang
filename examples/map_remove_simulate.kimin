@@ -1,0 +1,18 @@
+let mut readings = {"t0": 10, "t1": 20, "t2": 30}
+let mut total = 0
+
+let keys_snapshot = keys(readings)
+let d: seconds = 3
+let s: seconds = 1
+let mut step_idx = 0
+simulate d step s {
+    if step_idx < len(keys_snapshot) {
+        let k = keys_snapshot[step_idx]
+        if has_key(readings, k) {
+            total += remove(readings, k)
+        }
+    }
+    step_idx += 1
+}
+print(total)
+print(len(keys(readings)))

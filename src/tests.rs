@@ -17962,6 +17962,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::HasKey
             | crate::bytecode::Instruction::Keys
             | crate::bytecode::Instruction::Values
+            | crate::bytecode::Instruction::RemoveKey(_)
             | crate::bytecode::Instruction::Map { .. }
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
@@ -25210,9 +25211,6 @@ fn has_key_inside_loop() {
 #[test]
 fn keys_with_break_continue() {
     // break after first key.
-    let out = vm_run(
-        "let m = {\"a\": 10, \"b\": 20}\nlet ks = keys(m)\nlet mut total: Number = 0\nfor i in range(0, len(ks)) {\n  if i == 1 {\n    break\n  }\n  total += scores[ks[i]]\n}",
-    );
     // This will RuntimeError (undefined 'scores') but the parse/type check should succeed.
     // Use type-check only to verify structure parses correctly.
     assert!(check(
@@ -26419,4 +26417,471 @@ fn values_array_value_map_index_ok() {
     let out =
         vm_run("let m = {\"a\": [\"x\", \"y\"]}\nlet vs = values(m)\nprint(vs[0][0])").unwrap();
     assert_eq!(out, vec!["x"]);
+}
+
+// ============================================================
+// M12F: remove(map, key) -> V
+// ============================================================
+
+// --- Section 2: Parser tests ---
+
+#[test]
+fn remove_parses_basic_call() {
+    assert!(check("let mut m = {\"a\": 1}\nlet v = remove(m, \"a\")").is_ok());
+}
+
+#[test]
+fn remove_parses_result_used_in_print() {
+    assert!(check("let mut m = {\"a\": 1}\nprint(remove(m, \"a\"))").is_ok());
+}
+
+#[test]
+fn remove_parses_result_assigned() {
+    assert!(check("let mut m = {\"a\": 1}\nlet mut x = 0\nx = remove(m, \"a\")").is_ok());
+}
+
+#[test]
+fn remove_parses_key_from_variable() {
+    assert!(check("let mut m = {\"a\": 1}\nlet k = \"a\"\nprint(remove(m, k))").is_ok());
+}
+
+// --- Section 3: Typechecker tests ---
+
+#[test]
+fn remove_type_returns_number_value_type() {
+    assert!(check("let mut m = {\"a\": 1}\nlet v: Number = remove(m, \"a\")").is_ok());
+}
+
+#[test]
+fn remove_type_returns_text_value_type() {
+    assert!(check("let mut m = {\"a\": \"hello\"}\nlet v: Text = remove(m, \"a\")").is_ok());
+}
+
+#[test]
+fn remove_type_returns_bool_value_type() {
+    assert!(check("let mut m = {\"a\": true}\nlet v: Bool = remove(m, \"a\")").is_ok());
+}
+
+#[test]
+fn remove_type_wrong_arity_zero() {
+    let err = check("let mut m = {\"a\": 1}\nremove()").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove expects 2 arguments, got 0"));
+}
+
+#[test]
+fn remove_type_wrong_arity_one() {
+    let err = check("let mut m = {\"a\": 1}\nremove(m)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove expects 2 arguments, got 1"));
+}
+
+#[test]
+fn remove_type_wrong_arity_three() {
+    let err = check("let mut m = {\"a\": 1}\nremove(m, \"a\", 1)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove expects 2 arguments, got 3"));
+}
+
+#[test]
+fn remove_type_first_arg_not_identifier_error() {
+    let err = check("remove({\"a\": 1}, \"a\")").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() first argument must be a mutable map variable"));
+}
+
+#[test]
+fn remove_type_immutable_map_error() {
+    let err = check("let m = {\"a\": 1}\nremove(m, \"a\")").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("cannot remove from immutable map 'm'"));
+}
+
+#[test]
+fn remove_type_first_arg_not_map_error() {
+    let err = check("let mut m = 42\nremove(m, \"a\")").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() first argument must be Map, got"));
+}
+
+#[test]
+fn remove_type_key_not_text_number_error() {
+    let err = check("let mut m = {\"a\": 1}\nremove(m, 1)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() second argument must be Text, got"));
+}
+
+#[test]
+fn remove_type_key_not_text_bool_error() {
+    let err = check("let mut m = {\"a\": 1}\nremove(m, true)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() second argument must be Text, got"));
+}
+
+#[test]
+fn remove_type_result_wrong_type_error() {
+    let err = check("let mut m = {\"a\": 1}\nlet v: Text = remove(m, \"a\")").unwrap_err();
+    assert!(err.to_string().contains("Text") && err.to_string().contains("Number"));
+}
+
+// --- Section 4: Interpreter tests (via vm_run for output capture) ---
+
+#[test]
+fn remove_interpreter_returns_removed_value() {
+    let out =
+        vm_run("let mut m = {\"a\": 1, \"b\": 2}\nlet v = remove(m, \"a\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn remove_interpreter_key_no_longer_in_map() {
+    let out =
+        vm_run("let mut m = {\"a\": 1, \"b\": 2}\nremove(m, \"a\")\nprint(has_key(m, \"a\"))")
+            .unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn remove_interpreter_other_keys_preserved() {
+    let out =
+        vm_run("let mut m = {\"a\": 1, \"b\": 2}\nremove(m, \"a\")\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn remove_interpreter_single_key_map_becomes_empty() {
+    let out = vm_run("let mut m = {\"a\": 1}\nremove(m, \"a\")\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn remove_interpreter_then_has_key_false() {
+    let out =
+        vm_run("let mut m = {\"x\": 10}\nremove(m, \"x\")\nprint(has_key(m, \"x\"))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn remove_interpreter_missing_key_error() {
+    let err = vm_run("let mut m = {\"a\": 1}\nremove(m, \"z\")").unwrap_err();
+    assert!(err.to_string().contains("map key 'z' not found"));
+}
+
+#[test]
+fn remove_interpreter_text_value() {
+    let out = vm_run("let mut m = {\"a\": \"hello\"}\nlet v = remove(m, \"a\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn remove_interpreter_bool_value() {
+    let out = vm_run("let mut m = {\"a\": true}\nlet v = remove(m, \"a\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn remove_interpreter_key_from_variable() {
+    let out =
+        vm_run("let mut m = {\"a\": 1}\nlet k = \"a\"\nlet v = remove(m, k)\nprint(v)").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn remove_interpreter_removes_then_insert_same_key() {
+    let out =
+        vm_run("let mut m = {\"a\": 1}\nremove(m, \"a\")\nm[\"a\"] = 99\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn remove_interpreter_multiple_removes() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nremove(m, \"a\")\nremove(m, \"c\")\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn remove_interpreter_keys_sorted_after_remove() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nremove(m, \"b\")\nprint(keys(m)[0])\nprint(keys(m)[1])").unwrap();
+    assert_eq!(out, vec!["a", "c"]);
+}
+
+// --- Section 5: Bytecode compiler tests ---
+
+#[test]
+fn remove_bytecode_emits_remove_key_instruction() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut m = {\"a\": 1}\nremove(m, \"a\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::RemoveKey(_))));
+}
+
+#[test]
+fn remove_bytecode_remove_key_has_correct_name() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut m = {\"a\": 1}\nremove(m, \"a\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::RemoveKey(n) if n == "m")));
+}
+
+#[test]
+fn remove_bytecode_no_call_instruction_emitted() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut m = {\"a\": 1}\nremove(m, \"a\")");
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn remove_bytecode_instruction_before_remove_key_is_constant() {
+    use crate::bytecode::Instruction;
+    let prog = compile_prog("let mut m = {\"a\": 1}\nremove(m, \"a\")");
+    let instrs = &prog.main.instructions;
+    let remove_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::RemoveKey(_)))
+        .unwrap();
+    // Instruction before RemoveKey should be the key constant, not a Load of m
+    assert!(!matches!(
+        &instrs[remove_pos - 1],
+        Instruction::LoadGlobal(_) | Instruction::LoadLocal(_)
+    ));
+}
+
+#[test]
+fn remove_bytecode_disassembler_shows_remove_key() {
+    use crate::bytecode::Instruction;
+    use crate::disassemble::disassemble_instruction;
+    let text = disassemble_instruction(&Instruction::RemoveKey("scores".to_string()));
+    assert_eq!(text, "REMOVE_KEY scores");
+}
+
+// --- Section 6: VM tests ---
+
+#[test]
+fn remove_vm_basic_returns_value() {
+    let out = vm_run("let mut m = {\"a\": 1}\nlet v = remove(m, \"a\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn remove_vm_key_gone_after_remove() {
+    let out =
+        vm_run("let mut m = {\"a\": 1, \"b\": 2}\nremove(m, \"a\")\nprint(has_key(m, \"a\"))")
+            .unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn remove_vm_other_keys_intact() {
+    let out =
+        vm_run("let mut m = {\"a\": 1, \"b\": 2}\nremove(m, \"a\")\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn remove_vm_missing_key_error() {
+    let err = vm_run("let mut m = {\"a\": 1}\nremove(m, \"z\")").unwrap_err();
+    assert!(err.to_string().contains("map key 'z' not found"));
+}
+
+#[test]
+fn remove_vm_text_value() {
+    let out = vm_run("let mut m = {\"x\": \"world\"}\nlet v = remove(m, \"x\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["world"]);
+}
+
+#[test]
+fn remove_vm_multiple_removes_keys_count() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nremove(m, \"a\")\nremove(m, \"b\")\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn remove_vm_parity_with_interpreter_output() {
+    let prog = "let mut m = {\"a\": 10, \"b\": 20}\nlet v = remove(m, \"a\")\nprint(v)\nprint(has_key(m, \"a\"))\nprint(m[\"b\"])";
+    assert_eq!(vm_run(prog).unwrap(), vec!["10", "false", "20"]);
+}
+
+// --- Section 7: Interaction with other map operations ---
+
+#[test]
+fn remove_then_insert_same_key() {
+    let out =
+        vm_run("let mut m = {\"a\": 1}\nremove(m, \"a\")\nm[\"a\"] = 99\nprint(m[\"a\"])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn remove_result_used_in_arithmetic() {
+    let out = vm_run("let mut m = {\"a\": 10}\nlet v = remove(m, \"a\") + 5\nprint(v)").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn remove_after_compound_assign() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] += 9\nlet v = remove(m, \"a\")\nprint(v)")
+        .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn remove_after_mutation_map_now_empty_keys() {
+    let out = vm_run("let mut m = {\"a\": 1}\nremove(m, \"a\")\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn remove_after_mutation_map_now_empty_values() {
+    let out = vm_run("let mut m = {\"a\": 1}\nremove(m, \"a\")\nprint(len(values(m)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn remove_has_key_guard_before_remove() {
+    let out = vm_run(
+        "let mut m = {\"a\": 1}\nif has_key(m, \"a\") {\n  let v = remove(m, \"a\")\n  print(v)\n}",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Section 8: Functions ---
+
+#[test]
+fn remove_outer_map_after_outer_remove() {
+    let out =
+        vm_run("let mut m = {\"a\": 1, \"b\": 2}\nremove(m, \"a\")\nprint(has_key(m, \"a\"))")
+            .unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn remove_result_returned_from_function() {
+    let prog = "let mut m = {\"x\": 99}\nfn extract() -> Number {\n  return remove(m, \"x\")\n}\nprint(extract())";
+    let out = vm_run(prog).unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn remove_result_returned_from_function_parity() {
+    // run() and vm_run() both succeed for this program
+    let prog = "let mut m = {\"x\": 99}\nfn extract() -> Number {\n  return remove(m, \"x\")\n}\nprint(extract())";
+    assert!(run(prog).is_ok());
+    assert_eq!(vm_run(prog).unwrap(), vec!["99"]);
+}
+
+// --- Section 9: Loops ---
+
+#[test]
+fn remove_in_while_loop() {
+    let prog = "let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut total = 0\nlet ks = keys(m)\nlet mut i = 0\nwhile i < len(ks) {\n  total += remove(m, ks[i])\n  i += 1\n}\nprint(total)";
+    assert_eq!(vm_run(prog).unwrap(), vec!["6"]);
+}
+
+#[test]
+fn remove_in_for_loop() {
+    let prog = "let mut m = {\"a\": 10, \"b\": 20, \"c\": 30}\nlet ks = keys(m)\nfor i in range(0, len(ks)) {\n  print(remove(m, ks[i]))\n}";
+    assert_eq!(vm_run(prog).unwrap(), vec!["10", "20", "30"]);
+}
+
+// --- Section 10: Simulate ---
+
+#[test]
+fn remove_inside_simulate() {
+    let prog = "let mut m = {\"a\": 1}\nlet d: seconds = 1\nlet s: seconds = 1\nsimulate d step s {\n  let v = remove(m, \"a\")\n  print(v)\n}";
+    assert_eq!(vm_run(prog).unwrap(), vec!["1"]);
+}
+
+// --- Section 11: Strings and arrays as values ---
+
+#[test]
+fn remove_text_value_returned() {
+    let out =
+        vm_run("let mut m = {\"name\": \"alice\"}\nlet v = remove(m, \"name\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+#[test]
+fn remove_bool_value_returned() {
+    let out =
+        vm_run("let mut m = {\"flag\": false}\nlet v = remove(m, \"flag\")\nprint(v)").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn remove_result_number_used_in_arithmetic() {
+    let out =
+        vm_run("let mut m = {\"score\": 42}\nlet v = remove(m, \"score\")\nprint(v + 8)").unwrap();
+    assert_eq!(out, vec!["50"]);
+}
+
+// --- Section 12: Error message correctness ---
+
+#[test]
+fn remove_error_wrong_arity_message() {
+    let err = check("let mut m = {\"a\": 1}\nremove(m)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove expects 2 arguments, got 1"));
+}
+
+#[test]
+fn remove_error_immutable_map_message() {
+    let err = check("let m = {\"a\": 1}\nremove(m, \"a\")").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("cannot remove from immutable map 'm'"));
+}
+
+#[test]
+fn remove_error_non_identifier_first_arg_message() {
+    let err = check("remove({\"a\": 1}, \"a\")").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() first argument must be a mutable map variable"));
+}
+
+#[test]
+fn remove_error_first_arg_wrong_type_message() {
+    let err = check("let mut x = 5\nremove(x, \"a\")").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() first argument must be Map, got"));
+}
+
+#[test]
+fn remove_error_key_wrong_type_message() {
+    let err = check("let mut m = {\"a\": 1}\nremove(m, 1)").unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("remove() second argument must be Text, got"));
+}
+
+#[test]
+fn remove_error_missing_key_runtime_message() {
+    let err = vm_run("let mut m = {\"a\": 1}\nremove(m, \"missing\")").unwrap_err();
+    assert!(err.to_string().contains("map key 'missing' not found"));
+}
+
+#[test]
+fn remove_error_missing_key_vm_message() {
+    let err = vm_run("let mut m = {\"a\": 1}\nremove(m, \"z\")").unwrap_err();
+    assert!(err.to_string().contains("map key 'z' not found"));
 }

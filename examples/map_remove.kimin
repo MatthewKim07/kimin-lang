@@ -1,0 +1,7 @@
+let mut scores = {"alice": 95, "bob": 87, "carol": 92}
+
+let removed = remove(scores, "bob")
+print(removed)
+print(has_key(scores, "bob"))
+print(keys(scores)[0])
+print(keys(scores)[1])

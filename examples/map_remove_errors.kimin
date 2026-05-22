@@ -1,0 +1,9 @@
+let mut m = {"x": 42}
+
+let v = remove(m, "x")
+print(v)
+print(has_key(m, "x"))
+
+m["x"] = 99
+let v2 = remove(m, "x")
+print(v2)

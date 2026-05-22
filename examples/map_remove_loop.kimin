@@ -1,0 +1,11 @@
+let mut inventory = {"apples": 10, "bananas": 5, "cherries": 20}
+
+let items = keys(inventory)
+let mut total = 0
+let mut i = 0
+while i < len(items) {
+    total += remove(inventory, items[i])
+    i += 1
+}
+print(total)
+print(len(keys(inventory)))

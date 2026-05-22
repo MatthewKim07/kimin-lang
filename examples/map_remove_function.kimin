@@ -1,0 +1,10 @@
+let mut cache = {"a": 1, "b": 2, "c": 3}
+
+fn evict(key: Text) -> Number {
+    return remove(cache, key)
+}
+
+let v = evict("b")
+print(v)
+print(has_key(cache, "b"))
+print(len(keys(cache)))
