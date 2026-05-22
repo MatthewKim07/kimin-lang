@@ -764,44 +764,75 @@ impl Vm {
                         .borrow()
                         .get(&name)
                         .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
-                    let mut elems = match current {
-                        Value::Array(v) => v,
+
+                    match current {
+                        Value::Map(mut map) => {
+                            let key = match idx_val {
+                                Value::Str(s) => s,
+                                other => {
+                                    return Err(runtime_err(&format!(
+                                        "map index key must be Text, got {}",
+                                        other.type_name()
+                                    )))
+                                }
+                            };
+                            let old_val = map.get(&key).cloned().ok_or_else(|| {
+                                runtime_err(&format!("map key '{}' not found", key))
+                            })?;
+                            let new_val = apply_compound_op(&op, old_val, rhs)?;
+                            map.insert(key, new_val);
+                            if !current_env
+                                .borrow_mut()
+                                .assign_existing(&name, Value::Map(map))
+                            {
+                                return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                            }
+                        }
+                        Value::Array(_) => {
+                            // Re-read to get the Vec (borrow already dropped above).
+                            let current2 = current_env.borrow().get(&name).ok_or_else(|| {
+                                runtime_err(&format!("undefined variable '{}'", name))
+                            })?;
+                            let mut elems = match current2 {
+                                Value::Array(v) => v,
+                                _ => unreachable!(),
+                            };
+                            let n = match idx_val {
+                                Value::Number(n) => n,
+                                _ => return Err(runtime_err("array index must be a Number")),
+                            };
+                            if n.fract() != 0.0 {
+                                return Err(runtime_err("array index must be an integer"));
+                            }
+                            if n < 0.0 {
+                                return Err(runtime_err(
+                                    "array index out of bounds: index is negative",
+                                ));
+                            }
+                            let i = n as usize;
+                            if i >= elems.len() {
+                                return Err(runtime_err(&format!(
+                                    "array index out of bounds: index {} but length is {}",
+                                    i,
+                                    elems.len()
+                                )));
+                            }
+                            let old_elem = elems[i].clone();
+                            let new_elem = apply_compound_op(&op, old_elem, rhs)?;
+                            elems[i] = new_elem;
+                            if !current_env
+                                .borrow_mut()
+                                .assign_existing(&name, Value::Array(elems))
+                            {
+                                return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                            }
+                        }
                         other => {
                             return Err(runtime_err(&format!(
-                                "index compound assignment target '{}' is not an array, got {}",
-                                name,
+                                "cannot index-compound-assign into value of type {}",
                                 other.type_name()
-                            )))
+                            )));
                         }
-                    };
-
-                    let n = match idx_val {
-                        Value::Number(n) => n,
-                        _ => return Err(runtime_err("array index must be a Number")),
-                    };
-                    if n.fract() != 0.0 {
-                        return Err(runtime_err("array index must be an integer"));
-                    }
-                    if n < 0.0 {
-                        return Err(runtime_err("array index out of bounds: index is negative"));
-                    }
-                    let i = n as usize;
-                    if i >= elems.len() {
-                        return Err(runtime_err(&format!(
-                            "array index out of bounds: index {} but length is {}",
-                            i,
-                            elems.len()
-                        )));
-                    }
-
-                    let old_elem = elems[i].clone();
-                    let new_elem = apply_compound_op(&op, old_elem, rhs)?;
-                    elems[i] = new_elem;
-                    if !current_env
-                        .borrow_mut()
-                        .assign_existing(&name, Value::Array(elems))
-                    {
-                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
                     }
                 }
 

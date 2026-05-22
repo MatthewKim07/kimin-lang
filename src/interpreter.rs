@@ -201,23 +201,64 @@ impl Interpreter {
                 value,
                 ..
             } => {
-                // Evaluate index first, then read array, then evaluate rhs.
+                // Evaluate index/key first, then dispatch on target type.
                 let idx_val = self.eval_expr(index)?;
 
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+
+                match current {
+                    Value::Map(mut map) => {
+                        let key = match idx_val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "map index key must be Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let old_val = map.get(&key).cloned().ok_or_else(|| RuntimeError {
+                            msg: format!("map key '{}' not found", key),
+                        })?;
+                        let rhs = self.eval_expr(value)?;
+                        let new_val = eval_binary(&binary_op, old_val, rhs)?;
+                        map.insert(key, new_val);
+                        if !self.env.borrow_mut().assign_existing(name, Value::Map(map)) {
+                            return Err(RuntimeError {
+                                msg: format!("undefined variable '{}'", name),
+                            });
+                        }
+                        return Ok(ExecFlow::Normal);
+                    }
+                    Value::Array(_) => {}
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "cannot index-compound-assign into value of type {}",
+                                other.type_name()
+                            ),
+                        })
+                    }
+                }
+
+                // Array path: re-read to get Vec.
                 let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
                     msg: format!("undefined variable '{}'", name),
                 })?;
                 let mut elems = match current {
                     Value::Array(v) => v,
-                    other => {
-                        return Err(RuntimeError {
-                            msg: format!(
-                                "index compound assignment target '{}' is not an array, got {}",
-                                name,
-                                other.type_name()
-                            ),
-                        })
-                    }
+                    _ => unreachable!("already checked above"),
                 };
 
                 let n = match idx_val {
@@ -251,12 +292,6 @@ impl Interpreter {
 
                 let old_elem = elems[i].clone();
                 let rhs = self.eval_expr(value)?;
-                let binary_op = match op {
-                    CompoundAssignOp::Add => BinaryOp::Add,
-                    CompoundAssignOp::Subtract => BinaryOp::Sub,
-                    CompoundAssignOp::Multiply => BinaryOp::Mul,
-                    CompoundAssignOp::Divide => BinaryOp::Div,
-                };
                 let new_elem = eval_binary(&binary_op, old_elem, rhs)?;
                 elems[i] = new_elem;
                 let found = self
