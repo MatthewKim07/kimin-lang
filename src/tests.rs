@@ -26282,3 +26282,141 @@ fn values_arg_message() {
         msg
     );
 }
+
+// --- M12E audit gap fill ---
+
+// Parser gaps
+
+#[test]
+fn parse_map_read_assign_compound_still_parse_after_values() {
+    assert!(check("let mut m = {\"a\": 0}\nlet v = m[\"a\"]\nm[\"a\"] = 5\nm[\"a\"] += 2").is_ok());
+}
+
+#[test]
+fn parse_string_array_builtins_still_parse_after_values() {
+    assert!(check(
+        "let s = \"hello\"\nlet b = contains(s, \"ell\")\nlet a = [1, 2]\nprint(len(a))"
+    )
+    .is_ok());
+}
+
+// Typechecker gaps
+
+#[test]
+fn type_values_returns_array_bool() {
+    // values of Bool map is Array<Bool>; can be indexed and tested.
+    assert!(check(
+        "let m = {\"a\": true, \"b\": false}\nlet vs = values(m)\nif vs[0] {\n  print(1)\n}"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_values_then_index_type_ok() {
+    // values of Number map; element is Number; can be used in arithmetic.
+    assert!(check(
+        "let m = {\"a\": 10}\nlet vs = values(m)\nlet mut total: Number = 0\ntotal += vs[0]"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_values_text_map_then_join_ok() {
+    assert!(
+        check("let m = {\"b\": \"banana\", \"a\": \"apple\"}\nprint(join(values(m), \",\"))")
+            .is_ok()
+    );
+}
+
+#[test]
+fn type_array_string_builtins_still_ok_after_values() {
+    assert!(check(
+        "let s = \"hello\"\nlet b = starts_with(s, \"h\")\nlet a = [1, 2, 3]\nlet sl = a[0..2]"
+    )
+    .is_ok());
+}
+
+// Interpreter gaps
+
+#[test]
+fn interp_values_text_map_then_string_builtin() {
+    let out = vm_run("let m = {\"a\": \"alice\"}\nprint(to_upper(values(m)[0]))").unwrap();
+    assert_eq!(out, vec!["ALICE"]);
+}
+
+#[test]
+fn interp_values_array_value_map_then_index() {
+    // Array<Text> values; index into values result then into the inner array.
+    let out =
+        vm_run("let m = {\"a\": [\"x\", \"y\"]}\nlet vs = values(m)\nprint(vs[0][0])").unwrap();
+    assert_eq!(out, vec!["x"]);
+}
+
+#[test]
+fn interp_keys_has_key_still_work_after_values() {
+    // Explicit `interp_` prefix version; same semantics as keys_has_key_still_work_after_values.
+    let out = vm_run(
+        "let m = {\"alice\": 10}\nprint(has_key(m, \"alice\"))\nprint(keys(m)[0])\nprint(values(m)[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "alice", "10"]);
+}
+
+// Deterministic order gaps
+
+#[test]
+fn values_order_after_existing_key_update() {
+    // Updating a key does not change key count or order.
+    let out = vm_run(
+        "let mut m = {\"b\": 2, \"a\": 1}\nm[\"b\"] = 99\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "99"]);
+}
+
+#[test]
+fn vm_values_sorted_order_after_insert() {
+    // After insert of "a", sorted order puts it before "b".
+    let out = vm_run(
+        "let mut m = {\"b\": 2}\nm[\"a\"] = 1\nlet vs = values(m)\nprint(vs[0])\nprint(vs[1])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+// Bytecode gap
+
+#[test]
+fn bytecode_array_string_builtins_unchanged_after_values() {
+    let prog =
+        compile_prog("let s = \"a,b\"\nlet parts = split(s, \",\")\nprint(join(parts, \"-\"))");
+    let instrs = &prog.main.instructions;
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Split)));
+    assert!(instrs.iter().any(|i| matches!(i, Instruction::Join)));
+}
+
+// VM gaps
+
+#[test]
+fn vm_values_after_plain_update() {
+    let out = vm_run("let mut m = {\"a\": 1}\nm[\"a\"] = 99\nprint(values(m)[0])").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_map_read_assign_compound_still_ok_after_values() {
+    let out = vm_run(
+        "let mut m = {\"x\": 10}\nm[\"x\"] = 20\nm[\"x\"] += 5\nprint(m[\"x\"])\nprint(values(m)[0])",
+    )
+    .unwrap();
+    assert_eq!(out, vec!["25", "25"]);
+}
+
+// String/array interaction gap
+
+#[test]
+fn values_array_value_map_index_ok() {
+    let out =
+        vm_run("let m = {\"a\": [\"x\", \"y\"]}\nlet vs = values(m)\nprint(vs[0][0])").unwrap();
+    assert_eq!(out, vec!["x"]);
+}
