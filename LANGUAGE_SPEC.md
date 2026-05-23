@@ -1421,6 +1421,94 @@ An empty map literal `{}` is accepted when the inferred expected type (from anno
 
 ---
 
+### 4.11b Structs (Milestone 15A)
+
+Structs are named record types with a fixed set of typed fields. They are value types — fully immutable and copied on assignment.
+
+#### Declaration
+
+```kimin
+struct Point { x: Number, y: Number }
+struct Config { name: Text, timeout: Number, enabled: Bool }
+```
+
+- `struct` keyword followed by name, then `{` field: Type, ... `}`
+- At least one field required
+- Field types can be `Number`, `Text`, `Bool`, any unit name, a state machine name, or `Array<T>`
+- No duplicate field names; no duplicate struct names in the same program
+- No nested struct types as field types (yet)
+
+#### Construction
+
+```kimin
+let p = Point { x: 3, y: 4 }
+let cfg = Config { name: "worker", timeout: 30, enabled: true }
+```
+
+- All declared fields must be provided — no omissions, no extras, no duplicates
+- Fields may appear in any order in the literal
+- Type of the expression is `Struct("Point")`
+- No empty struct literals (`User {}` is a `ParseError`; at least 1 field required)
+
+#### Field access
+
+```kimin
+print(p.x)        // 3
+print(cfg.name)   // worker
+```
+
+Dot notation reads a named field. Field access on a non-struct type is a `TypeError`. Unknown field name is a `RuntimeError`.
+
+#### Structs in arrays
+
+```kimin
+let points = [p1, p2, p3]
+print(points[0].x)   // first element, field x
+```
+
+Chained access (`arr[i].field`, `f().field`) uses `Expr::FieldAccess` in the AST.
+
+#### Structs in functions
+
+```kimin
+fn get_x(p: Point) -> Number { return p.x }
+fn make_pt(a: Number, b: Number) -> Point { return Point { x: a, y: b } }
+```
+
+Structs can be passed as function parameters (using the struct name as the type annotation) and returned from functions.
+
+#### Type rules
+
+| Construct | Rule |
+|-----------|------|
+| `struct S { f: T }` | Declares struct type `S`; field `f` has type `T` |
+| `S { f: e }` | `e` must have type `T`; result is `Type::Struct("S")` |
+| `s.f` | `s` must be `Type::Struct("S")`; result is declared type of field `f` |
+| `fn g(s: S)` | `S` used as parameter type annotation resolves to `Type::Struct("S")` |
+| `-> S` | Return type annotation `S` resolves to `Type::Struct("S")` |
+
+#### Bytecode
+
+- `Instruction::StructLiteral { name, fields: Vec<String> }` — compiler emits field values left-to-right in source order; VM pops N values (LIFO), reverses to restore source order, maps to field names, builds `BTreeMap`; disassembled as `STRUCT_LITERAL name fields=[f1, f2]`
+- `Instruction::FieldAccess(String)` — compiler emits object expression then instruction; VM pops struct value, looks up field by name; disassembled as `FIELD_ACCESS field_name`
+- Simple `u.field` access on a variable is compiled as `LoadGlobal/Local u` + `FieldAccess("field")` (not `LoadState`)
+- `state_types: HashSet<String>` in `BytecodeCompiler` distinguishes state machine names (→ `LoadState`) from struct variable names (→ `LoadGlobal/Local + FieldAccess`)
+
+#### Display
+
+Structs print as `User { name: alice, score: 10 }` — field names in BTreeMap alphabetical order, Text values without quotes.
+
+#### Restrictions
+
+- **No field mutation**: `u.name = "bob"` is unsupported; structs are fully immutable
+- **No methods**: no `fn` attached to a struct; no `self` parameter
+- **Struct type annotations require exact match**: `let u: User = User { ... }` is valid; `let u: User = Point { ... }` is a `TypeError`; annotation and literal struct name must agree
+- **No nested struct literals**: `User { address: Address { city: "NY" } }` is unsupported
+- **No generics**: `struct Box<T> { value: T }` is unsupported
+- **No inheritance**: no extends/implements/traits
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
