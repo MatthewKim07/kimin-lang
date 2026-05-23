@@ -112,6 +112,14 @@ pub struct StateMachineType {
     pub transitions: HashSet<(String, String)>,
 }
 
+/// Static description of a struct type registered by a `struct` declaration.
+#[derive(Clone)]
+pub struct StructInfo {
+    pub name: String,
+    /// Field name → static type, in BTreeMap (alphabetical) order.
+    pub fields: BTreeMap<String, Type>,
+}
+
 /// Type and optional known-state-variant for a single variable binding.
 #[derive(Debug, Clone)]
 pub struct VarInfo {
@@ -142,6 +150,8 @@ pub enum Type {
     /// A map with Text keys and homogeneous values. First type is key (always Text in M12A),
     /// second type is value element type.
     Map(Box<Type>, Box<Type>),
+    /// A struct value. The String is the struct name.
+    Struct(String),
     /// Inferred or unannotated type — skips type checking on operations involving it.
     Unknown,
 }
@@ -158,6 +168,7 @@ impl Type {
             Type::State(s) => s.clone(),
             Type::Array(elem) => format!("Array<{}>", elem.name()),
             Type::Map(k, v) => format!("Map<{}, {}>", k.name(), v.name()),
+            Type::Struct(s) => s.clone(),
             Type::Unknown => "Unknown".into(),
         }
     }
@@ -257,6 +268,8 @@ pub struct TypeChecker {
     current_fn_return_type: Option<Type>,
     /// Registry of declared state machines. Populated by state declaration pre-pass.
     states: HashMap<String, StateMachineType>,
+    /// Registry of declared struct types. Populated by struct declaration pre-pass.
+    structs: HashMap<String, StructInfo>,
     /// Number of while loops currently enclosing the statement being checked.
     /// `break`/`continue` require this to be > 0.
     /// Reset to 0 on entry to a function or simulate body.
@@ -269,6 +282,7 @@ impl TypeChecker {
             env: TypeEnv::new(),
             current_fn_return_type: None,
             states: HashMap::new(),
+            structs: HashMap::new(),
             loop_depth: 0,
         }
     }
@@ -281,11 +295,11 @@ impl TypeChecker {
     /// Type-check a list of statements.
     ///
     /// Three-pass design:
-    ///   Pass 1 — register all state machine declarations (so function signatures can reference them)
+    ///   Pass 1 — register all state machine and struct declarations
     ///   Pass 2 — register all function signatures (enables mutual recursion type-checking)
     ///   Pass 3 — check all statements
     fn check_stmt_list(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
-        // Pass 1: register state machines.
+        // Pass 1: register state machines and struct types.
         for stmt in stmts {
             if let Stmt::StateDecl {
                 name,
@@ -295,6 +309,9 @@ impl TypeChecker {
             } = stmt
             {
                 self.register_state(name, variants, transitions, *span)?;
+            }
+            if let Stmt::StructDecl { name, fields, span } = stmt {
+                self.register_struct(name, fields, *span)?;
             }
         }
         // Pass 2: register function signatures.
@@ -382,9 +399,56 @@ impl TypeChecker {
         Ok(())
     }
 
+    fn register_struct(
+        &mut self,
+        name: &str,
+        fields: &[(String, TypeAnnotation)],
+        span: Span,
+    ) -> Result<(), TypeError> {
+        if self.structs.contains_key(name) {
+            return Err(TypeError {
+                msg: format!("duplicate struct '{}'", name),
+                line: span.line,
+                col: span.col,
+            });
+        }
+        if fields.is_empty() {
+            return Err(TypeError {
+                msg: format!("struct '{}' must have at least one field", name),
+                line: span.line,
+                col: span.col,
+            });
+        }
+        let mut field_map: BTreeMap<String, Type> = BTreeMap::new();
+        for (field_name, ann) in fields {
+            if field_map.contains_key(field_name.as_str()) {
+                return Err(TypeError {
+                    msg: format!("duplicate field '{}' in struct '{}'", field_name, name),
+                    line: span.line,
+                    col: span.col,
+                });
+            }
+            let ty = self.resolve_annotation(ann, span)?;
+            field_map.insert(field_name.clone(), ty);
+        }
+        self.structs.insert(
+            name.to_string(),
+            StructInfo {
+                name: name.to_string(),
+                fields: field_map,
+            },
+        );
+        Ok(())
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match stmt {
             Stmt::StateDecl { .. } => {
+                // Already registered in the pre-pass; nothing more to do.
+                Ok(())
+            }
+
+            Stmt::StructDecl { .. } => {
                 // Already registered in the pre-pass; nothing more to do.
                 Ok(())
             }
@@ -1163,22 +1227,161 @@ impl TypeChecker {
                 variant_name,
                 span,
             } => {
-                let sm = self.states.get(state_name).ok_or_else(|| TypeError {
-                    msg: format!("unknown state machine '{}'", state_name),
-                    line: span.line,
-                    col: span.col,
-                })?;
-                if !sm.variants.contains(variant_name) {
+                // Check state machine registry first.
+                if let Some(sm) = self.states.get(state_name) {
+                    if !sm.variants.contains(variant_name) {
+                        return Err(TypeError {
+                            msg: format!(
+                                "unknown variant '{}' for state machine '{}'",
+                                variant_name, state_name
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                    return Ok(Type::State(state_name.clone()));
+                }
+
+                // Check if it's a struct variable field access (e.g. `u.name`).
+                if let Some(vi) = self.env.get(state_name) {
+                    let obj_ty = vi.ty.clone();
+                    if obj_ty.is_unknown() {
+                        return Ok(Type::Unknown);
+                    }
+                    if let Type::Struct(ref sname) = obj_ty {
+                        let sname = sname.clone();
+                        let field_ty = self
+                            .structs
+                            .get(&sname)
+                            .and_then(|si| si.fields.get(variant_name))
+                            .cloned()
+                            .ok_or_else(|| TypeError {
+                                msg: format!("struct '{}' has no field '{}'", sname, variant_name),
+                                line: span.line,
+                                col: span.col,
+                            })?;
+                        return Ok(field_ty);
+                    }
                     return Err(TypeError {
                         msg: format!(
-                            "unknown variant '{}' for state machine '{}'",
-                            variant_name, state_name
+                            "'{}' has type {}, which has no fields",
+                            state_name,
+                            obj_ty.name()
                         ),
                         line: span.line,
                         col: span.col,
                     });
                 }
-                Ok(Type::State(state_name.clone()))
+
+                Err(TypeError {
+                    msg: format!("unknown state machine or struct variable '{}'", state_name),
+                    line: span.line,
+                    col: span.col,
+                })
+            }
+
+            Expr::StructLiteral { name, fields, span } => {
+                let struct_info = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| TypeError {
+                        msg: format!("unknown struct '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?
+                    .clone();
+
+                let declared_fields = struct_info.fields.clone();
+                let mut provided: HashSet<String> = HashSet::new();
+
+                for (field_name, field_expr) in fields {
+                    if provided.contains(field_name.as_str()) {
+                        return Err(TypeError {
+                            msg: format!(
+                                "duplicate field '{}' in struct '{}' literal",
+                                field_name, name
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                    let expected_ty =
+                        declared_fields
+                            .get(field_name.as_str())
+                            .ok_or_else(|| TypeError {
+                                msg: format!("struct '{}' has no field '{}'", name, field_name),
+                                line: span.line,
+                                col: span.col,
+                            })?;
+                    let actual_ty = self.check_expr(field_expr, *span)?;
+                    let compatible = actual_ty.is_unknown()
+                        || actual_ty == *expected_ty
+                        || (matches!(expected_ty, Type::NumberWithUnit(_))
+                            && actual_ty == Type::Number);
+                    if !compatible {
+                        return Err(TypeError {
+                            msg: format!(
+                                "field '{}' of struct '{}' expects {}, got {}",
+                                field_name,
+                                name,
+                                expected_ty.name(),
+                                actual_ty.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                    provided.insert(field_name.clone());
+                }
+
+                for field_name in declared_fields.keys() {
+                    if !provided.contains(field_name.as_str()) {
+                        return Err(TypeError {
+                            msg: format!(
+                                "missing field '{}' in struct '{}' literal",
+                                field_name, name
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                }
+
+                Ok(Type::Struct(name.clone()))
+            }
+
+            Expr::FieldAccess {
+                object,
+                field,
+                span,
+            } => {
+                let obj_ty = self.check_expr(object, *span)?;
+                if obj_ty.is_unknown() {
+                    return Ok(Type::Unknown);
+                }
+                if let Type::Struct(ref sname) = obj_ty {
+                    let sname = sname.clone();
+                    let field_ty = self
+                        .structs
+                        .get(&sname)
+                        .and_then(|si| si.fields.get(field.as_str()))
+                        .cloned()
+                        .ok_or_else(|| TypeError {
+                            msg: format!("struct '{}' has no field '{}'", sname, field),
+                            line: span.line,
+                            col: span.col,
+                        })?;
+                    return Ok(field_ty);
+                }
+                Err(TypeError {
+                    msg: format!(
+                        "cannot access field '{}' on value of type {}",
+                        field,
+                        obj_ty.name()
+                    ),
+                    line: span.line,
+                    col: span.col,
+                })
             }
 
             Expr::Grouping(inner) => self.check_expr(inner, context_span),
@@ -2162,6 +2365,8 @@ impl TypeChecker {
             TypeAnnotation::Named(name) => {
                 if self.states.contains_key(name) {
                     Ok(Type::State(name.clone()))
+                } else if self.structs.contains_key(name) {
+                    Ok(Type::Struct(name.clone()))
                 } else {
                     Err(TypeError {
                         msg: format!("unknown type '{}'", name),

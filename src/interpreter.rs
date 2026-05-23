@@ -368,6 +368,11 @@ impl Interpreter {
                 Ok(ExecFlow::Normal)
             }
 
+            Stmt::StructDecl { .. } => {
+                // Struct declarations are purely static — no runtime work.
+                Ok(ExecFlow::Normal)
+            }
+
             Stmt::While {
                 condition, body, ..
             } => {
@@ -683,10 +688,57 @@ impl Interpreter {
                 state_name,
                 variant_name,
                 ..
-            } => Ok(Value::StateValue {
-                state_name: state_name.clone(),
-                variant_name: variant_name.clone(),
-            }),
+            } => {
+                // If `state_name` is a variable in the current env, treat as struct field access.
+                if let Some(val) = self.env.borrow().get(state_name) {
+                    return match val {
+                        Value::Struct { fields, .. } => fields
+                            .get(variant_name)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError {
+                                msg: format!("struct has no field '{}'", variant_name),
+                            }),
+                        other => Err(RuntimeError {
+                            msg: format!(
+                                "cannot access field '{}' on {}",
+                                variant_name,
+                                other.type_name()
+                            ),
+                        }),
+                    };
+                }
+                // Otherwise it's a state machine variant literal.
+                Ok(Value::StateValue {
+                    state_name: state_name.clone(),
+                    variant_name: variant_name.clone(),
+                })
+            }
+
+            Expr::StructLiteral { name, fields, .. } => {
+                let mut field_map = std::collections::BTreeMap::new();
+                for (field_name, field_expr) in fields {
+                    let val = self.eval_expr(field_expr)?;
+                    field_map.insert(field_name.clone(), val);
+                }
+                Ok(Value::Struct {
+                    name: name.clone(),
+                    fields: field_map,
+                })
+            }
+
+            Expr::FieldAccess { object, field, .. } => {
+                let val = self.eval_expr(object)?;
+                match val {
+                    Value::Struct { fields, .. } => {
+                        fields.get(field).cloned().ok_or_else(|| RuntimeError {
+                            msg: format!("struct has no field '{}'", field),
+                        })
+                    }
+                    other => Err(RuntimeError {
+                        msg: format!("cannot access field '{}' on {}", field, other.type_name()),
+                    }),
+                }
+            }
 
             Expr::Variable { name, .. } => {
                 self.env.borrow().get(name).ok_or_else(|| RuntimeError {

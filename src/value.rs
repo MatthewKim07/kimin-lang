@@ -46,6 +46,11 @@ pub enum Value {
     /// A map with Text keys and homogeneous values.
     /// BTreeMap gives deterministic alphabetical key ordering for display and equality.
     Map(BTreeMap<String, Value>),
+    /// A struct value. Fields stored in BTreeMap for deterministic alphabetical display.
+    Struct {
+        name: String,
+        fields: BTreeMap<String, Value>,
+    },
 }
 
 impl Value {
@@ -60,6 +65,7 @@ impl Value {
             Value::StateValue { .. } => "StateValue",
             Value::Array(_) => "Array",
             Value::Map(_) => "Map",
+            Value::Struct { .. } => "Struct",
         }
     }
 }
@@ -86,6 +92,16 @@ impl PartialEq for Value {
             ) => s1 == s2 && v1 == v2,
             (Value::Array(a), Value::Array(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
+            (
+                Value::Struct {
+                    name: n1,
+                    fields: f1,
+                },
+                Value::Struct {
+                    name: n2,
+                    fields: f2,
+                },
+            ) => n1 == n2 && f1 == f2,
             _ => false,
         }
     }
@@ -116,6 +132,13 @@ impl fmt::Display for Value {
             Value::Map(map) => {
                 let parts: Vec<String> = map.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
                 write!(f, "{{{}}}", parts.join(", "))
+            }
+            Value::Struct { name, fields } => {
+                let parts: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect();
+                write!(f, "{} {{ {} }}", name, parts.join(", "))
             }
         }
     }
