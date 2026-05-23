@@ -29655,3 +29655,521 @@ fn regression_for_each_ok() {
     let output = vm_run("let a = [1, 2, 3]\nfor x in a { print(x) }").unwrap();
     assert_eq!(output, vec!["1", "2", "3"]);
 }
+
+// ============================================================
+// M14A Audit — gap-fill tests
+// ============================================================
+
+// --- Section 1: Parser audit gaps ---
+
+#[test]
+fn parse_map_type_annotation_in_fn_param() {
+    assert!(check("fn f(m: Map<Text, Number>) -> Number { return m[\"k\"] }").is_ok());
+}
+
+#[test]
+fn parse_map_type_annotation_in_fn_return() {
+    assert!(check("fn f() -> Map<Text, Bool> { return {} }").is_ok());
+}
+
+#[test]
+fn parse_map_type_annotation_unit_value_actual() {
+    // parse_map_annotation_unit_value uses Number; this one tests a real unit annotation.
+    // Empty map needed — Number literals don't promote inside collection literals (pre-existing limit).
+    assert!(check("let m: Map<Text, meters> = {}").is_ok());
+}
+
+#[test]
+fn parse_array_type_annotation_still_ok_after_map_annotation() {
+    assert!(check("let a: Array<Number> = [1, 2, 3]").is_ok());
+    assert!(check("let m: Map<Text, Number> = {\"a\": 1}\nlet b: Array<Text> = [\"x\"]").is_ok());
+}
+
+#[test]
+fn parse_state_decl_unaffected_after_map_annotation() {
+    assert!(check(
+        "state Door { open closed transition open -> closed }\nlet m: Map<Text, Number> = {\"x\": 1}\nlet d: Door = Door.open"
+    ).is_ok());
+}
+
+// Map<Text> → missing comma error
+#[test]
+fn parse_map_type_annotation_single_arg_error() {
+    let result = check("let m: Map<Text> = {}");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains(",") || msg.contains("','"), "msg: {}", msg);
+}
+
+// Map<> → missing type annotation error
+#[test]
+fn parse_map_type_annotation_empty_brackets_error() {
+    let result = check("let m: Map<> = {}");
+    assert!(result.is_err());
+}
+
+// --- Section 2: Typechecker resolution gaps ---
+
+#[test]
+fn type_resolve_map_text_number_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"a\": 1}").is_ok());
+}
+
+#[test]
+fn type_resolve_map_text_text_ok() {
+    assert!(check("let m: Map<Text, Text> = {\"a\": \"b\"}").is_ok());
+}
+
+#[test]
+fn type_resolve_map_text_bool_ok() {
+    assert!(check("let m: Map<Text, Bool> = {\"a\": true}").is_ok());
+}
+
+#[test]
+fn type_resolve_map_text_unit_ok() {
+    // Unit value type annotation resolves correctly; empty literal needed since
+    // Number literals don't promote inside map literals (pre-existing limitation).
+    assert!(check("let m: Map<Text, meters> = {}").is_ok());
+}
+
+#[test]
+fn type_resolve_map_text_array_ok() {
+    assert!(check("let m: Map<Text, Array<Number>> = {\"a\": [1, 2]}").is_ok());
+}
+
+#[test]
+fn type_resolve_map_non_text_key_error() {
+    let result = check("let m: Map<Number, Number> = {\"a\": 1}");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("Text") || msg.contains("key"), "msg: {}", msg);
+}
+
+#[test]
+fn type_resolve_nested_map_error() {
+    let result = check("let m: Map<Text, Map<Text, Number>> = {}");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("nested") || msg.contains("map"),
+        "msg: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_map_display_format() {
+    // Type::Map display should be "Map<Text, Number>"
+    // Verify via wrong-type error message which includes the type name
+    let result =
+        check("fn f(m: Map<Text, Number>) -> Number { return m[\"a\"] }\nf({\"a\": true})");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    // The error message should reference the map type or type mismatch
+    assert!(
+        msg.contains("Map") || msg.contains("Number") || msg.contains("Bool"),
+        "msg: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_array_annotation_still_ok_after_map_annotation() {
+    assert!(check("let a: Array<Bool> = [true, false]").is_ok());
+}
+
+// --- Section 3: Empty map expected-type gaps ---
+
+#[test]
+fn type_empty_map_print_error() {
+    // print({}) should fail — no annotation context
+    let result = check("print({})");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("annotation") || msg.contains("empty") || msg.contains("map"),
+        "msg: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_empty_map_expected_number_error() {
+    // {} where Number expected
+    let result = check("fn f(x: Number) -> Number { return x }\nf({})");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_empty_map_expected_array_error() {
+    // {} where Array<Number> expected — should fail (it's a map literal, not array)
+    let result = check("fn f(a: Array<Number>) -> Number { return len(a) }\nf({})");
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_empty_map_map0_runtime() {
+    // Empty annotated map evaluates correctly in the VM
+    let output = vm_run("let m: Map<Text, Number> = {}\nprint(len(keys(m)))").unwrap();
+    assert_eq!(output, vec!["0"]);
+}
+
+// --- Section 4: Let annotation gaps ---
+
+#[test]
+fn type_let_map_annotation_non_empty_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"a\": 1, \"b\": 2}").is_ok());
+}
+
+#[test]
+fn type_let_map_annotation_empty_ok() {
+    assert!(check("let m: Map<Text, Text> = {}").is_ok());
+}
+
+#[test]
+fn type_let_map_annotation_wrong_value_error() {
+    let result = check("let m: Map<Text, Number> = {\"a\": \"wrong\"}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_let_map_annotation_wrong_key_error() {
+    let result = check("let m: Map<Number, Number> = {\"a\": 1}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_let_mut_map_annotation_allows_assignment() {
+    assert!(check("let mut m: Map<Text, Number> = {}\nm[\"x\"] = 10\nprint(m[\"x\"])").is_ok());
+}
+
+#[test]
+fn map_literal_inference_still_ok_after_annotations() {
+    assert!(check("let m = {\"a\": 1}").is_ok());
+}
+
+// --- Section 5: Assignment behavior gaps ---
+
+#[test]
+fn type_assign_non_empty_map_to_map_var_ok() {
+    assert!(check("let mut m: Map<Text, Number> = {}\nm = {\"a\": 10}").is_ok());
+}
+
+#[test]
+fn type_assign_wrong_value_map_error() {
+    let result = check("let mut m: Map<Text, Number> = {}\nm = {\"a\": true}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_assign_empty_map_to_map_var() {
+    // uses tree-walk interpreter
+    let interp =
+        run("let mut m: Map<Text, Number> = {\"a\": 1}\nm = {}\nlet r = has_key(m, \"a\")")
+            .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn vm_assign_empty_map_to_map_var() {
+    let output =
+        vm_run("let mut m: Map<Text, Number> = {\"a\": 1}\nm = {}\nprint(has_key(m, \"a\"))")
+            .unwrap();
+    assert_eq!(output, vec!["false"]);
+}
+
+#[test]
+fn map_builtins_still_work_after_map_annotations() {
+    let output = vm_run(
+        "let mut m: Map<Text, Number> = {\"a\": 1, \"b\": 2}\nprint(has_key(m, \"a\"))\nprint(len(keys(m)))\nlet v = remove(m, \"a\")\nprint(v)\nprint(has_key(m, \"a\"))"
+    ).unwrap();
+    assert_eq!(output, vec!["true", "2", "1", "false"]);
+}
+
+// --- Section 6: Function parameter gaps ---
+
+#[test]
+fn type_fn_param_map_array_value_ok() {
+    assert!(check(
+        "fn f(m: Map<Text, Array<Number>>) -> Number { return m[\"a\"][0] }\nf({\"a\": [1, 2]})"
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_fn_param_map_read_ok() {
+    assert!(check(
+        "fn get(m: Map<Text, Text>, k: Text) -> Text { return m[k] }\nget({\"x\": \"hello\"}, \"x\")"
+    ).is_ok());
+}
+
+#[test]
+fn type_fn_param_map_keys_values_ok() {
+    assert!(check(
+        "fn count(m: Map<Text, Number>) -> Number { return len(keys(m)) }\ncount({\"a\": 1})"
+    )
+    .is_ok());
+}
+
+#[test]
+fn interp_fn_param_map_get_score() {
+    // tree-walk interpreter version
+    let interp = run(
+        "fn get(m: Map<Text, Number>, k: Text) -> Number { return m[k] }\nlet r = get({\"score\": 42}, \"score\")"
+    ).unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn interp_fn_param_empty_map_arg() {
+    // tree-walk interpreter version
+    let interp =
+        run("fn f(m: Map<Text, Number>) -> Bool { return has_key(m, \"x\") }\nlet r = f({})")
+            .unwrap();
+    assert_eq!(interp.get_var("r"), Some(Value::Bool(false)));
+}
+
+// --- Section 7: Function return gaps ---
+
+#[test]
+fn interp_fn_return_empty_map_tree_walk() {
+    let interp = run("fn make() -> Map<Text, Number> { return {} }\nlet m = make()").unwrap();
+    if let Value::Map(map) = interp.get_var("m").unwrap() {
+        assert!(map.is_empty());
+    } else {
+        panic!("expected Map value");
+    }
+}
+
+#[test]
+fn interp_fn_return_non_empty_map() {
+    let interp =
+        run("fn make() -> Map<Text, Number> { return {\"a\": 1, \"b\": 2} }\nlet m = make()")
+            .unwrap();
+    if let Value::Map(map) = interp.get_var("m").unwrap() {
+        assert_eq!(map.get("a"), Some(&Value::Number(1.0)));
+        assert_eq!(map.get("b"), Some(&Value::Number(2.0)));
+    } else {
+        panic!("expected Map value");
+    }
+}
+
+#[test]
+fn interp_fn_return_map_then_mutate() {
+    let interp = run(
+        "fn make() -> Map<Text, Number> { return {\"a\": 1} }\nlet mut m = make()\nm[\"b\"] = 2",
+    )
+    .unwrap();
+    if let Value::Map(map) = interp.get_var("m").unwrap() {
+        assert_eq!(map.get("a"), Some(&Value::Number(1.0)));
+        assert_eq!(map.get("b"), Some(&Value::Number(2.0)));
+    } else {
+        panic!("expected Map value");
+    }
+}
+
+#[test]
+fn vm_fn_return_map_then_mutate() {
+    let output = vm_run(
+        "fn make() -> Map<Text, Number> { return {\"a\": 1} }\nlet mut m = make()\nm[\"b\"] = 2\nprint(m[\"a\"])\nprint(m[\"b\"])"
+    ).unwrap();
+    assert_eq!(output, vec!["1", "2"]);
+}
+
+// --- Section 8: Call arg propagation gaps ---
+
+#[test]
+fn type_empty_array_call_arg_still_ok_after_map_expected_context() {
+    // Empty array [] still works as call arg when param is Array<T>
+    assert!(check("fn f(a: Array<Number>) -> Number { return len(a) }\nf([])").is_ok());
+}
+
+// --- Section 9: Bytecode gaps ---
+
+#[test]
+fn interp_empty_map_then_keys_values() {
+    let interp = run(
+        "let mut m: Map<Text, Number> = {}\nm[\"b\"] = 2\nm[\"a\"] = 1\nlet k = keys(m)\nlet v = values(m)"
+    ).unwrap();
+    // BTreeMap: a < b
+    assert_eq!(
+        interp.get_var("k"),
+        Some(Value::Array(vec![
+            Value::Str("a".into()),
+            Value::Str("b".into()),
+        ]))
+    );
+    assert_eq!(
+        interp.get_var("v"),
+        Some(Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]))
+    );
+}
+
+#[test]
+fn bytecode_fn_return_empty_map() {
+    let prog = compile_prog("fn make() -> Map<Text, Number> { return {} }\nlet m = make()");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "make").unwrap();
+    let has_map_0 = fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Map { count: 0 }));
+    assert!(has_map_0, "expected MAP 0 in make() function body");
+}
+
+#[test]
+fn bytecode_empty_map_call_arg() {
+    // {} as call arg compiles to MAP 0 in main chunk
+    let prog =
+        compile_prog("fn f(m: Map<Text, Number>) -> Bool { return has_key(m, \"x\") }\nf({})");
+    let has_map_0 = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Map { count: 0 }));
+    assert!(has_map_0, "expected MAP 0 in call arg position");
+}
+
+#[test]
+fn bytecode_non_empty_map_unchanged_after_annotations() {
+    // Annotated non-empty map and unannotated non-empty map compile identically
+    let annotated = compile_prog("let m: Map<Text, Number> = {\"a\": 1}");
+    let inferred = compile_prog("let m = {\"a\": 1}");
+    assert_eq!(
+        annotated.main.instructions.len(),
+        inferred.main.instructions.len()
+    );
+}
+
+#[test]
+fn bytecode_map_mutation_unchanged_after_annotations() {
+    // map mutation on annotated map same instruction count as on inferred map
+    let annotated = compile_prog("let mut m: Map<Text, Number> = {\"a\": 1}\nm[\"a\"] = 2");
+    let inferred = compile_prog("let mut m = {\"a\": 1}\nm[\"a\"] = 2");
+    assert_eq!(
+        annotated.main.instructions.len(),
+        inferred.main.instructions.len()
+    );
+}
+
+#[test]
+fn bytecode_remove_unchanged_after_annotations() {
+    let annotated =
+        compile_prog("let mut m: Map<Text, Number> = {\"a\": 1}\nlet v = remove(m, \"a\")");
+    let inferred = compile_prog("let mut m = {\"a\": 1}\nlet v = remove(m, \"a\")");
+    assert_eq!(
+        annotated.main.instructions.len(),
+        inferred.main.instructions.len()
+    );
+}
+
+// --- Section 10: Map builtins with typed empty maps ---
+
+#[test]
+fn empty_map_insert_then_values() {
+    let output =
+        vm_run("let mut m: Map<Text, Number> = {}\nm[\"a\"] = 1\nm[\"b\"] = 2\nprint(values(m))")
+            .unwrap();
+    // BTreeMap: a < b → values in a,b order
+    assert_eq!(output, vec!["[1, 2]"]);
+}
+
+#[test]
+fn empty_map_insert_then_remove() {
+    let output = vm_run(
+        "let mut m: Map<Text, Number> = {}\nm[\"x\"] = 99\nlet v = remove(m, \"x\")\nprint(v)\nprint(has_key(m, \"x\"))"
+    ).unwrap();
+    assert_eq!(output, vec!["99", "false"]);
+}
+
+#[test]
+fn empty_map_compound_missing_key_error() {
+    let result = vm_run("let mut m: Map<Text, Number> = {}\nm[\"a\"] += 1");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("key") || msg.contains("'a'"), "msg: {}", msg);
+}
+
+// --- Section 11: For-each interaction gaps ---
+
+#[test]
+fn for_each_keys_typed_empty_map_after_insert() {
+    let output = vm_run(
+        "let mut m: Map<Text, Number> = {}\nm[\"a\"] = 1\nm[\"b\"] = 2\nfor k in keys(m) { print(k) }"
+    ).unwrap();
+    assert_eq!(output, vec!["a", "b"]);
+}
+
+#[test]
+fn indexed_for_each_values_typed_empty_map_after_insert() {
+    let output = vm_run(
+        "let mut m: Map<Text, Number> = {}\nm[\"x\"] = 10\nm[\"y\"] = 20\nfor i, v in values(m) { print(i) }"
+    ).unwrap();
+    // BTreeMap: x < y → indices 0, 1
+    assert_eq!(output, vec!["0", "1"]);
+}
+
+#[test]
+fn for_each_empty_typed_map_values_no_output() {
+    let output = vm_run(
+        "let m: Map<Text, Number> = {}\nlet count = 0\nfor v in values(m) { print(v) }\nprint(count)"
+    ).unwrap();
+    assert_eq!(output, vec!["0"]);
+}
+
+#[test]
+fn vm_matches_tree_typed_empty_map_for_each() {
+    // Both tree-walk and VM produce same keys from annotated map
+    // Verify via side-effects: tree-walk builds map, VM prints same keys
+    let src = "let mut m: Map<Text, Number> = {}\nm[\"a\"] = 1\nm[\"b\"] = 2\nlet k = keys(m)";
+    let interp = run(src).unwrap();
+    let vm_output =
+        vm_run("let mut m: Map<Text, Number> = {}\nm[\"a\"] = 1\nm[\"b\"] = 2\nprint(keys(m))")
+            .unwrap();
+    // tree-walk: keys should be ["a", "b"]
+    assert_eq!(
+        interp.get_var("k"),
+        Some(Value::Array(vec![
+            Value::Str("a".into()),
+            Value::Str("b".into()),
+        ]))
+    );
+    // VM: same keys printed
+    assert_eq!(vm_output, vec!["[a, b]"]);
+}
+
+// --- Section 12: Error messages gaps ---
+
+#[test]
+fn map_annotation_missing_comma_message() {
+    let result = check("let m: Map<Text Number> = {}");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains(",") || msg.contains("','"), "msg: {}", msg);
+}
+
+#[test]
+fn map_annotation_missing_value_message() {
+    let result = check("let m: Map<Text,> = {}");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    // Should say something about value type expected
+    assert!(
+        msg.contains("value") || msg.contains("type") || msg.contains("Map"),
+        "msg: {}",
+        msg
+    );
+}
+
+#[test]
+fn map_annotation_wrong_value_message() {
+    let result = check("let m: Map<Text, Number> = {\"a\": \"str\"}");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    // Should mention type mismatch — Number vs Text
+    assert!(
+        msg.contains("Number") || msg.contains("Text") || msg.contains("declared"),
+        "msg: {}",
+        msg
+    );
+}
