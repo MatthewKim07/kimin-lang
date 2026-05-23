@@ -226,6 +226,33 @@ impl Parser {
         };
         self.advance(); // consume identifier
 
+        // Check for indexed for-each: `for i, item in ...`
+        if matches!(self.current_kind(), TokenKind::Comma) {
+            self.advance(); // consume `,`
+            let item_name = match self.current_kind() {
+                TokenKind::Ident(n) => n.clone(),
+                _ => {
+                    return Err(
+                        self.error("expected item variable name after ',' in 'for' statement")
+                    )
+                }
+            };
+            self.advance(); // consume item ident
+            if !matches!(self.current_kind(), TokenKind::In) {
+                return Err(self.error("expected 'in' after loop variables in 'for' statement"));
+            }
+            self.advance(); // consume `in`
+            let iterable = self.parse_expr()?;
+            let body = self.parse_fn_body()?;
+            return Ok(Stmt::ForEachIndexed {
+                index_name: var_name,
+                var_name: item_name,
+                iterable,
+                body,
+                span,
+            });
+        }
+
         // `in` keyword.
         if !matches!(self.current_kind(), TokenKind::In) {
             return Err(self.error("expected 'in' after loop variable in 'for' statement"));

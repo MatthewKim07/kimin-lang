@@ -227,6 +227,16 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// Indexed array for-each loop: `for <index>, <var> in <array_expr> { ... }`
+    /// Evaluates the iterable once (snapshot); provides 0-based index and element per iteration.
+    /// Both variables are immutable and loop-local; index is Number.
+    ForEachIndexed {
+        index_name: String,
+        var_name: String,
+        iterable: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
     /// Array element assignment: `arr[index] = value`. Only valid for `let mut` arrays.
     /// The target must be an identifier naming a mutable array variable.
     IndexAssign {
