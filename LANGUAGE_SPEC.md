@@ -1,6 +1,6 @@
-# Kimin Language Specification — Milestone 13A
+# Kimin Language Specification — Milestone 13B
 
-This document describes the syntax and semantics implemented through Milestone 13A.
+This document describes the syntax and semantics implemented through Milestone 13B.
 
 ---
 
@@ -686,6 +686,95 @@ The compiler emits (no new bytecode instructions):
 8. `@loop_end:` `EndScope` (outer)
 
 `break` jumps to `@loop_end`; `continue` jumps to `@increment`. No new VM instructions.
+
+---
+
+### 4.12.1 Indexed For-Each Loops
+
+An **indexed for-each loop** provides the 0-based index alongside each element:
+
+```kimin
+for i, item in array_expr {
+    // i: immutable Number (0-based index)
+    // item: immutable T (element of Array<T>)
+    print(i)
+    print(item)
+}
+```
+
+**Syntax:**
+```
+for_each_indexed_stmt = "for" IDENT "," IDENT "in" expr "{" stmt* "}"
+```
+The first identifier becomes the index variable (`Number`); the second becomes the element variable (`T`).
+
+**Type rules:**
+- `array_expr` must be `Array<T>`. Any other type → `TypeError: for-each requires Array, got ...`.
+- The two variable names must be distinct: `for x, x in arr` → `TypeError: indexed for-each variable names must be distinct`.
+- Both variables are immutable and loop-local; assigning to either is a `TypeError`.
+- Both variables are out of scope after the loop body closes.
+- `break` and `continue` are valid inside an indexed for-each body.
+- `return` inside an indexed for-each body propagates out to the enclosing function.
+
+**Semantics:**
+- `array_expr` is evaluated once before iteration begins (snapshot semantics, identical to M13A).
+- On iteration `k` (0-based), `i = k` (Number) and `item` = the k-th element.
+- Empty array → zero iterations, no error.
+- Mutations to the source array inside the body do not affect iteration count (snapshot).
+
+**Examples:**
+
+```kimin
+let nums = [10, 20, 30]
+for i, n in nums {
+    print(i)    // 0, 1, 2
+    print(n)    // 10, 20, 30
+}
+
+// Use index to write into a target array
+let src = [1, 2, 3]
+let mut dst = [0, 0, 0]
+for i, v in src {
+    dst[i] = v * 2
+}
+
+// Find first occurrence
+fn find(arr: Array<Number>, target: Number) -> Number {
+    for i, v in arr {
+        if v == target { return i }
+    }
+    return -1
+}
+```
+
+**Error examples:**
+```kimin
+for i, v in 42 { }             // TypeError: for-each requires Array, got Number
+for x, x in [1, 2] { }        // TypeError: indexed for-each variable names must be distinct
+```
+
+**Bytecode lowering:**
+
+Same hidden-sentinel layout as M13A for-each, with one addition: `LOAD_LOCAL __kimin_foreach_idx_N → DEFINE_LOCAL index_name` in the body scope before the element definition.
+
+```
+BEGIN_SCOPE (outer — __kimin_foreach_iter_N, __kimin_foreach_idx_N)
+  <iterable> → DEFINE_LOCAL __kimin_foreach_iter_N
+  CONSTANT 0 → DEFINE_LOCAL __kimin_foreach_idx_N
+@loop_start:
+  LOAD_LOCAL idx  LEN  LESS  JUMP_IF_FALSE @loop_end
+  BEGIN_SCOPE (body — index_name, var_name)
+    LOAD_LOCAL __kimin_foreach_idx_N → DEFINE_LOCAL index_name
+    LOAD_LOCAL __kimin_foreach_iter_N  LOAD_LOCAL __kimin_foreach_idx_N  INDEX → DEFINE_LOCAL var_name
+    <body>
+  END_SCOPE (body)
+@increment:
+  LOAD_LOCAL idx  CONSTANT 1  ADD  STORE_LOCAL idx  JUMP @loop_start
+@loop_end:
+END_SCOPE (outer)
+```
+
+No new VM instructions.
 
 ---
 
@@ -1664,9 +1753,10 @@ inner_transition = "transition" IDENT "->" IDENT
 transition_stmt = "transition" IDENT "->" IDENT
 simulate_stmt   = "simulate" expr "step" expr "{" stmt* "}"
 while_stmt      = "while" expr "{" stmt* "}"
-for_stmt        = for_range_stmt | for_each_stmt
+for_stmt        = for_range_stmt | for_each_indexed_stmt | for_each_stmt
 for_range_stmt  = "for" IDENT "in" "range" "(" expr "," expr ")" "{" stmt* "}"
 for_each_stmt   = "for" IDENT "in" expr "{" stmt* "}"
+for_each_indexed_stmt = "for" IDENT "," IDENT "in" expr "{" stmt* "}"
 break_stmt      = "break"
 continue_stmt   = "continue"
 fn_decl         = "fn" IDENT "(" params ")" ("->" type_ann)? fn_body

@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-2945_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-3007_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-13A-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-13B-informational?style=flat-square)
 
 </div>
 
@@ -785,6 +785,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 12E | Map builtin: `values(map) -> Array<V>` | ✅ |
 | 12F | Map builtin: `remove(map, key) -> V` | ✅ |
 | 13A | For-each loops over arrays (`for item in array_expr { ... }`) | ✅ |
+| 13B | Indexed for-each loops (`for i, item in array_expr { ... }`) | ✅ |
 
 ---
 
@@ -792,7 +793,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 2945 passed, 0 failed
+# 3007 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -901,7 +902,11 @@ examples/
   for_each.kimin                    for_each_break_continue.kimin
   for_each_functions.kimin          for_each_nested.kimin
   for_each_strings.kimin            for_each_maps.kimin
-  for_each_errors.kimin
+  for_each_errors.kimin             for_each_mutation.kimin
+  for_each_indexed.kimin            for_each_indexed_strings.kimin
+  for_each_indexed_maps.kimin       for_each_indexed_mutation.kimin
+  for_each_indexed_function.kimin   for_each_indexed_simulate.kimin
+  for_each_indexed_errors.kimin
 ```
 
 <details>
