@@ -93,6 +93,9 @@ pub enum TypeAnnotation {
     Named(String),
     /// A homogeneous array type annotation: `Array<T>`.
     Array(Box<TypeAnnotation>),
+    /// A map type annotation: `Map<Text, V>`.
+    /// Key must be Text; value can be any supported non-map type.
+    Map(Box<TypeAnnotation>, Box<TypeAnnotation>),
 }
 
 /// A typed function parameter.

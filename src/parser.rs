@@ -432,6 +432,34 @@ impl Parser {
                     self.advance(); // consume `>`
                     Ok(TypeAnnotation::Array(Box::new(inner)))
                 }
+                "Map" => {
+                    if !matches!(self.current_kind(), TokenKind::Lt) {
+                        return Err(self.error(
+                            "expected '<' after 'Map' in type annotation, e.g. Map<Text, Number>",
+                        ));
+                    }
+                    self.advance(); // consume `<`
+                    let key_ann = self.parse_type_annotation()?;
+                    if !matches!(self.current_kind(), TokenKind::Comma) {
+                        return Err(self
+                            .error("expected ',' in Map type annotation, e.g. Map<Text, Number>"));
+                    }
+                    self.advance(); // consume `,`
+                    if matches!(self.current_kind(), TokenKind::Gt) {
+                        return Err(self.error("expected map value type after ',' in Map<Text, V>"));
+                    }
+                    let val_ann = self.parse_type_annotation()?;
+                    if matches!(val_ann, TypeAnnotation::Map(..)) {
+                        return Err(self.error("nested maps are not supported"));
+                    }
+                    if !matches!(self.current_kind(), TokenKind::Gt) {
+                        return Err(
+                            self.error("expected '>' after value type in Map<Text, V> annotation")
+                        );
+                    }
+                    self.advance(); // consume `>`
+                    Ok(TypeAnnotation::Map(Box::new(key_ann), Box::new(val_ann)))
+                }
                 other => {
                     if let Some(canonical) = resolve_unit(other) {
                         Ok(TypeAnnotation::NumberWithUnit(canonical.to_string()))
@@ -442,7 +470,7 @@ impl Parser {
                 }
             }
         } else {
-            Err(self.error("expected type annotation (Number, Text, Bool, Nil, a known unit, Array<T>, or a state machine name)"))
+            Err(self.error("expected type annotation (Number, Text, Bool, Nil, a known unit, Array<T>, Map<Text, V>, or a state machine name)"))
         }
     }
 
