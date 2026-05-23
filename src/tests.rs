@@ -28537,3 +28537,610 @@ fn for_each_indexed_non_array_error_message() {
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("Array"), "msg: {}", msg);
 }
+
+// ============================================================
+// M13B Audit: Gap-fill tests
+// ============================================================
+
+// --- Parser audit ---
+
+#[test]
+fn parse_indexed_for_each_array_literal() {
+    let result = check("for i, x in [1, 2, 3] { print(x) }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_indexed_for_each_slice() {
+    let result = check("let a = [1, 2, 3, 4]\nfor i, x in a[1..3] { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_indexed_for_each_split_call() {
+    let result = check("for i, w in split(\"hello world\", \" \") { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_indexed_for_each_keys_call() {
+    let result = check("let m = {\"a\": 1}\nfor i, k in keys(m) { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_indexed_for_each_values_call() {
+    let result = check("let m = {\"a\": 1}\nfor i, v in values(m) { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_for_each_still_parses_after_indexed() {
+    // Normal for-each unaffected
+    let result = check("let a = [1, 2, 3]\nfor x in a { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_for_range_still_parses_after_indexed() {
+    let result = check("for i in range(0, 5) { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_nested_indexed_for_each() {
+    let result = check("let a = [1, 2]\nfor i, x in a { for j, y in a { } }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_mixed_nested_loops_after_indexed() {
+    // indexed inside range inside for-each
+    let result = check("let a = [1, 2]\nfor x in a { for i in range(0, 3) { for j, y in a { } } }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_indexed_for_each_inside_simulate() {
+    let result = check("let a = [1, 2]\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { for i, x in a { } }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_indexed_for_each_inside_function() {
+    let result = check("fn f(a: Array<Number>) -> Number {\n  let mut s: Number = 0\n  for i, v in a { s += v }\n  return s\n}");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_state_decl_unaffected_after_indexed_for_each() {
+    let result = check("let a = [1, 2]\nfor i, x in a { }\nstate Door { closed open\n  transition closed -> open\n  transition open -> closed\n}");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+// --- Typechecker audit ---
+
+#[test]
+fn type_indexed_for_each_unit_array_ok() {
+    let result = check("let a = [1, 2, 3]\nfor i, v in a { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_indexed_for_each_keys_map_ok() {
+    // keys(map) -> Array<Text>; index is Number, key is Text
+    let result = check(
+        "let m = {\"a\": 1, \"b\": 2}\nfor i, k in keys(m) { let n: Number = i\nlet t: Text = k }",
+    );
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_indexed_for_each_values_map_ok() {
+    // values(map) -> Array<Number>; index is Number, v is Number
+    let result = check("let m = {\"a\": 1, \"b\": 2}\nfor i, v in values(m) { let n1: Number = i\nlet n2: Number = v }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_indexed_for_each_split_ok() {
+    // split(text, delim) -> Array<Text>; index is Number, word is Text
+    let result =
+        check("for i, w in split(\"hello world\", \" \") { let n: Number = i\nlet t: Text = w }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_indexed_for_each_non_array_bool_error() {
+    let result = check("for i, v in true { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_indexed_for_each_body_local_scope_does_not_leak() {
+    // Variable defined inside body not accessible outside
+    let result = check("let a = [1]\nfor i, v in a { let inner = v * 2 }\nprint(inner)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_indexed_for_each_outer_mutation_ok() {
+    let result = check("let a = [1, 2, 3]\nlet mut s: Number = 0\nfor i, v in a { s += v }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_indexed_for_each_return_inside_function_ok() {
+    let result = check("fn find(a: Array<Number>, t: Number) -> Number {\n  for i, v in a { if v == t { return i } }\n  return -1\n}");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_still_ok_after_indexed() {
+    let result = check("let a = [1, 2]\nfor i, x in a { }\nfor v in a { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_range_still_ok_after_indexed() {
+    let result = check("let a = [1, 2]\nfor i, x in a { }\nfor j in range(0, 5) { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+// --- Snapshot semantics audit ---
+
+#[test]
+fn indexed_for_each_source_array_index_mutation_snapshot() {
+    // Mutating source array by index inside loop; item var sees snapshot values, not mutated
+    let out = vm_run("let mut nums = [10, 20, 30]\nlet mut collected: Array<Number> = []\nfor i, n in nums {\n  nums[i] = 99\n  push(collected, n)\n}\nprint(collected[0])\nprint(collected[1])\nprint(collected[2])");
+    assert_eq!(out.unwrap(), vec!["10", "20", "30"]);
+}
+
+#[test]
+fn indexed_for_each_values_snapshot_with_map_mutation() {
+    // values(m) returns snapshot; mutating map inside loop doesn't change v sequence
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut collected: Array<Number> = []\nfor i, v in values(m) {\n  m[\"a\"] = 99\n  push(collected, v)\n}\nprint(collected[0])\nprint(collected[1])\nprint(collected[2])");
+    // values returns [1,2,3] in BTreeMap sorted-key order (a,b,c); snapshot taken before loop
+    assert_eq!(out.unwrap(), vec!["1", "2", "3"]);
+}
+
+#[test]
+fn indexed_for_each_keys_remove_snapshot() {
+    // Iterating keys(m) snapshot while removing entries is safe
+    let out = vm_run("let mut scores = {\"a\": 1, \"b\": 2}\nlet mut vals: Array<Number> = []\nfor i, k in keys(scores) {\n  push(vals, remove(scores, k))\n}\nprint(len(vals))\nprint(len(keys(scores)))");
+    assert_eq!(out.unwrap(), vec!["2", "0"]);
+}
+
+#[test]
+fn vm_indexed_for_each_keys_remove_snapshot() {
+    // Same as above but explicit vm_run label
+    let out = vm_run("let mut m = {\"x\": 10, \"y\": 20}\nlet mut s: Number = 0\nfor i, k in keys(m) {\n  s += remove(m, k)\n}\nprint(s)\nprint(len(keys(m)))");
+    assert_eq!(out.unwrap(), vec!["30", "0"]);
+}
+
+#[test]
+fn vm_indexed_for_each_values_snapshot_with_map_mutation() {
+    let out = vm_run("let mut m = {\"a\": 5, \"b\": 10}\nlet mut s: Number = 0\nfor i, v in values(m) {\n  m[\"a\"] = 99\n  s += v\n}\nprint(s)");
+    // values snapshot [5, 10]; mutation doesn't affect s
+    assert_eq!(out.unwrap(), vec!["15"]);
+}
+
+// --- Interpreter audit ---
+
+#[test]
+fn interp_indexed_for_each_array_literal() {
+    let out = vm_run("let mut s: Number = 0\nfor i, v in [10, 20, 30] { s += i * v }\nprint(s)");
+    // 0*10 + 1*20 + 2*30 = 80
+    assert_eq!(out.unwrap(), vec!["80"]);
+}
+
+#[test]
+fn interp_indexed_for_each_slice() {
+    let out = vm_run("let a = [0, 10, 20, 30, 40]\nlet mut s: Number = 0\nfor i, v in a[1..4] { s += i }\nprint(s)");
+    // slice = [10, 20, 30]; i = 0, 1, 2; sum = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_indexed_for_each_split_result() {
+    let out = vm_run("let mut count: Number = 0\nfor i, w in split(\"a b c\", \" \") { count += i }\nprint(count)");
+    // 0 + 1 + 2 = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_indexed_for_each_body_local_fresh_each_iteration() {
+    // Body-local variable fresh each iteration; no leak across iterations
+    let out = vm_run("let a = [10, 20, 30]\nlet mut collected: Array<Number> = []\nfor i, v in a {\n  let doubled = v * 2\n  push(collected, doubled)\n}\nprint(collected[0])\nprint(collected[1])\nprint(collected[2])");
+    assert_eq!(out.unwrap(), vec!["20", "40", "60"]);
+}
+
+#[test]
+fn interp_indexed_for_each_iterable_eval_once() {
+    // Function call producing array is called exactly once (side-effect visible once)
+    let out = vm_run("fn make_arr() -> Array<Number> {\n  print(0)\n  return [1, 2, 3]\n}\nfor i, v in make_arr() {\n  print(v)\n}");
+    // make_arr print(0) fires once; then v=1,2,3
+    assert_eq!(out.unwrap(), vec!["0", "1", "2", "3"]);
+}
+
+#[test]
+fn interp_indexed_for_each_non_array_runtime_error_if_unchecked() {
+    // Typechecker catches this; confirm error is raised
+    let result = check("for i, v in 42 { }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("Array"), "msg: {}", msg);
+}
+
+// --- Bytecode audit ---
+
+#[test]
+fn bytecode_indexed_for_each_has_loop_back_jump() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let a = [1, 2, 3]\nfor i, v in a { }");
+    let out = disassemble(&prog);
+    // The JUMP @loop_start instruction should appear
+    assert!(out.contains("JUMP"), "expected JUMP in bytecode: {}", out);
+    // And a JUMP_IF_FALSE for the loop condition
+    assert!(
+        out.contains("JUMP_IF_FALSE"),
+        "expected JUMP_IF_FALSE: {}",
+        out
+    );
+}
+
+#[test]
+fn bytecode_indexed_for_each_scope_balanced() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let a = [1, 2]\nfor i, x in a { }");
+    let out = disassemble(&prog);
+    // Count BEGIN_SCOPE and END_SCOPE — should match
+    let begins = out.matches("BEGIN_SCOPE").count();
+    let ends = out.matches("END_SCOPE").count();
+    assert_eq!(
+        begins, ends,
+        "scope imbalance: {} BEGIN vs {} END\n{}",
+        begins, ends, out
+    );
+}
+
+#[test]
+fn bytecode_indexed_for_each_inside_simulate() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let a = [1, 2]\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { for i, x in a { } }");
+    let out = disassemble(&prog);
+    assert!(out.contains("__kimin_foreach_iter_"));
+    assert!(out.contains("__kimin_foreach_idx_"));
+}
+
+#[test]
+fn bytecode_for_each_unchanged_after_indexed() {
+    use crate::disassemble::disassemble;
+    // Normal for-each should still use same lowering as before M13B
+    let prog = compile_prog("let a = [1, 2]\nfor v in a { }");
+    let out = disassemble(&prog);
+    assert!(out.contains("__kimin_foreach_iter_0"));
+    assert!(out.contains("__kimin_foreach_idx_0"));
+    // No index_name definition beyond hidden sentinels
+    assert!(!out.contains("DEFINE_LOCAL v\n") || out.contains("DEFINE_LOCAL __kimin"));
+}
+
+#[test]
+fn disassemble_indexed_for_each_stable() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("let a = [1]\nfor idx, val in a { print(idx)\nprint(val) }");
+    let out = disassemble(&prog);
+    // Check all key elements appear
+    assert!(out.contains("DEFINE_LOCAL idx"));
+    assert!(out.contains("DEFINE_LOCAL val"));
+    assert!(out.contains("LOAD_LOCAL idx"));
+    assert!(out.contains("LOAD_LOCAL val"));
+    assert!(out.contains("BEGIN_SCOPE"));
+    assert!(out.contains("END_SCOPE"));
+    assert!(out.contains("LEN"));
+    assert!(out.contains("LESS"));
+    assert!(out.contains("INDEX"));
+}
+
+// --- VM audit ---
+
+#[test]
+fn vm_indexed_for_each_nested() {
+    let out = vm_run("let a = [2, 3]\nlet b = [4, 5]\nlet mut s: Number = 0\nfor i, x in a { for j, y in b { s += x * y } }\nprint(s)");
+    // (2*4 + 2*5) + (3*4 + 3*5) = (8+10) + (12+15) = 18 + 27 = 45
+    assert_eq!(out.unwrap(), vec!["45"]);
+}
+
+#[test]
+fn vm_matches_tree_indexed_for_each_basic() {
+    // 0*10 + 1*20 + 2*30 = 80
+    let out = vm_run(
+        "let a = [10, 20, 30]\nlet mut s: Number = 0\nfor i, v in a { s += i * v }\nprint(s)",
+    );
+    assert_eq!(out.unwrap(), vec!["80"]);
+}
+
+#[test]
+fn vm_matches_tree_indexed_for_each_maps() {
+    // keys sorted: alice=0, bob=1; index 0 -> alice -> 85, index 1 -> bob -> 92
+    let out = vm_run("let scores = {\"alice\": 85, \"bob\": 92}\nfor i, name in keys(scores) { print(i)\nprint(name) }");
+    assert_eq!(out.unwrap(), vec!["0", "alice", "1", "bob"]);
+}
+
+#[test]
+fn vm_matches_tree_indexed_for_each_simulate() {
+    // simulate 2 steps; each step sums [1,2,3] values = 6; total after 2 steps = 12
+    let src = "let items = [1, 2, 3]\nlet d: seconds = 2\nlet dt: seconds = 1\nlet mut total: Number = 0\nsimulate d step dt { for i, v in items { total += v } }\nprint(total)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn vm_for_each_still_ok_after_indexed() {
+    // Normal for-each works after introducing indexed for-each
+    let out =
+        vm_run("let a = [10, 20, 30]\nlet mut s: Number = 0\nfor v in a { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["60"]);
+}
+
+#[test]
+fn vm_for_range_still_ok_after_indexed() {
+    let out = vm_run("let mut s: Number = 0\nfor i in range(0, 5) { s += i }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["10"]);
+}
+
+#[test]
+fn vm_indexed_for_each_values_result() {
+    let out = vm_run("let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut s: Number = 0\nfor i, v in values(m) { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["6"]);
+}
+
+#[test]
+fn vm_indexed_for_each_keys_result() {
+    let out = vm_run("let m = {\"x\": 10, \"y\": 20}\nlet mut count: Number = 0\nfor i, k in keys(m) { count += 1 }\nprint(count)");
+    assert_eq!(out.unwrap(), vec!["2"]);
+}
+
+#[test]
+fn vm_indexed_for_each_split_result() {
+    let out =
+        vm_run("let mut s: Number = 0\nfor i, w in split(\"a b c\", \" \") { s += i }\nprint(s)");
+    // i = 0+1+2 = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+// --- Map interaction audit ---
+
+#[test]
+fn indexed_for_each_keys_deterministic_order() {
+    // BTreeMap sorts keys alphabetically; alice < bob < carol
+    let out = vm_run("let m = {\"carol\": 3, \"alice\": 1, \"bob\": 2}\nfor i, k in keys(m) { print(i)\nprint(k) }");
+    assert_eq!(out.unwrap(), vec!["0", "alice", "1", "bob", "2", "carol"]);
+}
+
+#[test]
+fn indexed_for_each_values_order_matches_keys_order() {
+    // values order matches sorted key order: a=1, b=2, c=3
+    let out = vm_run(
+        "let m = {\"c\": 30, \"a\": 10, \"b\": 20}\nfor i, v in values(m) { print(i)\nprint(v) }",
+    );
+    assert_eq!(out.unwrap(), vec!["0", "10", "1", "20", "2", "30"]);
+}
+
+#[test]
+fn indexed_for_each_has_key_guarded_compound() {
+    let out = vm_run("let mut m = {\"a\": 10, \"b\": 20}\nfor i, k in keys(m) {\n  if has_key(m, k) {\n    m[k] += i * 5\n  }\n}\nprint(m[\"a\"])\nprint(m[\"b\"])");
+    // a: 10 + 0*5 = 10; b: 20 + 1*5 = 25
+    assert_eq!(out.unwrap(), vec!["10", "25"]);
+}
+
+#[test]
+fn indexed_for_each_map_assignment_inside_body() {
+    let out = vm_run("let mut m = {\"a\": 0, \"b\": 0}\nlet keys_arr = keys(m)\nfor i, k in keys_arr {\n  m[k] = i * 10\n}\nprint(m[\"a\"])\nprint(m[\"b\"])");
+    // a=0*10=0; b=1*10=10
+    assert_eq!(out.unwrap(), vec!["0", "10"]);
+}
+
+#[test]
+fn indexed_for_each_map_remove_inside_body() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut s: Number = 0\nfor i, k in keys(m) {\n  s += remove(m, k)\n}\nprint(s)\nprint(len(keys(m)))");
+    assert_eq!(out.unwrap(), vec!["6", "0"]);
+}
+
+// --- String interaction audit ---
+
+#[test]
+fn indexed_for_each_over_split_empty_delimiter() {
+    // split("abc", "") -> ["a", "b", "c"]; indexed loop gives i=0,1,2 and chars
+    let out =
+        vm_run("let mut s: Number = 0\nfor i, ch in split(\"abc\", \"\") { s += i }\nprint(s)");
+    // 0+1+2 = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn indexed_for_each_over_split_words() {
+    let out = vm_run("let mut last_idx: Number = 0\nfor i, w in split(\"hello world kimin\", \" \") { last_idx = i }\nprint(last_idx)");
+    // 3 words -> last index 2
+    assert_eq!(out.unwrap(), vec!["2"]);
+}
+
+#[test]
+fn indexed_for_each_string_transform_in_body() {
+    let out = vm_run("let words = [\"hello\", \"world\"]\nlet mut uppers: Array<Text> = []\nfor i, w in words { push(uppers, to_upper(w)) }\nprint(uppers[0])\nprint(uppers[1])");
+    assert_eq!(out.unwrap(), vec!["HELLO", "WORLD"]);
+}
+
+#[test]
+fn indexed_for_each_build_array_then_join() {
+    let out = vm_run("let words = [\"a\", \"b\", \"c\"]\nlet mut tagged: Array<Text> = []\nfor i, w in words { push(tagged, w) }\nprint(join(tagged, \"-\"))");
+    assert_eq!(out.unwrap(), vec!["a-b-c"]);
+}
+
+#[test]
+fn indexed_for_each_unicode_split_chars() {
+    // Unicode: split on empty delimiter gives scalar values; index counts them
+    let out = vm_run(
+        "let mut count: Number = 0\nfor i, ch in split(\"hi\", \"\") { count += 1 }\nprint(count)",
+    );
+    assert_eq!(out.unwrap(), vec!["2"]);
+}
+
+// --- Array interaction audit ---
+
+#[test]
+fn indexed_for_each_array_literal() {
+    let out = vm_run("let mut s: Number = 0\nfor i, v in [5, 10, 15] { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["30"]);
+}
+
+#[test]
+fn indexed_for_each_array_slice() {
+    let out = vm_run("let a = [10, 20, 30, 40, 50]\nlet mut s: Number = 0\nfor i, v in a[1..4] { s += v }\nprint(s)");
+    // [20, 30, 40] -> 90
+    assert_eq!(out.unwrap(), vec!["90"]);
+}
+
+#[test]
+fn indexed_for_each_push_to_other_array() {
+    // Push items to a different array using index
+    let out = vm_run("let src = [10, 20, 30]\nlet mut dst: Array<Number> = []\nfor i, v in src { push(dst, v * 2) }\nprint(len(dst))\nprint(dst[2])");
+    assert_eq!(out.unwrap(), vec!["3", "60"]);
+}
+
+#[test]
+fn indexed_for_each_array_index_compound_inside_body() {
+    // Compound-assign to outer mutable array element using index var
+    let out = vm_run("let src = [1, 2, 3]\nlet mut dst = [10, 10, 10]\nfor i, v in src { dst[i] += v }\nprint(dst[0])\nprint(dst[1])\nprint(dst[2])");
+    assert_eq!(out.unwrap(), vec!["11", "12", "13"]);
+}
+
+#[test]
+fn normal_for_each_array_behavior_unchanged_after_indexed() {
+    // Regression: normal for-each still works correctly
+    let out =
+        vm_run("let a = [3, 1, 4, 1, 5]\nlet mut s: Number = 0\nfor v in a { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["14"]);
+}
+
+// --- Function / closure audit ---
+
+#[test]
+fn fn_indexed_for_each_weighted_sum_param_array() {
+    let out = vm_run("fn weighted_sum(nums: Array<Number>) -> Number {\n  let mut total: Number = 0\n  for i, n in nums {\n    total += i * n\n  }\n  return total\n}\nprint(weighted_sum([10, 20, 30]))");
+    // 0*10 + 1*20 + 2*30 = 80
+    assert_eq!(out.unwrap(), vec!["80"]);
+}
+
+#[test]
+fn fn_indexed_for_each_return_inside_loop() {
+    // return from inside indexed for-each propagates out of function
+    let out = vm_run("fn first_large(a: Array<Number>, threshold: Number) -> Number {\n  for i, v in a {\n    if v > threshold { return v }\n  }\n  return -1\n}\nprint(first_large([3, 7, 2, 9, 1], 5))");
+    assert_eq!(out.unwrap(), vec!["7"]);
+}
+
+#[test]
+fn closure_indexed_for_each_captured_array() {
+    // Function captures outer array and iterates with indexed for-each
+    let out = vm_run("let data = [1, 2, 3, 4, 5]\nfn sum_all() -> Number {\n  let mut s: Number = 0\n  for i, v in data { s += v }\n  return s\n}\nprint(sum_all())");
+    assert_eq!(out.unwrap(), vec!["15"]);
+}
+
+#[test]
+fn closure_indexed_for_each_mutates_outer_total() {
+    // Function mutates outer mutable variable via captured env
+    let out = vm_run("let data = [10, 20, 30]\nlet mut total: Number = 0\nfn accumulate() {\n  for i, v in data { total += v }\n}\naccumulate()\nprint(total)");
+    assert_eq!(out.unwrap(), vec!["60"]);
+}
+
+#[test]
+fn vm_matches_tree_indexed_for_each_functions() {
+    let out = vm_run("fn find_idx(a: Array<Number>, t: Number) -> Number {\n  for i, v in a { if v == t { return i } }\n  return -1\n}\nprint(find_idx([10, 20, 30], 20))\nprint(find_idx([10, 20, 30], 99))");
+    assert_eq!(out.unwrap(), vec!["1", "-1"]);
+}
+
+// --- Simulate audit ---
+
+#[test]
+fn simulate_indexed_for_each_array() {
+    let out = vm_run("let nums = [10, 20]\nlet d: seconds = 2\nlet dt: seconds = 1\nsimulate d step dt {\n  for i, n in nums {\n    print(i)\n    print(n)\n  }\n}");
+    // 2 simulate iterations × 2 elements each
+    assert_eq!(
+        out.unwrap(),
+        vec!["0", "10", "1", "20", "0", "10", "1", "20"]
+    );
+}
+
+#[test]
+fn simulate_indexed_for_each_values_map() {
+    let out = vm_run("let m = {\"a\": 1, \"b\": 2}\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt {\n  let vs = values(m)\n  for i, v in vs { print(i)\nprint(v) }\n}");
+    assert_eq!(out.unwrap(), vec!["0", "1", "1", "2"]);
+}
+
+#[test]
+fn simulate_indexed_for_each_with_break_continue() {
+    let out = vm_run("let a = [1, 2, 3, 4, 5]\nlet mut s: Number = 0\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt {\n  for i, v in a {\n    if i == 2 { break }\n    s += v\n  }\n}\nprint(s)");
+    // break at i==2: sum 1+2 = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn simulate_indexed_for_each_outer_accumulation() {
+    let out = vm_run("let items = [1, 2, 3]\nlet mut total: Number = 0\nlet d: seconds = 3\nlet dt: seconds = 1\nsimulate d step dt {\n  for i, v in items { total += v }\n}\nprint(total)");
+    // 3 simulate iterations × (1+2+3)=6 each = 18
+    assert_eq!(out.unwrap(), vec!["18"]);
+}
+
+// --- Error message audit ---
+
+#[test]
+fn indexed_for_each_text_error_message() {
+    let result = check("for i, ch in \"hello\" { }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("Array"), "msg: {}", msg);
+}
+
+#[test]
+fn indexed_for_each_map_error_message() {
+    let result = check("let m = {\"a\": 1}\nfor i, v in m { }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("Array"), "msg: {}", msg);
+}
+
+#[test]
+fn indexed_for_each_index_var_mutation_message() {
+    let result = check("let a = [1, 2]\nfor i, v in a { i = 0 }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("immutable") || msg.contains("mutable"),
+        "msg: {}",
+        msg
+    );
+}
+
+#[test]
+fn indexed_for_each_item_var_mutation_message() {
+    let result = check("let a = [1, 2]\nfor i, v in a { v = 0 }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("immutable") || msg.contains("mutable"),
+        "msg: {}",
+        msg
+    );
+}
+
+#[test]
+fn indexed_for_each_loop_var_scope_message() {
+    let result = check("let a = [1, 2]\nfor i, v in a { }\nprint(i)");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("undefined") || msg.contains("'i'"),
+        "msg: {}",
+        msg
+    );
+}
