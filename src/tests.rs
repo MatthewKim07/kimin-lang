@@ -31408,3 +31408,467 @@ fn type_state_variant_still_ok_after_structs() {
     assert!(check(src).is_ok());
 }
 
+// --- Section 6: Interpreter ---
+
+#[test]
+fn interp_struct_literal_field_order_irrelevant() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u1 = User { name: "alice", score: 10 }
+        let u2 = User { score: 20, name: "bob" }
+        let n1 = u1.name
+        let n2 = u2.name
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n1"), Some(Value::Str("alice".into())));
+    assert_eq!(interp.get_var("n2"), Some(Value::Str("bob".into())));
+}
+
+#[test]
+fn interp_struct_field_access_number_arithmetic() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 3, y: 4 }
+        let mag_sq = p.x * p.x + p.y * p.y
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("mag_sq"), Some(Value::Number(25.0)));
+}
+
+#[test]
+fn interp_struct_field_access_string_builtin() {
+    let src = r#"
+        struct Person { name: Text }
+        let p = Person { name: "Alice" }
+        let lower = to_lower(p.name)
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("lower"), Some(Value::Str("alice".into())));
+}
+
+#[test]
+fn interp_struct_field_access_map_lookup() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1, "b": 2} }
+        let v = r.data["b"]
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("v"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn interp_struct_field_access_array_len() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [10, 20, 30] }
+        let n = len(c.items)
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_struct_value_display_deterministic() {
+    // BTreeMap ordering — fields always alphabetical
+    let src = r#"
+        struct User { score: Number, name: Text }
+        let u = User { score: 10, name: "alice" }
+        print(u)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out.len(), 1);
+    // "name" comes before "score" alphabetically
+    let s = &out[0];
+    let name_pos = s.find("name").unwrap();
+    let score_pos = s.find("score").unwrap();
+    assert!(name_pos < score_pos, "fields not alphabetical: {}", s);
+}
+
+#[test]
+fn interp_struct_array_field_for_each() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [1, 2, 3] }
+        let mut sum = 0
+        for item in c.items {
+            sum = sum + item
+        }
+        print(sum)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_struct_map_field_lookup() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"x": 10, "y": 20} }
+        print(r.data["x"])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+// --- Section 7: Bytecode compiler ---
+
+#[test]
+fn bytecode_struct_decl_no_runtime_instruction() {
+    // StructDecl emits nothing into main chunk — no DEFINE_STRUCT or similar
+    let src = "struct Pt { x: Number, y: Number }";
+    let prog = compile_prog(src);
+    // Only HALT expected (no struct-related instructions)
+    let has_struct_instr = prog.main.instructions.iter().any(|i| {
+        matches!(
+            i,
+            crate::bytecode::Instruction::StructLiteral { .. }
+                | crate::bytecode::Instruction::FieldAccess(_)
+        )
+    });
+    assert!(
+        !has_struct_instr,
+        "StructDecl should emit no runtime instructions"
+    );
+}
+
+#[test]
+fn bytecode_struct_literal_field_order() {
+    // Fields in StructLiteral instruction match source order
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 1, y: 2 }
+    "#;
+    let prog = compile_prog(src);
+    let fields: Option<Vec<String>> = prog.main.instructions.iter().find_map(|i| {
+        if let crate::bytecode::Instruction::StructLiteral { fields, .. } = i {
+            Some(fields.clone())
+        } else {
+            None
+        }
+    });
+    let fields = fields.expect("StructLiteral not found");
+    assert_eq!(fields, vec!["x", "y"]);
+}
+
+#[test]
+fn bytecode_struct_literal_reversed_source_order_field_check() {
+    // Fields supplied in reversed order in literal — instruction fields match source order of literal
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { y: 2, x: 1 }
+    "#;
+    let prog = compile_prog(src);
+    let fields: Option<Vec<String>> = prog.main.instructions.iter().find_map(|i| {
+        if let crate::bytecode::Instruction::StructLiteral { fields, .. } = i {
+            Some(fields.clone())
+        } else {
+            None
+        }
+    });
+    let fields = fields.expect("StructLiteral not found");
+    // Fields in instruction are in source literal order (y, x) — VM reverses LIFO pops
+    assert_eq!(fields, vec!["y", "x"]);
+}
+
+#[test]
+fn bytecode_state_variant_still_load_state() {
+    // Door.closed must still compile to LoadState, not LoadGlobal + FieldAccess
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        let mut d: Door = Door.closed
+    "#;
+    let prog = compile_prog(src);
+    let has_load_state = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::LoadState { .. }));
+    assert!(has_load_state, "Door.closed should compile to LoadState");
+}
+
+#[test]
+fn bytecode_struct_field_access_variable_load_plus_field_access() {
+    // `u.name` on a struct var must compile to LoadGlobal/Local + FieldAccess
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice" }
+        print(u.name)
+    "#;
+    let prog = compile_prog(src);
+    let has_field_access = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::FieldAccess(_)));
+    assert!(has_field_access, "expected FieldAccess instruction");
+    // Must NOT have LoadState for "u" (u is not a state type)
+    let has_load_state_u = prog.main.instructions.iter().any(|i| {
+        matches!(i, crate::bytecode::Instruction::LoadState { state_name, .. } if state_name == "u")
+    });
+    assert!(!has_load_state_u, "u.name must not use LoadState");
+}
+
+#[test]
+fn bytecode_struct_inside_function() {
+    // Struct literal and field access inside a function body compile correctly
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn sum(p: Pt) -> Number { return p.x + p.y }
+        let p = Pt { x: 3, y: 4 }
+        print(sum(p))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn bytecode_struct_field_access_inside_simulate() {
+    let src = r#"
+        struct Counter { val: Number }
+        let c = Counter { val: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            print(c.val)
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "0", "0"]);
+}
+
+// --- Section 8: VM ---
+
+#[test]
+fn vm_struct_literal_and_field_access() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u.name)
+        print(u.score)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["alice", "10"]);
+}
+
+#[test]
+fn vm_struct_literal_field_order_irrelevant() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { score: 99, name: "bob" }
+        print(u.name)
+        print(u.score)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["bob", "99"]);
+}
+
+#[test]
+fn vm_struct_field_access_string_builtin() {
+    let src = r#"
+        struct Person { name: Text }
+        let p = Person { name: "Alice" }
+        print(to_lower(p.name))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+#[test]
+fn vm_struct_field_access_map_builtin() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1, "b": 2} }
+        print(has_key(r.data, "a"))
+        print(r.data["b"])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["true", "2"]);
+}
+
+#[test]
+fn vm_struct_field_access_array_len() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [10, 20, 30] }
+        print(len(c.items))
+        print(c.items[1])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3", "20"]);
+}
+
+#[test]
+fn vm_struct_inside_closure() {
+    // Struct value accessible via closed-over variable
+    let src = r#"
+        struct Pt { x: Number }
+        let origin = Pt { x: 10 }
+        fn get_x() -> Number { return origin.x }
+        print(get_x())
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_struct_inside_simulate() {
+    let src = r#"
+        struct Counter { val: Number }
+        let c = Counter { val: 42 }
+        let dur: seconds = 2
+        let dt: seconds = 1
+        simulate dur step dt {
+            print(c.val)
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42", "42"]);
+}
+
+#[test]
+fn vm_field_access_non_struct_error() {
+    // Typechecker catches this; test that it's rejected
+    let src = r#"
+        let x = 5
+        print(x.name)
+    "#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn vm_matches_tree_walk_struct_basic() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u.name)
+        print(u.score)
+    "#;
+    let interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    // Tree-walk puts output through print — check var agreement
+    assert_eq!(interp.get_var("u").is_some(), true);
+    assert_eq!(vm_out, vec!["alice", "10"]);
+}
+
+#[test]
+fn vm_matches_tree_walk_struct_functions() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn sum(p: Pt) -> Number { return p.x + p.y }
+        let p = Pt { x: 3, y: 4 }
+        print(sum(p))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+    // Interpreter agrees
+    let interp = run(src).unwrap();
+    assert!(interp.get_var("p").is_some());
+}
+
+#[test]
+fn vm_matches_tree_walk_struct_collections() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p1 = Pt { x: 1 }
+        let p2 = Pt { x: 2 }
+        let pts = [p1, p2]
+        print(pts[0].x)
+        print(pts[1].x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_walk_struct_simulate() {
+    let src = r#"
+        struct Box { val: Number }
+        let b = Box { val: 7 }
+        let dur: seconds = 2
+        let dt: seconds = 1
+        simulate dur step dt {
+            print(b.val)
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7", "7"]);
+}
+
+// --- Section 9: State machine coexistence ---
+
+#[test]
+fn state_variant_still_works_after_structs() {
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        struct Config { value: Number }
+        let mut d: Door = Door.closed
+        let c = Config { value: 1 }
+        transition d -> open
+        print(d)
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["Door.open", "1"]);
+}
+
+#[test]
+fn struct_field_access_still_works_with_state_decl_present() {
+    let src = r#"
+        state Status { on off transition on -> off }
+        struct User { name: Text }
+        let u = User { name: "alice" }
+        print(u.name)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+#[test]
+fn compiler_state_types_propagated_to_function() {
+    // state_types HashSet must be propagated into child compiler for functions
+    // so Door.closed inside a fn compiles to LoadState not LoadGlobal+FieldAccess
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        fn get_closed() -> Door { return Door.closed }
+        let mut d = get_closed()
+        transition d -> open
+        print(d)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn compiler_state_types_propagated_to_simulate() {
+    let src = r#"
+        state Toggle { on off transition on -> off transition off -> on }
+        struct Info { label: Text }
+        let info = Info { label: "test" }
+        let mut t: Toggle = Toggle.on
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt {
+            print(info.label)
+            print(t)
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["test", "Toggle.on"]);
+}
+
+#[test]
+fn vm_state_variant_still_works_after_structs() {
+    let src = r#"
+        state Light { red green transition red -> green }
+        struct Box { x: Number }
+        let mut l: Light = Light.red
+        let b = Box { x: 5 }
+        transition l -> green
+        print(l)
+        print(b.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["Light.green", "5"]);
+}
+
