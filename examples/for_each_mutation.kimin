@@ -1,0 +1,56 @@
+// for_each_mutation.kimin — mutation patterns inside for-each loops
+
+// Mutate outer accumulator
+let data = [3, 1, 4, 1, 5, 9, 2, 6]
+let mut total: Number = 0
+for x in data {
+    total += x
+}
+print(total)
+
+// Snapshot semantics: pushing to source array does not extend iteration
+let mut nums = [1, 2, 3]
+let mut iterations: Number = 0
+for n in nums {
+    iterations += 1
+    push(nums, 99)
+}
+print(iterations)
+print(len(nums))
+
+// Index-assign inside body on outer mutable array
+let mut targets = [0, 0, 0]
+let updates = [10, 20, 30]
+let mut i: Number = 0
+for v in updates {
+    targets[i] = v
+    i += 1
+}
+print(targets[0])
+print(targets[1])
+print(targets[2])
+
+// Index-compound-assign inside body on outer mutable array
+let mut counters = [1, 2, 3]
+for x in [10, 20, 30] {
+    counters[0] += x
+}
+print(counters[0])
+
+// Map mutation inside body
+let mut scores = {"alice": 0, "bob": 0}
+for name in keys(scores) {
+    scores[name] += 10
+}
+print(scores["alice"])
+print(scores["bob"])
+
+// Build a filtered array inside for-each
+let source = [2, 5, 1, 8, 3, 7]
+let mut large: Array<Number> = []
+for x in source {
+    if x > 4 {
+        push(large, x)
+    }
+}
+print(len(large))

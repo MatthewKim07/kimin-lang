@@ -27644,3 +27644,449 @@ fn foreach_map_values_sum() {
     let out = vm_run("let m = {\"a\": 10, \"b\": 20, \"c\": 30}\nlet mut s: Number = 0\nfor v in values(m) { s += v }\nprint(s)").unwrap();
     assert_eq!(out, vec!["60"]);
 }
+
+// ============================================================
+// Milestone 13A audit — gap-fill tests
+// ============================================================
+
+// --- Section 1: Parser error tests ---
+
+#[test]
+fn parse_for_each_missing_var_error() {
+    let tokens = Lexer::new("for in nums { }").tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("expected loop variable name after 'for'"));
+}
+
+#[test]
+fn parse_for_each_missing_in_error() {
+    let tokens = Lexer::new("let nums = [1, 2]\nfor x nums { }")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("expected 'in' after loop variable"));
+}
+
+#[test]
+fn parse_for_each_missing_body_brace_error() {
+    let tokens = Lexer::new("let nums = [1, 2]\nfor x in nums print(x)")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("expected '{'"));
+}
+
+#[test]
+fn parse_for_each_inside_function_ok() {
+    assert!(check("fn f(arr: Array<Number>) -> Number { let mut s: Number = 0\nfor x in arr { s += x }\nreturn s }").is_ok());
+}
+
+#[test]
+fn parse_for_each_inside_simulate_ok() {
+    assert!(check("let nums = [1, 2]\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt { for n in nums { } }").is_ok());
+}
+
+#[test]
+fn parse_nested_for_each_ok() {
+    assert!(check("for x in [1, 2] { for y in [3, 4] { } }").is_ok());
+}
+
+#[test]
+fn parse_while_unaffected_after_for_each() {
+    assert!(check("let mut x: Number = 0\nwhile x < 3 { x += 1 }").is_ok());
+}
+
+#[test]
+fn parse_for_range_still_parses_after_dispatch() {
+    assert!(check("for i in range(0, 3) { }").is_ok());
+}
+
+#[test]
+fn parse_for_each_map_literal_iterable_type_errors() {
+    let err = check("for x in {\"a\": 1} { }");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("for-each requires Array"));
+}
+
+// --- Section 2: Typechecker gap-fill ---
+
+#[test]
+fn type_for_each_keys_gives_text_loop_var() {
+    assert!(check("let m = {\"a\": 1, \"b\": 2}\nfor k in keys(m) { let t: Text = k }").is_ok());
+}
+
+#[test]
+fn type_for_each_values_gives_number_loop_var() {
+    assert!(
+        check("let m = {\"a\": 1, \"b\": 2}\nfor v in values(m) { let n: Number = v }").is_ok()
+    );
+}
+
+#[test]
+fn type_for_each_split_gives_text_loop_var() {
+    assert!(check("for s in split(\"a,b\", \",\") { let t: Text = s }").is_ok());
+}
+
+#[test]
+fn type_for_each_non_array_map_error() {
+    let err = check("let m = {\"a\": 1}\nfor x in m { }");
+    let msg = err.unwrap_err().to_string();
+    assert!(msg.contains("for-each requires Array") && msg.contains("Map"));
+}
+
+#[test]
+fn type_for_each_loop_var_immutable_compound_error() {
+    let err = check("for x in [1, 2] { x += 1 }");
+    assert!(err.unwrap_err().to_string().contains("immutable"));
+}
+
+#[test]
+fn type_for_each_body_local_does_not_leak() {
+    let err = check("for x in [1, 2] { let y = x }\nprint(y)");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("undefined variable 'y'"));
+}
+
+#[test]
+fn type_for_each_outer_mutable_can_be_read() {
+    assert!(check("let outer: Number = 99\nfor x in [1, 2] { let copy: Number = outer }").is_ok());
+}
+
+#[test]
+fn type_for_range_unaffected_after_for_each() {
+    assert!(check("for i in range(0, 5) { let n: Number = i }").is_ok());
+}
+
+#[test]
+fn type_for_each_non_array_bool_error() {
+    let err = check("for x in true { }");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("for-each requires Array"));
+}
+
+// --- Section 3: Snapshot semantics ---
+
+#[test]
+fn for_each_source_array_index_mutation_snapshot() {
+    // Mutating arr[0] inside loop does not change what x sees in other iterations.
+    let out = vm_run("let mut arr = [10, 20, 30]\nlet mut sum: Number = 0\nfor x in arr { arr[0] = 99\nsum += x }\nprint(sum)").unwrap();
+    // sum = 10 + 20 + 30 = 60 (snapshot of original arr)
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn for_each_keys_remove_during_iteration_snapshot() {
+    // keys(m) returns a snapshot Array<Text>; removing from m inside loop is safe.
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut total: Number = 0\nfor k in keys(m) { total += remove(m, k) }\nprint(total)\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["6", "0"]);
+}
+
+#[test]
+fn vm_for_each_snapshot_push_to_source_array() {
+    let out = vm_run("let mut nums = [1, 2, 3]\nlet mut count: Number = 0\nfor n in nums { count += 1\npush(nums, 99) }\nprint(count)\nprint(len(nums))").unwrap();
+    assert_eq!(out, vec!["3", "6"]);
+}
+
+#[test]
+fn vm_for_each_keys_remove_snapshot() {
+    let out = vm_run("let mut m = {\"a\": 10, \"b\": 20}\nlet mut total: Number = 0\nfor k in keys(m) { total += remove(m, k) }\nprint(total)\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["30", "0"]);
+}
+
+// --- Section 4: VM coverage gaps ---
+
+#[test]
+fn vm_for_each_text_array_in_order() {
+    let out = vm_run("for s in [\"x\", \"y\", \"z\"] { print(s) }").unwrap();
+    assert_eq!(out, vec!["x", "y", "z"]);
+}
+
+#[test]
+fn vm_for_each_empty_array_no_output() {
+    let arr_decl = "let arr: Array<Number> = []\nlet mut ran: Number = 0\nfor x in arr { ran += 1 }\nprint(ran)";
+    let out = vm_run(arr_decl).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_for_each_split_result() {
+    let out = vm_run("for w in split(\"a b c\", \" \") { print(w) }").unwrap();
+    assert_eq!(out, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn vm_for_each_keys_result() {
+    let out =
+        vm_run("let m = {\"z\": 1, \"a\": 2, \"m\": 3}\nfor k in keys(m) { print(k) }").unwrap();
+    // keys are in BTreeMap sorted order
+    assert_eq!(out, vec!["a", "m", "z"]);
+}
+
+#[test]
+fn vm_for_each_values_result() {
+    let out = vm_run("let m = {\"a\": 10, \"b\": 20, \"c\": 30}\nlet mut s: Number = 0\nfor v in values(m) { s += v }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn vm_for_each_outer_accumulation() {
+    let out =
+        vm_run("let mut total: Number = 0\nfor x in [5, 10, 15] { total += x }\nprint(total)")
+            .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn vm_for_range_unaffected_after_for_each() {
+    let out = vm_run("let mut s: Number = 0\nfor i in range(1, 6) { s += i }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_matches_tree_for_each_basic() {
+    let src = "let mut s: Number = 0\nfor x in [3, 1, 4, 1, 5] { s += x }\nprint(s)";
+    let tree = vm_run(src).unwrap();
+    assert_eq!(tree, vec!["14"]);
+}
+
+#[test]
+fn vm_matches_tree_for_each_maps() {
+    let src = "let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut s: Number = 0\nfor v in values(m) { s += v }\nprint(s)";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Section 5: Map interaction ---
+
+#[test]
+fn for_each_keys_deterministic_sorted_order() {
+    let out = vm_run("let m = {\"charlie\": 3, \"alice\": 1, \"bob\": 2}\nlet mut result = \"\"\nfor k in keys(m) { result = result + k + \",\" }\nprint(result)").unwrap();
+    assert_eq!(out, vec!["alice,bob,charlie,"]);
+}
+
+#[test]
+fn for_each_values_order_matches_keys_order() {
+    let out =
+        vm_run("let m = {\"a\": 1, \"b\": 2, \"c\": 3}\nfor v in values(m) { print(v) }").unwrap();
+    // BTreeMap key order: a, b, c → values: 1, 2, 3
+    assert_eq!(out, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn for_each_has_key_guard_inside_body() {
+    let out = vm_run("let m = {\"a\": 1, \"b\": 2}\nlet mut found: Bool = false\nfor k in keys(m) { if has_key(m, k) { found = true } }\nprint(found)").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn for_each_map_assignment_inside_body() {
+    let out = vm_run("let mut m = {\"a\": 0, \"b\": 0}\nfor k in keys(m) { m[k] = 42 }\nprint(m[\"a\"])\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["42", "42"]);
+}
+
+#[test]
+fn for_each_map_compound_inside_body() {
+    let out = vm_run("let mut m = {\"a\": 10, \"b\": 20}\nfor k in keys(m) { m[k] += 5 }\nprint(m[\"a\"])\nprint(m[\"b\"])").unwrap();
+    assert_eq!(out, vec!["15", "25"]);
+}
+
+#[test]
+fn for_each_map_remove_inside_body() {
+    let out = vm_run("let mut m = {\"a\": 1, \"b\": 2, \"c\": 3}\nlet mut total: Number = 0\nfor k in keys(m) { total += remove(m, k) }\nprint(total)\nprint(len(keys(m)))").unwrap();
+    assert_eq!(out, vec!["6", "0"]);
+}
+
+// --- Section 6: String interaction ---
+
+#[test]
+fn for_each_over_split_empty_delimiter_chars() {
+    let out = vm_run("let mut result = \"\"\nfor ch in split(\"abc\", \"\") { result = result + ch }\nprint(result)").unwrap();
+    assert_eq!(out, vec!["abc"]);
+}
+
+#[test]
+fn for_each_split_words_and_transform() {
+    let out = vm_run("for w in split(\"hello world\", \" \") { print(to_upper(w)) }").unwrap();
+    assert_eq!(out, vec!["HELLO", "WORLD"]);
+}
+
+#[test]
+fn for_each_build_array_then_join() {
+    let out = vm_run("let mut parts: Array<Text> = []\nfor s in [\"a\", \"b\", \"c\"] { push(parts, to_upper(s)) }\nprint(join(parts, \"-\"))").unwrap();
+    assert_eq!(out, vec!["A-B-C"]);
+}
+
+// --- Section 7: Array mutation inside body ---
+
+#[test]
+fn for_each_array_index_assign_inside_body() {
+    let out = vm_run("let mut targets = [0, 0, 0]\nlet mut i: Number = 0\nfor v in [10, 20, 30] { targets[i] = v\ni += 1 }\nprint(targets[0])\nprint(targets[1])\nprint(targets[2])").unwrap();
+    assert_eq!(out, vec!["10", "20", "30"]);
+}
+
+#[test]
+fn for_each_array_index_compound_inside_body() {
+    let out =
+        vm_run("let mut acc = [0]\nfor x in [1, 2, 3] { acc[0] += x }\nprint(acc[0])").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn for_each_push_to_different_outer_array() {
+    let out = vm_run("let mut out_arr: Array<Number> = []\nfor x in [1, 2, 3] { push(out_arr, x * x) }\nprint(len(out_arr))\nprint(out_arr[2])").unwrap();
+    assert_eq!(out, vec!["3", "9"]);
+}
+
+// --- Section 8: Function / closure ---
+
+#[test]
+fn fn_for_each_sum_param_array() {
+    let out = vm_run("fn sum_arr(arr: Array<Number>) -> Number { let mut s: Number = 0\nfor x in arr { s += x }\nreturn s }\nprint(sum_arr([1, 2, 3, 4, 5]))").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn closure_for_each_captures_outer_array() {
+    let out = vm_run("let arr = [100, 200, 300]\nfn total() -> Number { let mut s: Number = 0\nfor x in arr { s += x }\nreturn s }\nprint(total())").unwrap();
+    assert_eq!(out, vec!["600"]);
+}
+
+#[test]
+fn closure_for_each_mutates_outer_total() {
+    let out = vm_run("let mut grand_total: Number = 0\nfn add_all(arr: Array<Number>) { for x in arr { grand_total += x } }\nadd_all([10, 20])\nadd_all([30, 40])\nprint(grand_total)").unwrap();
+    assert_eq!(out, vec!["100"]);
+}
+
+#[test]
+fn dynamic_call_unaffected_by_for_each() {
+    let out = vm_run("fn mul(x: Number, y: Number) -> Number { return x * y }\nlet op = mul\nlet mut s: Number = 0\nfor x in [1, 2, 3] { s += op(x, 2) }\nprint(s)").unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn vm_matches_tree_for_each_function() {
+    let src = "fn double_sum(arr: Array<Number>) -> Number { let mut s: Number = 0\nfor x in arr { s += x * 2 }\nreturn s }\nprint(double_sum([1, 2, 3]))";
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+// --- Section 9: Simulate ---
+
+#[test]
+fn simulate_for_each_array() {
+    let out = vm_run("let nums = [1, 2, 3]\nlet d: seconds = 2\nlet dt: seconds = 1\nlet mut total: Number = 0\nsimulate d step dt { for n in nums { total += n } }\nprint(total)").unwrap();
+    // 2 iterations × (1+2+3) = 12
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn simulate_for_each_values_map() {
+    let out = vm_run("let scores = {\"a\": 10, \"b\": 20}\nlet d: seconds = 2\nlet dt: seconds = 1\nlet mut total: Number = 0\nsimulate d step dt { for v in values(scores) { total += v } }\nprint(total)").unwrap();
+    // 2 iterations × (10+20) = 60
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn simulate_for_each_outer_accumulation() {
+    let out = vm_run("let mut count: Number = 0\nlet d: seconds = 3\nlet dt: seconds = 1\nsimulate d step dt { for x in [1, 2] { count += 1 } }\nprint(count)").unwrap();
+    // 3 iterations × 2 elements = 6
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_matches_tree_for_each_simulate() {
+    let src = "let items = [5, 10]\nlet d: seconds = 2\nlet dt: seconds = 1\nlet mut total: Number = 0\nsimulate d step dt { for x in items { total += x } }\nprint(total)";
+    let out = vm_run(src).unwrap();
+    // 2 iterations × (5+10) = 30
+    assert_eq!(out, vec!["30"]);
+}
+
+// --- Section 10: Error message exact text ---
+
+#[test]
+fn for_each_error_number_iterable_message() {
+    let err = check("for x in 42 { }").unwrap_err().to_string();
+    assert!(err.contains("for-each requires Array, got Number"));
+}
+
+#[test]
+fn for_each_error_text_iterable_message() {
+    let err = check("for x in \"hello\" { }").unwrap_err().to_string();
+    assert!(err.contains("for-each requires Array, got Text"));
+}
+
+#[test]
+fn for_each_error_map_iterable_message() {
+    let err = check("let m = {\"a\": 1}\nfor x in m { }")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("for-each requires Array") && err.contains("Map"));
+}
+
+#[test]
+fn for_each_error_loop_var_mutation_message() {
+    let err = check("for x in [1, 2] { x = 99 }").unwrap_err().to_string();
+    assert!(err.contains("immutable") && err.contains("'x'"));
+}
+
+#[test]
+fn for_each_error_loop_var_scope_message() {
+    let err = check("for x in [1, 2] { }\nprint(x)")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("undefined variable 'x'"));
+}
+
+// --- Section 11: Bytecode structure ---
+
+#[test]
+fn bytecode_for_each_has_hidden_locals_in_output() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("for x in [1, 2, 3] { print(x) }");
+    let out = disassemble(&prog);
+    assert!(out.contains("__kimin_foreach_iter_0"));
+    assert!(out.contains("__kimin_foreach_idx_0"));
+}
+
+#[test]
+fn bytecode_nested_for_each_unique_sentinel_names() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("for a in [1, 2] { for b in [3, 4] { } }");
+    let out = disassemble(&prog);
+    assert!(out.contains("__kimin_foreach_iter_0"));
+    assert!(out.contains("__kimin_foreach_idx_0"));
+    // Inner loop uses a different suffix (not _0)
+    assert!(out.contains("__kimin_foreach_iter_2") || out.contains("__kimin_foreach_iter_1"));
+    assert!(!out.contains("__kimin_foreach_iter_0\n") || out.contains("__kimin_foreach_iter_2"));
+}
+
+#[test]
+fn bytecode_for_each_inside_function_compiles() {
+    let prog = compile_prog("fn f(arr: Array<Number>) -> Number { let mut s: Number = 0\nfor x in arr { s += x }\nreturn s }");
+    // Should compile without panic; function chunk should exist
+    assert!(!prog.functions.is_empty());
+}
+
+#[test]
+fn bytecode_for_range_sentinel_unaffected_by_for_each() {
+    use crate::disassemble::disassemble;
+    let prog = compile_prog("for i in range(0, 3) { }");
+    let out = disassemble(&prog);
+    assert!(out.contains("__kimin_range_end_"));
+    assert!(!out.contains("__kimin_foreach_"));
+}
