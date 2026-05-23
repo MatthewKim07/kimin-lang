@@ -525,6 +525,53 @@ impl Interpreter {
                 Ok(loop_result)
             }
 
+            Stmt::ForEachIndexed {
+                index_name,
+                var_name,
+                iterable,
+                body,
+                ..
+            } => {
+                let iter_val = self.eval_expr(iterable)?;
+                let elements = match iter_val {
+                    Value::Array(elems) => elems,
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!("for-each requires Array, got {}", other.type_name()),
+                        })
+                    }
+                };
+                let outer = Rc::clone(&self.env);
+                let mut loop_result = ExecFlow::Normal;
+
+                for (idx, elem) in elements.into_iter().enumerate() {
+                    let body_env = Env::new_child(Rc::clone(&outer));
+                    body_env
+                        .borrow_mut()
+                        .define(index_name.clone(), Value::Number(idx as f64));
+                    body_env.borrow_mut().define(var_name.clone(), elem);
+                    self.env = Rc::clone(&body_env);
+                    let result = self.exec_stmts(body);
+                    self.env = Rc::clone(&outer);
+
+                    match result? {
+                        ExecFlow::Normal => {}
+                        ExecFlow::Break => {
+                            loop_result = ExecFlow::Normal;
+                            break;
+                        }
+                        ExecFlow::Continue => {}
+                        flow @ ExecFlow::Return(_) => {
+                            loop_result = flow;
+                            break;
+                        }
+                    }
+                }
+
+                self.env = outer;
+                Ok(loop_result)
+            }
+
             Stmt::Simulate {
                 duration,
                 step,

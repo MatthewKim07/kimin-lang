@@ -1050,6 +1050,44 @@ impl TypeChecker {
                 result
             }
 
+            Stmt::ForEachIndexed {
+                index_name,
+                var_name,
+                iterable,
+                body,
+                span,
+            } => {
+                if index_name == var_name {
+                    return Err(TypeError {
+                        msg: "indexed for-each variable names must be distinct".into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                let iter_ty = self.check_expr(iterable, *span)?;
+                let elem_ty = match iter_ty {
+                    Type::Array(elem) => *elem,
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        return Err(TypeError {
+                            msg: format!("for-each requires Array, got {}", other.name()),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                };
+                self.env.push_scope();
+                self.env
+                    .define_with_variant(index_name.clone(), Type::Number, None, false);
+                self.env
+                    .define_with_variant(var_name.clone(), elem_ty, None, false);
+                self.loop_depth += 1;
+                let result = self.check_stmt_list(body);
+                self.loop_depth -= 1;
+                self.env.pop_scope();
+                result
+            }
+
             Stmt::Simulate {
                 duration,
                 step,
