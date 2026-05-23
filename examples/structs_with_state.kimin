@@ -1,0 +1,14 @@
+// M15A: Structs coexisting with state machines
+
+state Status { idle running stopped transition idle -> running transition running -> stopped }
+struct Config { timeout: Number, name: Text }
+
+let cfg = Config { timeout: 30, name: "worker" }
+let mut status: Status = Status.idle
+
+print(cfg.name)
+print(cfg.timeout)
+print(status)
+
+transition status -> running
+print(status)

@@ -1,0 +1,22 @@
+// M15A: Multiple struct types in the same program
+
+struct Circle { radius: Number }
+struct Rectangle { width: Number, height: Number }
+
+let c = Circle { radius: 5 }
+let r = Rectangle { width: 3, height: 4 }
+
+// Area approximations
+let circle_area = c.radius * c.radius
+let rect_area = r.width * r.height
+
+print(circle_area)
+print(rect_area)
+
+// Structs with Bool fields
+struct Switch { on: Bool, label: Text }
+
+let s = Switch { on: true, label: "power" }
+if s.on {
+  print(s.label)
+}

@@ -1,0 +1,10 @@
+// M15A: Basic struct declaration, construction, and field access
+
+struct User {
+  name: Text
+  score: Number
+}
+
+let u = User { name: "alice", score: 10 }
+print(u.name)
+print(u.score)

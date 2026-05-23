@@ -1,0 +1,20 @@
+// M15A: Structs inside arrays and indexed field access
+
+struct Pt { x: Number, y: Number }
+
+let p1 = Pt { x: 1, y: 2 }
+let p2 = Pt { x: 3, y: 4 }
+let p3 = Pt { x: 5, y: 6 }
+
+let points = [p1, p2, p3]
+
+print(points[0].x)
+print(points[1].y)
+print(points[2].x)
+
+// Collect x-values into a new array
+let mut xs: Array<Number> = []
+for pt in points {
+  push(xs, pt.x)
+}
+print(xs)

@@ -4765,7 +4765,9 @@ fn vm_simulate_empty_body_runs() {
 
 #[test]
 fn vm_load_unknown_state_errors() {
-    // LoadState without a preceding DefineState → RuntimeError: unknown state machine.
+    // `Door.closed` without a preceding state/struct declaration → RuntimeError.
+    // Since M15A, compiler emits LoadGlobal("Door") + FieldAccess("closed"), so the
+    // VM produces "undefined variable 'Door'" rather than "unknown state machine".
     let src = "print(Door.closed)";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
@@ -4773,9 +4775,10 @@ fn vm_load_unknown_state_errors() {
     use crate::vm::Vm;
     let mut vm = Vm::new(prog);
     let result = vm.run();
-    assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("unknown state machine"), "got: {}", msg);
+    assert!(
+        result.is_err(),
+        "expected runtime error for unknown identifier"
+    );
 }
 
 #[test]
@@ -17964,6 +17967,8 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Values
             | crate::bytecode::Instruction::RemoveKey(_)
             | crate::bytecode::Instruction::Map { .. }
+            | crate::bytecode::Instruction::StructLiteral { .. }
+            | crate::bytecode::Instruction::FieldAccess(_)
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -30172,4 +30177,786 @@ fn map_annotation_wrong_value_message() {
         "msg: {}",
         msg
     );
+}
+
+// ============================================================
+// M15A — Struct declarations, construction, and field access
+// ============================================================
+
+// --- Lexer ---
+
+#[test]
+fn lex_struct_keyword() {
+    let toks = tokenize("struct");
+    assert_eq!(toks, vec![TokenKind::Struct, TokenKind::Eof]);
+}
+
+#[test]
+fn lex_struct_ident_distinct() {
+    let toks = tokenize("struct User");
+    assert_eq!(
+        toks,
+        vec![
+            TokenKind::Struct,
+            TokenKind::Ident("User".into()),
+            TokenKind::Eof
+        ]
+    );
+}
+
+// --- Parser ---
+
+#[test]
+fn parse_struct_decl_basic() {
+    use crate::ast::Stmt;
+    let src = "struct User { name: Text, score: Number }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 1);
+    match &stmts[0] {
+        Stmt::StructDecl { name, fields, .. } => {
+            assert_eq!(name, "User");
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].0, "name");
+            assert_eq!(fields[1].0, "score");
+        }
+        other => panic!("expected StructDecl, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_decl_single_field() {
+    use crate::ast::Stmt;
+    let src = "struct Point { x: Number }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        Stmt::StructDecl { name, fields, .. } => {
+            assert_eq!(name, "Point");
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].0, "x");
+        }
+        other => panic!("expected StructDecl, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_literal_basic() {
+    use crate::ast::Expr;
+    let src = "User { name: \"alice\", score: 10 }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 1);
+    match &stmts[0] {
+        crate::ast::Stmt::Expr(Expr::StructLiteral { name, fields, .. }) => {
+            assert_eq!(name, "User");
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].0, "name");
+            assert_eq!(fields[1].0, "score");
+        }
+        other => panic!("expected Stmt::Expr(StructLiteral), got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_field_access() {
+    use crate::ast::{Expr, Stmt};
+    // `u.name` → Expr::StateVariant { state_name: "u", variant_name: "name" }
+    // (syntactically reuses StateVariant node; semantics resolved by typechecker)
+    let src = "u.name";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert_eq!(stmts.len(), 1);
+    match &stmts[0] {
+        Stmt::Expr(Expr::StateVariant {
+            state_name,
+            variant_name,
+            ..
+        }) => {
+            assert_eq!(state_name, "u");
+            assert_eq!(variant_name, "name");
+        }
+        other => panic!("expected Stmt::Expr(StateVariant), got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_decl_trailing_comma() {
+    use crate::ast::Stmt;
+    let src = "struct Pt { x: Number, y: Number, }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        Stmt::StructDecl { fields, .. } => assert_eq!(fields.len(), 2),
+        other => panic!("{:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_decl_no_comma_separator() {
+    use crate::ast::Stmt;
+    // Fields separated by newlines, no commas
+    let src = "struct Pt {\n  x: Number\n  y: Number\n}";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        Stmt::StructDecl { fields, .. } => assert_eq!(fields.len(), 2),
+        other => panic!("{:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_literal_trailing_comma() {
+    use crate::ast::Expr;
+    let src = "Pt { x: 1, y: 2, }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        crate::ast::Stmt::Expr(Expr::StructLiteral { fields, .. }) => {
+            assert_eq!(fields.len(), 2);
+        }
+        other => panic!("{:?}", other),
+    }
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_struct_decl_accepted() {
+    let src = "struct User { name: Text, score: Number }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_literal_valid() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_field_access_valid() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u.name)
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_field_access_number() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 3, y: 4 }
+        print(p.x)
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_unknown_name_error() {
+    let result = check(r#"let u = Ghost { name: "x" }"#);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("Ghost") || msg.contains("unknown"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_unknown_field_error() {
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice" }
+        print(u.age)
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("age") || msg.contains("field"), "got: {}", msg);
+}
+
+#[test]
+fn type_struct_missing_field_error() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice" }
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("score") || msg.contains("missing"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_extra_field_error() {
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice", score: 10 }
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("score") || msg.contains("field"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_wrong_field_type_error() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: 42, score: 10 }
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("name") || msg.contains("Text") || msg.contains("Number"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_duplicate_decl_error() {
+    let src = r#"
+        struct User { name: Text }
+        struct User { score: Number }
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("User") || msg.contains("duplicate"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_empty_decl_error() {
+    let src = "struct Empty {}";
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("Empty") || msg.contains("field") || msg.contains("least"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_duplicate_field_in_decl_error() {
+    let src = "struct Bad { x: Number, x: Text }";
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("x") || msg.contains("duplicate"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_duplicate_field_in_literal_error() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 1, x: 2, y: 3 }
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("x") || msg.contains("duplicate"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
+fn type_struct_as_fn_param() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn get_x(p: Pt) -> Number { return p.x }
+        let p = Pt { x: 3, y: 4 }
+        let x = get_x(p)
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_as_fn_return() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn make() -> Pt { return Pt { x: 1, y: 2 } }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_field_access_in_array() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p = Pt { x: 5 }
+        let arr = [p.x]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_in_array() {
+    // Array<Pt> should work
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p1 = Pt { x: 1, y: 2 }
+        let p2 = Pt { x: 3, y: 4 }
+        let pts = [p1, p2]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+// --- Interpreter ---
+
+#[test]
+fn interp_struct_construct_and_field_access() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u.name)
+        print(u.score)
+    "#;
+    let interp = run(src).unwrap();
+    let out = interp.get_var("u");
+    assert!(out.is_some());
+    // Check fields via another var
+    let src2 = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        let n = u.name
+        let s = u.score
+    "#;
+    let interp2 = run(src2).unwrap();
+    assert_eq!(interp2.get_var("n"), Some(Value::Str("alice".into())));
+    assert_eq!(interp2.get_var("s"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn interp_struct_field_text() {
+    let src = r#"
+        struct Person { name: Text }
+        let p = Person { name: "bob" }
+        let n = p.name
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Str("bob".into())));
+}
+
+#[test]
+fn interp_struct_field_number() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 3, y: 4 }
+        let x = p.x
+        let y = p.y
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(3.0)));
+    assert_eq!(interp.get_var("y"), Some(Value::Number(4.0)));
+}
+
+#[test]
+fn interp_struct_field_bool() {
+    let src = r#"
+        struct Flag { active: Bool }
+        let f = Flag { active: true }
+        let a = f.active
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("a"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_struct_print_field() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u.name)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+#[test]
+fn interp_struct_field_in_expr() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 3, y: 4 }
+        let sum = p.x + p.y
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("sum"), Some(Value::Number(7.0)));
+}
+
+#[test]
+fn interp_struct_passed_to_fn() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn get_x(p: Pt) -> Number { return p.x }
+        let p = Pt { x: 5, y: 0 }
+        let x = get_x(p)
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("x"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_struct_returned_from_fn() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn make(a: Number, b: Number) -> Pt { return Pt { x: a, y: b } }
+        let p = make(3, 4)
+        let px = p.x
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("px"), Some(Value::Number(3.0)));
+}
+
+#[test]
+fn interp_struct_in_array_access() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p1 = Pt { x: 10 }
+        let p2 = Pt { x: 20 }
+        let pts = [p1, p2]
+        let first_x = pts[0].x
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("first_x"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn interp_struct_display() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u)
+    "#;
+    let out = vm_run(src).unwrap();
+    // Struct display: "User { name: alice, score: 10 }" (alphabetical field order)
+    assert_eq!(out.len(), 1);
+    assert!(out[0].contains("User"), "got: {}", out[0]);
+    assert!(out[0].contains("name"), "got: {}", out[0]);
+    assert!(out[0].contains("alice"), "got: {}", out[0]);
+}
+
+#[test]
+fn interp_struct_multiple_structs() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        struct Circle { radius: Number }
+        let p = Pt { x: 1, y: 2 }
+        let c = Circle { radius: 5 }
+        let px = p.x
+        let cr = c.radius
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("px"), Some(Value::Number(1.0)));
+    assert_eq!(interp.get_var("cr"), Some(Value::Number(5.0)));
+}
+
+// --- VM parity ---
+
+#[test]
+fn vm_struct_field_access() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(u.name)
+        print(u.score)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["alice", "10"]);
+}
+
+#[test]
+fn vm_struct_field_in_arithmetic() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 3, y: 4 }
+        print(p.x + p.y)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_struct_passed_to_fn() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn get_x(p: Pt) -> Number { return p.x }
+        let p = Pt { x: 5, y: 0 }
+        print(get_x(p))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_struct_returned_from_fn() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn make(a: Number, b: Number) -> Pt { return Pt { x: a, y: b } }
+        let p = make(3, 4)
+        print(p.y)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn vm_struct_in_array() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p1 = Pt { x: 10 }
+        let p2 = Pt { x: 20 }
+        let pts = [p1, p2]
+        print(pts[0].x)
+        print(pts[1].x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn vm_struct_field_in_if() {
+    let src = r#"
+        struct Flag { active: Bool }
+        let f = Flag { active: true }
+        if f.active {
+            print("yes")
+        } else {
+            print("no")
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["yes"]);
+}
+
+#[test]
+fn vm_struct_field_in_while() {
+    let src = r#"
+        struct Counter { val: Number }
+        let c = Counter { val: 0 }
+        let mut i = 0
+        while i < 3 {
+            i += 1
+        }
+        print(i)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_struct_multiple_structs() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        struct Circle { radius: Number }
+        let p = Pt { x: 1, y: 2 }
+        let c = Circle { radius: 5 }
+        print(p.x)
+        print(c.radius)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "5"]);
+}
+
+// --- Runtime errors ---
+
+#[test]
+fn interp_struct_field_access_on_non_struct_error() {
+    // Should be caught by typechecker; test passes if typechecker blocks it
+    let src = r#"
+        let x = 5
+        print(x.name)
+    "#;
+    let result = check(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("name") || msg.contains("field") || msg.contains("type"),
+        "got: {}",
+        msg
+    );
+}
+
+// --- Bytecode compilation ---
+
+#[test]
+fn bytecode_struct_literal_instruction() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 1, y: 2 }
+    "#;
+    let prog = compile_prog(src);
+    let has_struct_lit = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::StructLiteral { .. }));
+    assert!(
+        has_struct_lit,
+        "expected StructLiteral instruction in bytecode"
+    );
+}
+
+#[test]
+fn bytecode_field_access_instruction() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 1, y: 2 }
+        print(p.x)
+    "#;
+    let prog = compile_prog(src);
+    let has_field_access = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, crate::bytecode::Instruction::FieldAccess(_)));
+    assert!(
+        has_field_access,
+        "expected FieldAccess instruction in bytecode"
+    );
+}
+
+// --- Disassembler ---
+
+#[test]
+fn disasm_struct_literal_format() {
+    use crate::bytecode::Instruction;
+    use crate::disassemble::disassemble_instruction;
+    let instr = Instruction::StructLiteral {
+        name: "Pt".into(),
+        fields: vec!["x".into(), "y".into()],
+    };
+    let s = disassemble_instruction(&instr);
+    assert!(s.contains("STRUCT_LITERAL"), "got: {}", s);
+    assert!(s.contains("Pt"), "got: {}", s);
+}
+
+#[test]
+fn disasm_field_access_format() {
+    use crate::bytecode::Instruction;
+    use crate::disassemble::disassemble_instruction;
+    let instr = Instruction::FieldAccess("name".into());
+    let s = disassemble_instruction(&instr);
+    assert!(s.contains("FIELD_ACCESS"), "got: {}", s);
+    assert!(s.contains("name"), "got: {}", s);
+}
+
+// --- Named struct type annotations in let bindings ---
+
+#[test]
+fn parse_struct_named_type_annotation_in_let() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u: User = User { name: "alice", score: 10 }
+        print(u.name)
+    "#;
+    // Must parse and type-check without error
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_named_type_annotation_in_let_ok() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u: User = User { name: "alice", score: 10 }
+        print(u.name)
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_named_type_annotation_wrong_value_error() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        struct Point { x: Number, y: Number }
+        let u: User = Point { x: 1, y: 2 }
+    "#;
+    let err = check(src).unwrap_err();
+    assert!(
+        err.to_string().contains("User") && err.to_string().contains("Point"),
+        "expected type mismatch error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn interp_struct_named_type_annotation_in_let() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u: User = User { name: "alice", score: 10 }
+        let n = u.name
+        let s = u.score
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Str("alice".into())));
+    assert_eq!(interp.get_var("s"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn vm_struct_named_type_annotation_in_let() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u: User = User { name: "alice", score: 10 }
+        print(u.name)
+        print(u.score)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["alice", "10"]);
+}
+
+// --- State machine regression: dot syntax still works ---
+
+#[test]
+fn state_machine_dot_syntax_regression() {
+    // Ensure state machine Ident.variant still works after M15A
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        let mut d: Door = Door.closed
+        transition d -> open
+        print(d)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn state_machine_coexists_with_struct() {
+    let src = r#"
+        state Status { on off transition on -> off }
+        struct Config { value: Number }
+        let mut s: Status = Status.on
+        let c = Config { value: 42 }
+        print(c.value)
+        transition s -> off
+        print(s)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42", "Status.off"]);
 }

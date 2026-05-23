@@ -1,0 +1,28 @@
+// M15A: Structs passed to and returned from functions
+
+struct Pt { x: Number, y: Number }
+
+fn get_x(p: Pt) -> Number {
+  return p.x
+}
+
+fn get_y(p: Pt) -> Number {
+  return p.y
+}
+
+fn make_pt(a: Number, b: Number) -> Pt {
+  return Pt { x: a, y: b }
+}
+
+let p = make_pt(3, 4)
+print(get_x(p))
+print(get_y(p))
+
+// Struct field used in condition
+fn is_positive(p: Pt) -> Bool {
+  return p.x > 0
+}
+
+let q = Pt { x: -1, y: 5 }
+print(is_positive(p))
+print(is_positive(q))

@@ -1,0 +1,19 @@
+// M15A: Struct fields of different types
+
+struct Config {
+  host: Text
+  port: Number
+  enabled: Bool
+}
+
+let c = Config { host: "localhost", port: 8080, enabled: true }
+print(c.host)
+print(c.port)
+print(c.enabled)
+
+// Field in arithmetic
+struct Pt { x: Number, y: Number }
+
+let p = Pt { x: 3, y: 4 }
+let dist = p.x * p.x + p.y * p.y
+print(dist)
