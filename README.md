@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-3083_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-3149_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-13B-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-14A-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **3083 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **3149 tests passing**.
 
 ---
 
@@ -732,11 +732,10 @@ LexError  at line 3, col 7:  unexpected character '@'
 | `time` in simulate has unit type | `time` cannot be used as an array index; use an outer mutable counter instead |
 | No mixed semantics for state arrays | `arr[i] += value` is arithmetic/string-only; state arrays still need direct replacement like `arr[i] = Door.open` |
 | `remove` missing key is RuntimeError | `remove(map, key)` panics at runtime if the key is absent; use `has_key` to guard |
-| No map iteration | Maps cannot be directly iterated with `for`; use a separate keys array |
-| No explicit `Map<K,V>` annotation | Map type is inferred from the literal; `let m: Map<Text, Number>` is a ParseError |
-| No nested maps | `{"outer": {"inner": 1}}` is a TypeError |
-| No non-Text map keys | `{1: "a"}` is a TypeError; keys must be Text |
-| Empty map literal always TypeError | No annotation context to infer element type |
+| No nested maps | `{"outer": {"inner": 1}}` is a TypeError; `Map<Text, Map<Text, N>>` is a ParseError |
+| No non-Text map keys | `{1: "a"}` is a TypeError; keys must be Text; `Map<Number, V>` annotation is a TypeError |
+| Empty map without annotation is TypeError | `let m = {}` fails; use `let m: Map<Text, V> = {}` |
+| No direct map iteration | `for k, v in map` unsupported; use `for k in keys(m)` or `for v in values(m)` |
 | Missing-key map compound assignment is runtime-only | `m["k"] += v` requires an existing key; it raises `RuntimeError` if the key is absent |
 
 ---
@@ -786,6 +785,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 12F | Map builtin: `remove(map, key) -> V` | ✅ |
 | 13A | For-each loops over arrays (`for item in array_expr { ... }`) | ✅ |
 | 13B | Indexed for-each loops (`for i, item in array_expr { ... }`) | ✅ |
+| 14A | `Map<Text, V>` type annotations; typed empty map literals `{}` with annotation context | ✅ |
 
 ---
 
@@ -793,7 +793,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 3083 passed, 0 failed
+# 3149 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -820,7 +820,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        3083 unit tests
+  tests.rs        3149 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -907,6 +907,9 @@ examples/
   for_each_indexed_maps.kimin       for_each_indexed_mutation.kimin
   for_each_indexed_function.kimin   for_each_indexed_simulate.kimin
   for_each_indexed_errors.kimin
+  map_annotations.kimin             map_annotations_empty.kimin
+  map_annotations_functions.kimin   map_annotations_for_each.kimin
+  map_annotations_errors.kimin
 ```
 
 <details>

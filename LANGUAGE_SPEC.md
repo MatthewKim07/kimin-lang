@@ -104,7 +104,7 @@ let  mut  if  else  while  for  in  break  continue  print  fn  return  true  fa
 
 ### 2.2 Static types (Milestones 3–5)
 
-The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, `Array<T>`, any unit name from the unit registry, or a state machine name. `Map<Text, T>` is inferred from map literals but cannot yet be written as an explicit annotation.
+The static type checker uses the same names as the runtime types. Type annotations are written as `Number`, `Text`, `Bool`, `Nil`, `Array<T>`, `Map<Text, V>`, any unit name from the unit registry, or a state machine name.
 
 Functions without a return type annotation are assigned `Unknown` — the gradual-typing escape hatch. Operations involving an `Unknown` value propagate `Unknown` without error, so unannotated code remains valid.
 
@@ -1243,7 +1243,7 @@ let scores = {"alice": 10, "bob": 20, "carol": 15}
 
 - Keys must be `Text` expressions. Non-Text keys are a `TypeError`.
 - All values must be the same type (homogeneous). Mixed types are a `TypeError`.
-- Empty map literals are a `TypeError` (no type context available without explicit annotations).
+- Empty map literals `{}` require an explicit `Map<Text, V>` type annotation on the `let` binding; without one they are a `TypeError`.
 - Duplicate keys: the last value in source order wins.
 
 #### Map indexing
@@ -1389,12 +1389,34 @@ print(total)   // 30
 
 All four builtins are intercepted before normal function dispatch — no `CALL` instruction is emitted. Bytecode: `HAS_KEY` pops key then map, pushes `Bool`; `KEYS` pops map, pushes `Array<Text>`; `VALUES` pops map, pushes `Array<V>`; `REMOVE_KEY name` pops key, loads map `name` from env, removes, pushes removed value.
 
+#### Map type annotations (Milestone 14A)
+
+`Map<Text, V>` can be written as an explicit type annotation on `let` and `let mut` bindings, function parameters, and function return types. `V` can be `Number`, `Text`, `Bool`, `Nil`, any unit name, a state machine name, or `Array<T>`. Nested map annotations (`Map<Text, Map<Text, V>>`) are a `ParseError`. Non-Text key annotations (`Map<Number, V>`) are a `TypeError`.
+
+```kimin
+let mut scores: Map<Text, Number> = {}   // empty map — annotation required
+scores["alice"] = 10
+scores["bob"] = 20
+
+fn total(m: Map<Text, Number>) -> Number {
+    let mut sum = 0
+    for v in values(m) { sum += v }
+    return sum
+}
+
+fn make_empty() -> Map<Text, Bool> {
+    return {}
+}
+```
+
+An empty map literal `{}` is accepted when the inferred expected type (from annotation, return type, or function parameter) is `Map<Text, V>`. Without that context, `{}` remains a `TypeError`.
+
 #### Restrictions
 
-- **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`.
-- **No non-Text keys**: `{1: "a"}` is a `TypeError`.
-- **No explicit `Map<K,V>` type annotation syntax**: deferred to a future milestone.
-- **No map iteration**: maps cannot be directly iterated with `for`; use `keys(map)` or `values(map)` and iterate the resulting array.
+- **No nested maps**: `{"outer": {"inner": 1}}` is a `TypeError`; `Map<Text, Map<Text, V>>` annotation is a `ParseError`.
+- **No non-Text keys**: `{1: "a"}` is a `TypeError`; `Map<Number, V>` annotation is a `TypeError`.
+- **No direct map iteration**: maps cannot be iterated directly with `for`; use `for k in keys(m)` or `for v in values(m)`.
+- **Empty map without annotation is TypeError**: use `let m: Map<Text, V> = {}`.
 - **`remove` missing key is RuntimeError**: use `has_key` to guard before `remove` if key existence is uncertain.
 
 ---
