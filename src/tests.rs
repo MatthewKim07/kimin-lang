@@ -32149,3 +32149,95 @@ fn map_index_assignment_still_ok_after_structs() {
     assert_eq!(out, vec!["2"]);
 }
 
+// --- Section 14: Error messages ---
+
+#[test]
+fn struct_unknown_type_message() {
+    let err = check(r#"let u = Ghost { x: 1 }"#).unwrap_err().to_string();
+    assert!(err.contains("Ghost"), "got: {}", err);
+}
+
+#[test]
+fn struct_duplicate_name_message() {
+    let src = "struct User { name: Text }\nstruct User { score: Number }";
+    let err = check(src).unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate") && err.contains("User"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn struct_duplicate_field_message() {
+    let err = check("struct Bad { x: Number, x: Text }")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("x"), "got: {}", err);
+}
+
+#[test]
+fn struct_empty_message() {
+    let err = check("struct Empty {}").unwrap_err().to_string();
+    assert!(
+        err.contains("Empty") || err.contains("field") || err.contains("least"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn struct_missing_field_message() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice" }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(
+        err.contains("score") && err.contains("missing"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn struct_extra_field_message() {
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice", age: 30 }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("age"), "got: {}", err);
+}
+
+#[test]
+fn struct_wrong_field_type_message() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: 42, score: 10 }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("name") || err.contains("Text"), "got: {}", err);
+}
+
+#[test]
+fn field_access_non_struct_message() {
+    let src = "let x = 5\nprint(x.name)";
+    let err = check(src).unwrap_err().to_string();
+    assert!(
+        err.contains("Number") || err.contains("field") || err.contains("x"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn field_access_unknown_field_message() {
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice" }
+        print(u.age)
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("age") && err.contains("User"), "got: {}", err);
+}
