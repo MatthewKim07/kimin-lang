@@ -2174,6 +2174,25 @@ impl TypeChecker {
                 let inner_ty = self.resolve_annotation(inner, span)?;
                 Ok(Type::Array(Box::new(inner_ty)))
             }
+            TypeAnnotation::Map(key_ann, val_ann) => {
+                let key_ty = self.resolve_annotation(key_ann, span)?;
+                if key_ty != Type::Text && !key_ty.is_unknown() {
+                    return Err(TypeError {
+                        msg: format!("map key type must be Text, got {}", key_ty.name()),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                let val_ty = self.resolve_annotation(val_ann, span)?;
+                if matches!(val_ty, Type::Map(..)) {
+                    return Err(TypeError {
+                        msg: "nested maps are not supported".into(),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(Type::Map(Box::new(Type::Text), Box::new(val_ty)))
+            }
         }
     }
 
@@ -2193,6 +2212,21 @@ impl TypeChecker {
                     Some(Type::Array(elem_ty)) => Ok(Type::Array(elem_ty.clone())),
                     _ => Err(TypeError {
                         msg: "empty array literal requires an explicit Array<T> type annotation"
+                            .into(),
+                        line: span.line,
+                        col: span.col,
+                    }),
+                };
+            }
+        }
+        if let Expr::MapLiteral { entries, span } = expr {
+            if entries.is_empty() {
+                return match expected {
+                    Some(Type::Map(_, val_ty)) => {
+                        Ok(Type::Map(Box::new(Type::Text), val_ty.clone()))
+                    }
+                    _ => Err(TypeError {
+                        msg: "empty map literal requires an explicit Map<Text, V> type annotation"
                             .into(),
                         line: span.line,
                         col: span.col,
