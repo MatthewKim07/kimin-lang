@@ -1,0 +1,47 @@
+// Map<Text, V> with for-each loops
+
+let counts: Map<Text, Number> = {"apple": 3, "banana": 1, "cherry": 5}
+
+// iterate keys (sorted alphabetically by BTreeMap)
+for k in keys(counts) {
+    print(k)
+}
+
+// iterate values (in key-sorted order)
+for v in values(counts) {
+    print(v)
+}
+
+// indexed iteration over keys
+for i, k in keys(counts) {
+    print(i)
+}
+
+// compute total via for-each over values
+let mut total = 0
+for v in values(counts) {
+    total += v
+}
+print(total)
+
+// build a second map from an annotated empty map
+let mut doubled: Map<Text, Number> = {}
+for k in keys(counts) {
+    doubled[k] = counts[k] * 2
+}
+print(doubled["apple"])
+print(doubled["cherry"])
+
+// for-each over keys of annotated map returned from function
+fn make_map() -> Map<Text, Bool> {
+    return {"a": true, "b": false, "c": true}
+}
+
+let m = make_map()
+let mut trues = 0
+for k in keys(m) {
+    if m[k] {
+        trues += 1
+    }
+}
+print(trues)

@@ -1,0 +1,18 @@
+// Map<Text, V> type annotations — basic usage
+
+let counts: Map<Text, Number> = {"alice": 5, "bob": 3, "carol": 8}
+print(counts["alice"])
+print(counts["bob"])
+print(counts["carol"])
+
+let labels: Map<Text, Text> = {"red": "danger", "green": "safe", "blue": "info"}
+print(labels["red"])
+print(labels["green"])
+
+let flags: Map<Text, Bool> = {"enabled": true, "debug": false}
+print(flags["enabled"])
+print(flags["debug"])
+
+let scores: Map<Text, Array<Number>> = {"team_a": [10, 20, 30], "team_b": [15, 25]}
+print(scores["team_a"][0])
+print(scores["team_b"][1])

@@ -1,0 +1,30 @@
+// Typed empty map literals — Map<Text, V> annotation required
+
+let mut scores: Map<Text, Number> = {}
+scores["alice"] = 10
+scores["bob"] = 20
+scores["carol"] = 15
+print(scores["alice"])
+print(scores["bob"])
+print(scores["carol"])
+
+print(has_key(scores, "alice"))
+print(has_key(scores, "dave"))
+
+print(keys(scores))
+print(values(scores))
+
+let removed = remove(scores, "bob")
+print(removed)
+print(keys(scores))
+
+let mut labels: Map<Text, Text> = {}
+labels["x"] = "hello"
+labels["y"] = "world"
+print(labels["x"])
+print(labels["y"])
+
+let mut flags: Map<Text, Bool> = {}
+flags["on"] = true
+print(flags["on"])
+print(has_key(flags, "off"))

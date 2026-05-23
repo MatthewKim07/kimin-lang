@@ -1,0 +1,42 @@
+// Map<Text, V> annotation error cases — all lines below are commented out
+// because they are type errors or parse errors. Uncomment one at a time to see the error.
+
+// Empty map literal without annotation:
+// let m = {}
+// Error: empty map literal requires an explicit Map<Text, V> type annotation
+
+// Non-Text key type in annotation:
+// let m: Map<Number, Number> = {"a": 1}
+// Error: map key type must be Text
+
+// Nested map annotation:
+// let m: Map<Text, Map<Text, Number>> = {}
+// Error: nested maps are not supported
+
+// Missing '<' after Map:
+// let m: Map Text, Number> = {}
+// Error: expected '<' after 'Map' in type annotation
+
+// Missing comma in annotation:
+// let m: Map<Text Number> = {}
+// Error: expected ',' in Map type annotation
+
+// Missing value type after comma:
+// let m: Map<Text,> = {}
+// Error: expected map value type after ','
+
+// Missing '>' at end:
+// let m: Map<Text, Number = {}
+// Error: expected '>' after value type in Map<Text, V> annotation
+
+// Wrong value type in literal vs annotation:
+// let m: Map<Text, Number> = {"a": "not a number"}
+// Error: type mismatch
+
+// Bool key annotation:
+// let m: Map<Bool, Number> = {"a": 1}
+// Error: map key type must be Text
+
+// This file runs successfully when all error cases are commented out:
+let m: Map<Text, Number> = {"ok": 1}
+print(m["ok"])

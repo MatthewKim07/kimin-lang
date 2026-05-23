@@ -1,0 +1,59 @@
+// Map<Text, V> in function parameters and return types
+
+fn total(m: Map<Text, Number>) -> Number {
+    let mut sum = 0
+    for v in values(m) {
+        sum += v
+    }
+    return sum
+}
+
+fn lookup(m: Map<Text, Text>, key: Text) -> Text {
+    return m[key]
+}
+
+fn make_empty() -> Map<Text, Number> {
+    return {}
+}
+
+fn make_defaults() -> Map<Text, Bool> {
+    return {"enabled": true, "debug": false, "verbose": false}
+}
+
+fn merge(base: Map<Text, Number>, extra_key: Text, extra_val: Number) -> Map<Text, Number> {
+    let mut result: Map<Text, Number> = {}
+    for k in keys(base) {
+        result[k] = base[k]
+    }
+    result[extra_key] = extra_val
+    return result
+}
+
+let scores = {"alice": 10, "bob": 20, "carol": 30}
+print(total(scores))
+
+let names = {"first": "Alice", "last": "Kim"}
+print(lookup(names, "first"))
+print(lookup(names, "last"))
+
+let empty = make_empty()
+print(has_key(empty, "x"))
+print(keys(empty))
+
+let defs = make_defaults()
+print(defs["enabled"])
+print(defs["debug"])
+
+let extended = merge(scores, "dave", 25)
+print(extended["dave"])
+print(total(extended))
+
+fn get_or_default(m: Map<Text, Number>, key: Text, default: Number) -> Number {
+    if has_key(m, key) {
+        return m[key]
+    }
+    return default
+}
+
+print(get_or_default(scores, "alice", 0))
+print(get_or_default(scores, "eve", 99))
