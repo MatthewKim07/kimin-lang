@@ -60,7 +60,9 @@ impl Parser {
     // --- statements ---
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
-        if matches!(self.current_kind(), TokenKind::State) {
+        if matches!(self.current_kind(), TokenKind::Struct) {
+            self.parse_struct_decl()
+        } else if matches!(self.current_kind(), TokenKind::State) {
             self.parse_state_decl()
         } else if matches!(self.current_kind(), TokenKind::Transition) {
             self.parse_transition_stmt()
@@ -168,6 +170,37 @@ impl Parser {
             transitions,
             span,
         })
+    }
+
+    fn parse_struct_decl(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `struct`
+
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected struct name after 'struct'")),
+        };
+        self.advance(); // consume name
+
+        self.expect_kind(TokenKind::LBrace, "expected '{' after struct name")?;
+
+        let mut fields: Vec<(String, TypeAnnotation)> = Vec::new();
+        while !matches!(self.current_kind(), TokenKind::RBrace) && !self.is_at_end() {
+            let field_name = match self.current_kind() {
+                TokenKind::Ident(n) => n.clone(),
+                _ => return Err(self.error("expected field name in struct declaration")),
+            };
+            self.advance(); // consume field name
+            self.expect_kind(TokenKind::Colon, "expected ':' after field name in struct")?;
+            let type_ann = self.parse_type_annotation()?;
+            fields.push((field_name, type_ann));
+            if matches!(self.current_kind(), TokenKind::Comma) {
+                self.advance(); // optional trailing comma
+            }
+        }
+        self.expect_kind(TokenKind::RBrace, "expected '}' after struct fields")?;
+
+        Ok(Stmt::StructDecl { name, fields, span })
     }
 
     fn parse_transition_stmt(&mut self) -> Result<Stmt, ParseError> {
@@ -799,6 +832,62 @@ impl Parser {
                     args,
                     span,
                 };
+            } else if matches!(self.current_kind(), TokenKind::Dot) {
+                // Chained field access: `expr.field` where expr is NOT a plain identifier.
+                // Plain `ident.field` is handled in parse_primary as StateVariant.
+                let span = self.current_span();
+                self.advance(); // consume `.`
+                let field = match self.current_kind() {
+                    TokenKind::Ident(n) => n.clone(),
+                    _ => return Err(self.error("expected field name after '.'")),
+                };
+                self.advance(); // consume field name
+                expr = Expr::FieldAccess {
+                    object: Box::new(expr),
+                    field,
+                    span,
+                };
+            } else if matches!(self.current_kind(), TokenKind::LBrace)
+                && matches!(&expr, Expr::Variable { .. })
+                && matches!(self.peek_kind(), TokenKind::Ident(_))
+                && matches!(self.peek_kind_2(), TokenKind::Colon)
+            {
+                // Struct literal: TypeName { field: value, ... }
+                // Disambiguation: { followed by Ident : is unambiguously a struct literal.
+                let struct_name = match &expr {
+                    Expr::Variable { name, .. } => name.clone(),
+                    _ => unreachable!(),
+                };
+                let span = self.current_span();
+                self.advance(); // consume `{`
+                let mut fields: Vec<(String, Expr)> = Vec::new();
+                while !matches!(self.current_kind(), TokenKind::RBrace) && !self.is_at_end() {
+                    let field_name = match self.current_kind() {
+                        TokenKind::Ident(n) => n.clone(),
+                        _ => return Err(self.error("expected field name in struct literal")),
+                    };
+                    self.advance(); // consume field name
+                    self.expect_kind(
+                        TokenKind::Colon,
+                        "expected ':' after field name in struct literal",
+                    )?;
+                    let val = self.parse_expr()?;
+                    fields.push((field_name, val));
+                    if matches!(self.current_kind(), TokenKind::Comma) {
+                        self.advance(); // optional trailing comma
+                    } else {
+                        break;
+                    }
+                }
+                self.expect_kind(
+                    TokenKind::RBrace,
+                    "expected '}' after struct literal fields",
+                )?;
+                expr = Expr::StructLiteral {
+                    name: struct_name,
+                    fields,
+                    span,
+                };
             } else if matches!(self.current_kind(), TokenKind::LBracket) {
                 let span = self.current_span();
                 self.advance(); // consume `[`
@@ -959,6 +1048,15 @@ impl Parser {
         let next = self.pos + 1;
         if next < self.tokens.len() {
             &self.tokens[next].kind
+        } else {
+            &self.tokens[self.pos].kind
+        }
+    }
+
+    fn peek_kind_2(&self) -> &TokenKind {
+        let next2 = self.pos + 2;
+        if next2 < self.tokens.len() {
+            &self.tokens[next2].kind
         } else {
             &self.tokens[self.pos].kind
         }

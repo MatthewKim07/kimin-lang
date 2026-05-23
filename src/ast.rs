@@ -56,6 +56,21 @@ pub enum Expr {
         entries: Vec<(Expr, Expr)>,
         span: Span,
     },
+    /// Struct construction expression: `TypeName { field: value, ... }`
+    /// Field names are unquoted identifiers; all declared fields must be provided.
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    /// Field access on an arbitrary expression: `expr.field`
+    /// Used for chained access like `arr[0].field` or `make().field`.
+    /// Simple `var.field` patterns are parsed as `Expr::StateVariant` in `parse_primary`.
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -255,6 +270,12 @@ pub enum Stmt {
         index: Expr,
         op: CompoundAssignOp,
         value: Expr,
+        span: Span,
+    },
+    /// A struct type declaration: `struct Name { field: Type, ... }`
+    StructDecl {
+        name: String,
+        fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },
 }

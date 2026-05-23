@@ -220,6 +220,7 @@ impl Lexer {
             "in" => TokenKind::In,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
+            "struct" => TokenKind::Struct,
             _ => TokenKind::Ident(s),
         }
     }
