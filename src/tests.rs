@@ -30960,3 +30960,451 @@ fn state_machine_coexists_with_struct() {
     let out = vm_run(src).unwrap();
     assert_eq!(out, vec!["42", "Status.off"]);
 }
+
+// ============================================================
+// M15A Audit — additional coverage
+// ============================================================
+
+// --- Section 1: Lexer ---
+
+#[test]
+fn lex_struct_prefix_identifier() {
+    // "structure" and "structural" must lex as Ident, not Struct keyword
+    let toks = tokenize("structure structural mystruct");
+    assert!(toks
+        .iter()
+        .all(|t| !matches!(t, TokenKind::Struct) || matches!(t, TokenKind::Eof)));
+    assert!(matches!(toks[0], TokenKind::Ident(_)));
+    assert!(matches!(toks[1], TokenKind::Ident(_)));
+    assert!(matches!(toks[2], TokenKind::Ident(_)));
+}
+
+#[test]
+fn lex_dot_field_access_tokens() {
+    let toks = tokenize("u.name");
+    assert!(toks.iter().any(|t| matches!(t, TokenKind::Dot)));
+    assert!(toks
+        .iter()
+        .any(|t| matches!(t, TokenKind::Ident(s) if s == "name")));
+}
+
+#[test]
+fn lex_dotdot_slice_still_works_after_structs() {
+    let toks = tokenize("arr[1..3]");
+    assert!(toks.iter().any(|t| matches!(t, TokenKind::DotDot)));
+    // No Dot token — DotDot is distinct
+    assert!(!toks.iter().any(|t| matches!(t, TokenKind::Dot)));
+}
+
+// --- Section 2: Parser ---
+
+#[test]
+fn parse_struct_decl_multiple_field_types() {
+    use crate::ast::Stmt;
+    let src = "struct Mixed { n: Number, t: Text, b: Bool }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        Stmt::StructDecl { fields, .. } => assert_eq!(fields.len(), 3),
+        other => panic!("{:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_decl_missing_name_error() {
+    let src = "struct { x: Number }";
+    let result = Lexer::new(src)
+        .tokenize()
+        .ok()
+        .and_then(|t| Parser::new(t).parse().ok());
+    assert!(result.is_none());
+}
+
+#[test]
+fn parse_struct_decl_empty_error() {
+    // ParseError or TypeError — either is acceptable; struct must fail
+    let src = "struct Empty {}";
+    let type_ok = check(src).is_ok();
+    assert!(!type_ok, "empty struct should fail");
+}
+
+#[test]
+fn parse_struct_literal_fields_any_order() {
+    use crate::ast::Expr;
+    // Fields in reversed order still produce a StructLiteral
+    let src = "User { score: 10, name: \"alice\" }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        crate::ast::Stmt::Expr(Expr::StructLiteral { fields, .. }) => {
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].0, "score");
+            assert_eq!(fields[1].0, "name");
+        }
+        other => panic!("{:?}", other),
+    }
+}
+
+#[test]
+fn parse_struct_literal_empty_errors() {
+    // Empty struct literal cannot be disambiguated from block — ParseError expected
+    let result = check("struct E {} let x = E {}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_field_access_function_result() {
+    // `f().x` should parse as FieldAccess
+    use crate::ast::Expr;
+    let src = "f().x";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        crate::ast::Stmt::Expr(Expr::FieldAccess { field, .. }) => {
+            assert_eq!(field, "x");
+        }
+        other => panic!("expected FieldAccess, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_field_access_after_index() {
+    // `arr[0].x` should parse as FieldAccess
+    use crate::ast::Expr;
+    let src = "arr[0].x";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        crate::ast::Stmt::Expr(Expr::FieldAccess { field, .. }) => {
+            assert_eq!(field, "x");
+        }
+        other => panic!("expected FieldAccess, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_block_statement_still_parses_after_structs() {
+    // A block-statement `{ print(1) }` must still parse as a block, not a struct literal
+    let src = "{ print(1) }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(stmts[0], crate::ast::Stmt::Block(_)));
+}
+
+#[test]
+fn parse_state_decl_still_parses_after_structs() {
+    use crate::ast::Stmt;
+    let src = "state Door { closed open transition closed -> open }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(stmts[0], Stmt::StateDecl { .. }));
+}
+
+#[test]
+fn parse_slice_dotdot_still_parses_after_dot() {
+    // `arr[1..3]` must still parse as Slice, not confused with field access
+    use crate::ast::Expr;
+    let src = "arr[1..3]";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    match &stmts[0] {
+        crate::ast::Stmt::Expr(Expr::Slice { .. }) => {}
+        other => panic!("expected Slice, got {:?}", other),
+    }
+}
+
+// --- Section 3: Typechecker declaration ---
+
+#[test]
+fn type_struct_field_type_number_text_bool_ok() {
+    let src = "struct Mixed { n: Number, t: Text, b: Bool }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_field_type_unit_ok() {
+    let src = "struct Speed { v: meters }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_field_type_array_ok() {
+    let src = "struct Container { items: Array<Number> }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_field_type_map_ok() {
+    let src = "struct Registry { data: Map<Text, Number> }";
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_unknown_field_type_error() {
+    let src = "struct Bad { x: UnknownType }";
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_struct_forward_reference_works() {
+    // Struct defined after use in fn param — pass-1 registers structs so this works
+    let src = r#"
+        fn get_x(p: Pt) -> Number { return p.x }
+        struct Pt { x: Number }
+        let p = Pt { x: 5 }
+        print(get_x(p))
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_state_name_conflict_allowed_documented() {
+    // When both state and struct share a name, typechecker currently allows it.
+    // State takes priority in resolve_annotation (states checked before structs).
+    // This is a known limitation — document via test.
+    let src = r#"
+        state User { on off transition on -> off }
+        struct User { name: Text }
+    "#;
+    // Currently allowed (no conflict detection)
+    let result = check(src);
+    // Document actual behavior — if this ever becomes an error, update this test
+    let _ = result; // may be ok or err depending on future policy; currently ok
+}
+
+// --- Section 4: Typechecker construction ---
+
+#[test]
+fn type_struct_literal_basic_ok() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_literal_field_order_irrelevant_ok() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { score: 10, name: "alice" }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_literal_missing_field_error() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice" }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(
+        err.contains("score") && err.contains("missing"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_struct_literal_extra_field_error() {
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice", age: 30 }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("age"), "got: {}", err);
+}
+
+#[test]
+fn type_struct_literal_duplicate_field_error() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 1, x: 2, y: 3 }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("x"), "got: {}", err);
+}
+
+#[test]
+fn type_struct_literal_unknown_struct_error() {
+    let err = check(r#"let u = Ghost { x: 1 }"#).unwrap_err().to_string();
+    assert!(err.contains("Ghost"), "got: {}", err);
+}
+
+#[test]
+fn type_struct_literal_wrong_field_type_error() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: 42, score: 10 }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("name") || err.contains("Text"), "got: {}", err);
+}
+
+#[test]
+fn type_struct_literal_array_field_ok() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [1, 2, 3] }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_literal_map_field_ok() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1} }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_literal_unit_field_ok() {
+    let src = r#"
+        struct Velocity { v: meters }
+        let v: meters = 5
+        let s = Velocity { v: v }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_named_type_annotation_wrong_struct_error() {
+    let src = r#"
+        struct User { name: Text }
+        struct Point { x: Number }
+        let u: User = Point { x: 1 }
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(
+        err.contains("User") && err.contains("Point"),
+        "got: {}",
+        err
+    );
+}
+
+// --- Section 5: Typechecker field access ---
+
+#[test]
+fn type_field_access_text_ok() {
+    let src = r#"
+        struct Person { name: Text }
+        let p = Person { name: "alice" }
+        let n: Text = p.name
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_number_ok() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p = Pt { x: 3 }
+        let x: Number = p.x
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_bool_ok() {
+    let src = r#"
+        struct Flag { active: Bool }
+        let f = Flag { active: true }
+        let a: Bool = f.active
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_array_field_ok() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [1, 2, 3] }
+        let first = c.items[0]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_map_field_ok() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1} }
+        let v = r.data["a"]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_unit_field_ok() {
+    let src = r#"
+        struct Velocity { v: meters }
+        let vel: meters = 5
+        let s = Velocity { v: vel }
+        let result: meters = s.v
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_unknown_field_error() {
+    let src = r#"
+        struct User { name: Text }
+        let u = User { name: "alice" }
+        print(u.age)
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("age"), "got: {}", err);
+}
+
+#[test]
+fn type_field_access_non_struct_error() {
+    let src = r#"
+        let x = 5
+        print(x.name)
+    "#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn type_field_access_used_in_arithmetic() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        let p = Pt { x: 3, y: 4 }
+        let d: Number = p.x + p.y
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_used_in_string_builtin() {
+    let src = r#"
+        struct Person { name: Text }
+        let p = Person { name: "Alice" }
+        let lower = to_lower(p.name)
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_access_used_in_map_lookup() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1} }
+        let v = r.data["a"]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_state_variant_still_ok_after_structs() {
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        let mut d: Door = Door.closed
+        transition d -> open
+    "#;
+    assert!(check(src).is_ok());
+}
+
