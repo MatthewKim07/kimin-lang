@@ -1,0 +1,14 @@
+// for_each_indexed_simulate.kimin — indexed for-each inside simulate blocks
+
+let checkpoints = [0, 25, 50, 75, 100]
+let mut passed: Number = 0
+let d: seconds = 5
+let dt: seconds = 1
+simulate d step dt {
+    for i, cp in checkpoints {
+        if i < 3 {
+            passed += 1
+        }
+    }
+}
+print(passed)

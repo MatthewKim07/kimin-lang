@@ -1,0 +1,31 @@
+// for_each_indexed.kimin — basic indexed for-each loops
+
+// Print index and value
+let fruits = ["apple", "banana", "cherry"]
+for i, fruit in fruits {
+    print(i)
+    print(fruit)
+}
+
+// Sum values with index tracking
+let nums = [10, 20, 30, 40, 50]
+let mut total: Number = 0
+for i, n in nums {
+    total += n
+}
+print(total)
+
+// Index-weighted sum: sum of i*v
+let weights = [1, 2, 3]
+let mut weighted: Number = 0
+for i, w in weights {
+    weighted += i * w
+}
+print(weighted)
+
+// Single element
+let one = [99]
+for i, v in one {
+    print(i)
+    print(v)
+}

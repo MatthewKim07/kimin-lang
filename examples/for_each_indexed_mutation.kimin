@@ -1,0 +1,40 @@
+// for_each_indexed_mutation.kimin — mutation patterns with indexed for-each
+
+// Use index to write into a target array
+let src = [10, 20, 30]
+let mut dst = [0, 0, 0]
+for i, v in src {
+    dst[i] = v * 2
+}
+print(dst[0])
+print(dst[1])
+print(dst[2])
+
+// Snapshot semantics: push inside loop doesn't extend iteration
+let mut a = [1, 2, 3]
+let mut count: Number = 0
+for i, v in a {
+    count += 1
+    push(a, 99)
+}
+print(count)
+print(len(a))
+
+// Index-based swap pattern (copy to new array)
+let original = [3, 1, 4, 1, 5]
+let mut doubled: Array<Number> = []
+for i, v in original {
+    push(doubled, v * 2)
+}
+print(len(doubled))
+print(doubled[0])
+
+// Accumulate conditional results using index
+let data = [2, 5, 1, 8, 3]
+let mut even_indices: Number = 0
+for i, v in data {
+    if v > 4 {
+        even_indices += i
+    }
+}
+print(even_indices)

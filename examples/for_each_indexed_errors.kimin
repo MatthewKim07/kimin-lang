@@ -1,0 +1,32 @@
+// for_each_indexed_errors.kimin — examples that produce errors (type-checked)
+//
+// Uncomment each block to see the error.
+
+// Duplicate variable names — TypeError: "indexed for-each variable names must be distinct"
+// let a = [1, 2]
+// for x, x in a { }
+
+// Non-array iterable — TypeError: "for-each requires Array"
+// for i, v in 42 { }
+
+// Text iterable — TypeError: "for-each requires Array"
+// for i, v in "hello" { }
+
+// Map iterable — TypeError: "for-each requires Array"
+// let m = {"k": 1}
+// for i, v in m { }
+
+// Mutating index variable — TypeError: immutable
+// let a = [1, 2]
+// for i, v in a { i = 0 }
+
+// Mutating element variable — TypeError: immutable
+// let a = [1, 2]
+// for i, v in a { v = 0 }
+
+// Variables out of scope after loop — TypeError: undefined
+// let a = [1, 2]
+// for i, v in a { }
+// print(i)
+
+print("see comments above for error examples")

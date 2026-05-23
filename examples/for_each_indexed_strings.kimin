@@ -1,0 +1,29 @@
+// for_each_indexed_strings.kimin — indexed for-each over string arrays
+
+let words = ["hello", "world", "kimin"]
+for i, w in words {
+    print(i)
+    print(w)
+    print(len(w))
+}
+
+// Find longest word index
+let mut longest_idx: Number = 0
+let mut longest_len: Number = 0
+for i, w in words {
+    if len(w) > longest_len {
+        longest_len = len(w)
+        longest_idx = i
+    }
+}
+print(longest_idx)
+
+// Join with index prefix tracking
+let tags = ["alpha", "beta", "gamma"]
+let mut count: Number = 0
+for i, tag in tags {
+    if i > 0 {
+        count += 1
+    }
+}
+print(count)

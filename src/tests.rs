@@ -28090,3 +28090,450 @@ fn bytecode_for_range_sentinel_unaffected_by_for_each() {
     assert!(out.contains("__kimin_range_end_"));
     assert!(!out.contains("__kimin_foreach_"));
 }
+
+// ============================================================
+// M13B: Indexed for-each loops
+// ============================================================
+
+// --- Parser ---
+
+#[test]
+fn parse_for_each_indexed_basic() {
+    let result = check("for i, x in [1, 2, 3] { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn parse_for_each_indexed_missing_second_var_error() {
+    let result = check("for i, in [1, 2, 3] { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_for_each_indexed_missing_in_error() {
+    let result = check("for i, x [1, 2, 3] { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_for_each_indexed_missing_iterable_error() {
+    let result = check("for i, x in { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_for_each_indexed_missing_body_error() {
+    let result = check("for i, x in [1, 2]");
+    assert!(result.is_err());
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_for_each_indexed_number_array() {
+    let result = check("let a = [10, 20, 30]\nfor i, v in a { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_text_array() {
+    let result = check("let a = [\"x\", \"y\"]\nfor i, v in a { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_bool_array() {
+    let result = check("let a = [true, false]\nfor i, v in a { }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_index_is_number() {
+    // i used in arithmetic → must be Number
+    let result = check("let a = [1, 2, 3]\nlet mut s: Number = 0\nfor i, v in a { s += i }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_elem_has_correct_type() {
+    let result = check("let a = [1.0, 2.0]\nlet mut s: Number = 0\nfor i, v in a { s += v }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_duplicate_names_error() {
+    let result = check("let a = [1, 2, 3]\nfor i, i in a { }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("distinct"), "message: {}", msg);
+}
+
+#[test]
+fn type_for_each_indexed_non_array_iterable_error() {
+    let result = check("for i, v in 42 { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_text_iterable_error() {
+    let result = check("for i, v in \"hello\" { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_map_iterable_error() {
+    let result = check("let m = {\"a\": 1}\nfor i, v in m { }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_index_immutable_error() {
+    let result = check("let a = [1, 2]\nfor i, v in a { i = 0 }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_elem_immutable_error() {
+    let result = check("let a = [1, 2]\nfor i, v in a { v = 0 }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_index_compound_error() {
+    let result = check("let a = [1, 2]\nfor i, v in a { i += 1 }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_elem_compound_error() {
+    let result = check("let a = [1, 2]\nfor i, v in a { v += 1 }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_index_out_of_scope_after_loop() {
+    let result = check("let a = [1, 2]\nfor i, v in a { }\nprint(i)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_elem_out_of_scope_after_loop() {
+    let result = check("let a = [1, 2]\nfor i, v in a { }\nprint(v)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn type_for_each_indexed_break_allowed() {
+    let result = check("let a = [1, 2]\nfor i, v in a { break }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_continue_allowed() {
+    let result = check("let a = [1, 2]\nfor i, v in a { continue }");
+    assert!(result.is_ok(), "{:?}", result);
+}
+
+#[test]
+fn type_for_each_indexed_break_outside_loop_error() {
+    let result = check("break");
+    assert!(result.is_err());
+}
+
+// --- Interpreter ---
+
+#[test]
+fn interp_for_each_indexed_basic_index() {
+    let out = vm_run(
+        "let a = [10, 20, 30]\nlet mut sum: Number = 0\nfor i, v in a { sum += i }\nprint(sum)",
+    );
+    // i = 0 + 1 + 2 = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_for_each_indexed_basic_values() {
+    let out =
+        vm_run("let a = [10, 20, 30]\nlet mut s: Number = 0\nfor i, v in a { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["60"]);
+}
+
+#[test]
+fn interp_for_each_indexed_index_starts_at_zero() {
+    let out = vm_run("let a = [99]\nfor i, v in a { print(i) }");
+    assert_eq!(out.unwrap(), vec!["0"]);
+}
+
+#[test]
+fn interp_for_each_indexed_index_increments() {
+    let out = vm_run("let a = [10, 20, 30]\nfor i, v in a { print(i) }");
+    assert_eq!(out.unwrap(), vec!["0", "1", "2"]);
+}
+
+#[test]
+fn interp_for_each_indexed_elem_values() {
+    let out = vm_run("let a = [10, 20, 30]\nfor i, v in a { print(v) }");
+    assert_eq!(out.unwrap(), vec!["10", "20", "30"]);
+}
+
+#[test]
+fn interp_for_each_indexed_print_both() {
+    let out = vm_run("let a = [\"a\", \"b\"]\nfor i, v in a { print(i)\nprint(v) }");
+    assert_eq!(out.unwrap(), vec!["0", "a", "1", "b"]);
+}
+
+#[test]
+fn interp_for_each_indexed_empty_array_zero_iterations() {
+    let out = vm_run("let mut a: Array<Number> = []\nlet mut count: Number = 0\nfor i, v in a { count += 1 }\nprint(count)");
+    assert_eq!(out.unwrap(), vec!["0"]);
+}
+
+#[test]
+fn interp_for_each_indexed_single_element() {
+    let out = vm_run("let a = [42]\nfor i, v in a { print(i)\nprint(v) }");
+    assert_eq!(out.unwrap(), vec!["0", "42"]);
+}
+
+#[test]
+fn interp_for_each_indexed_snapshot_semantics() {
+    // Mutations to outer array inside loop don't affect iteration count
+    let out = vm_run("let mut a = [1, 2, 3]\nlet mut count: Number = 0\nfor i, v in a { count += 1\npush(a, 99) }\nprint(count)");
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_for_each_indexed_can_mutate_outer_var() {
+    let out =
+        vm_run("let a = [1, 2, 3]\nlet mut s: Number = 0\nfor i, v in a { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["6"]);
+}
+
+#[test]
+fn interp_for_each_indexed_index_and_elem_sum() {
+    // sum of (i * v) for [10, 20, 30]: 0*10 + 1*20 + 2*30 = 80
+    let out = vm_run(
+        "let a = [10, 20, 30]\nlet mut s: Number = 0\nfor i, v in a { s += i * v }\nprint(s)",
+    );
+    assert_eq!(out.unwrap(), vec!["80"]);
+}
+
+#[test]
+fn interp_for_each_indexed_break() {
+    // Break at i == 1: only first element counted
+    let out = vm_run("let a = [10, 20, 30]\nlet mut s: Number = 0\nfor i, v in a { if i == 1 { break }\ns += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["10"]);
+}
+
+#[test]
+fn interp_for_each_indexed_continue() {
+    // Skip i == 1: sum = 10 + 30 = 40
+    let out = vm_run("let a = [10, 20, 30]\nlet mut s: Number = 0\nfor i, v in a { if i == 1 { continue }\ns += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["40"]);
+}
+
+#[test]
+fn interp_for_each_indexed_text_array() {
+    let out = vm_run("let words = [\"hello\", \"world\"]\nfor i, w in words { print(i) }");
+    assert_eq!(out.unwrap(), vec!["0", "1"]);
+}
+
+#[test]
+fn interp_for_each_indexed_collect_indices() {
+    // Build array of indices
+    let out = vm_run("let a = [10, 20, 30]\nlet mut idxs: Array<Number> = []\nfor i, v in a { push(idxs, i) }\nprint(len(idxs))");
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn interp_for_each_indexed_build_from_values() {
+    // Filter values where v > 15
+    let out = vm_run("let a = [10, 20, 30]\nlet mut big: Array<Number> = []\nfor i, v in a { if v > 15 { push(big, v) } }\nprint(len(big))");
+    assert_eq!(out.unwrap(), vec!["2"]);
+}
+
+#[test]
+fn interp_for_each_indexed_nested_loops() {
+    // Nested indexed for-each
+    let out = vm_run("let a = [1, 2]\nlet b = [3, 4]\nlet mut s: Number = 0\nfor i, x in a { for j, y in b { s += x * y } }\nprint(s)");
+    // (1*3 + 1*4) + (2*3 + 2*4) = 7 + 14 = 21
+    assert_eq!(out.unwrap(), vec!["21"]);
+}
+
+#[test]
+fn interp_for_each_indexed_return_from_function() {
+    let out = vm_run("fn find_first(arr: Array<Number>, target: Number) -> Number {\n  for i, v in arr {\n    if v == target {\n      return i\n    }\n  }\n  return -1\n}\nprint(find_first([10, 20, 30], 20))");
+    assert_eq!(out.unwrap(), vec!["1"]);
+}
+
+#[test]
+fn interp_for_each_indexed_not_found_returns_neg_one() {
+    let out = vm_run("fn find_first(arr: Array<Number>, target: Number) -> Number {\n  for i, v in arr {\n    if v == target {\n      return i\n    }\n  }\n  return -1\n}\nprint(find_first([10, 20, 30], 99))");
+    assert_eq!(out.unwrap(), vec!["-1"]);
+}
+
+#[test]
+fn interp_for_each_indexed_map_index_update() {
+    // Use index to update outer mutable array
+    let out = vm_run("let src = [1, 2, 3]\nlet mut dst = [0, 0, 0]\nfor i, v in src { dst[i] = v * 2 }\nprint(dst[0])\nprint(dst[1])\nprint(dst[2])");
+    assert_eq!(out.unwrap(), vec!["2", "4", "6"]);
+}
+
+// --- VM parity ---
+
+#[test]
+fn vm_for_each_indexed_basic_sum() {
+    let out = vm_run(
+        "let a = [1, 2, 3, 4, 5]\nlet mut s: Number = 0\nfor i, v in a { s += v }\nprint(s)",
+    );
+    assert_eq!(out.unwrap(), vec!["15"]);
+}
+
+#[test]
+fn vm_for_each_indexed_index_values() {
+    let out = vm_run("let a = [10, 20, 30]\nfor i, v in a { print(i) }");
+    assert_eq!(out.unwrap(), vec!["0", "1", "2"]);
+}
+
+#[test]
+fn vm_for_each_indexed_elem_values() {
+    let out = vm_run("let a = [10, 20, 30]\nfor i, v in a { print(v) }");
+    assert_eq!(out.unwrap(), vec!["10", "20", "30"]);
+}
+
+#[test]
+fn vm_for_each_indexed_empty() {
+    let out = vm_run(
+        "let mut a: Array<Number> = []\nlet mut c: Number = 0\nfor i, v in a { c += 1 }\nprint(c)",
+    );
+    assert_eq!(out.unwrap(), vec!["0"]);
+}
+
+#[test]
+fn vm_for_each_indexed_break() {
+    let out = vm_run("let a = [1, 2, 3]\nlet mut s: Number = 0\nfor i, v in a { if i == 2 { break }\ns += v }\nprint(s)");
+    // break when i==2: sum = 1 + 2 = 3
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_for_each_indexed_continue() {
+    let out = vm_run("let a = [1, 2, 3]\nlet mut s: Number = 0\nfor i, v in a { if i == 1 { continue }\ns += v }\nprint(s)");
+    // skip i==1: sum = 1 + 3 = 4
+    assert_eq!(out.unwrap(), vec!["4"]);
+}
+
+#[test]
+fn vm_for_each_indexed_snapshot() {
+    let out = vm_run("let mut a = [1, 2, 3]\nlet mut c: Number = 0\nfor i, v in a { c += 1\npush(a, 0) }\nprint(c)");
+    assert_eq!(out.unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_for_each_indexed_text_array() {
+    let out = vm_run("let s = [\"a\", \"b\", \"c\"]\nfor i, ch in s { print(i) }");
+    assert_eq!(out.unwrap(), vec!["0", "1", "2"]);
+}
+
+// --- Keys/values indexed iteration ---
+
+#[test]
+fn interp_for_each_indexed_over_keys() {
+    let out = vm_run("let m = {\"alice\": 1, \"bob\": 2}\nlet ks = keys(m)\nlet mut s: Number = 0\nfor i, k in ks { s += i }\nprint(s)");
+    // 0 + 1 = 1
+    assert_eq!(out.unwrap(), vec!["1"]);
+}
+
+#[test]
+fn interp_for_each_indexed_over_values() {
+    let out = vm_run("let m = {\"a\": 10, \"b\": 20}\nlet vs = values(m)\nlet mut s: Number = 0\nfor i, v in vs { s += v }\nprint(s)");
+    assert_eq!(out.unwrap(), vec!["30"]);
+}
+
+// --- Simulate ---
+
+#[test]
+fn simulate_for_each_indexed_body() {
+    let out = vm_run("let a = [1, 2, 3]\nlet d: seconds = 1\nlet dt: seconds = 1\nsimulate d step dt {\n  let mut s: Number = 0\n  for i, v in a { s += i * v }\n  print(s)\n}");
+    // 0*1 + 1*2 + 2*3 = 8
+    assert_eq!(out.unwrap(), vec!["8"]);
+}
+
+// --- Disassembler ---
+
+#[test]
+fn bytecode_for_each_indexed_compiles() {
+    let out_str = {
+        use crate::disassemble::disassemble;
+        let prog = compile_prog("let a = [1, 2, 3]\nfor i, v in a { }");
+        disassemble(&prog)
+    };
+    assert!(out_str.contains("__kimin_foreach_iter_"));
+    assert!(out_str.contains("__kimin_foreach_idx_"));
+}
+
+#[test]
+fn bytecode_for_each_indexed_has_index_name_in_output() {
+    let out_str = {
+        use crate::disassemble::disassemble;
+        let prog = compile_prog("let a = [1, 2]\nfor idx, val in a { }");
+        disassemble(&prog)
+    };
+    assert!(out_str.contains("idx"));
+    assert!(out_str.contains("val"));
+}
+
+#[test]
+fn bytecode_for_each_indexed_nested_unique_sentinels() {
+    let out_str = {
+        use crate::disassemble::disassemble;
+        let prog = compile_prog("let a = [1, 2]\nfor i, x in a { for j, y in a { } }");
+        disassemble(&prog)
+    };
+    assert!(out_str.contains("__kimin_foreach_iter_0"));
+    assert!(out_str.contains("__kimin_foreach_idx_0"));
+    // inner loop uses a different sentinel N
+    assert!(
+        out_str.contains("__kimin_foreach_iter_2") || out_str.contains("__kimin_foreach_iter_3")
+    );
+}
+
+// --- Interop with non-indexed for-each ---
+
+#[test]
+fn for_each_indexed_and_for_each_coexist() {
+    let out = vm_run("let a = [10, 20, 30]\nlet mut s1: Number = 0\nfor v in a { s1 += v }\nlet mut s2: Number = 0\nfor i, v in a { s2 += i }\nprint(s1)\nprint(s2)");
+    // s1 = 60, s2 = 0+1+2 = 3
+    assert_eq!(out.unwrap(), vec!["60", "3"]);
+}
+
+#[test]
+fn for_each_indexed_inside_for_each() {
+    let out = vm_run("let a = [1, 2]\nlet b = [10, 20, 30]\nlet mut s: Number = 0\nfor v in a { for i, w in b { s += i } }\nprint(s)");
+    // Each outer iteration: i = 0+1+2 = 3. Two outer iterations: 6
+    assert_eq!(out.unwrap(), vec!["6"]);
+}
+
+#[test]
+fn for_each_inside_for_each_indexed() {
+    let out = vm_run("let a = [1, 2]\nlet b = [10, 20]\nlet mut s: Number = 0\nfor i, v in a { for w in b { s += i } }\nprint(s)");
+    // i=0: 0+0=0; i=1: 1+1=2; total = 2
+    assert_eq!(out.unwrap(), vec!["2"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn for_each_indexed_duplicate_name_error_message() {
+    let result = check("let a = [1]\nfor x, x in a { }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("distinct"), "msg: {}", msg);
+}
+
+#[test]
+fn for_each_indexed_non_array_error_message() {
+    let result = check("for i, v in 42 { }");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("Array"), "msg: {}", msg);
+}

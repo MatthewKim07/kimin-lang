@@ -1,0 +1,30 @@
+// for_each_indexed_maps.kimin — indexed for-each over map keys and values
+
+let scores = {"alice": 85, "bob": 92, "carol": 78}
+
+// Iterate keys with index
+let ks = keys(scores)
+for i, k in ks {
+    print(i)
+    print(k)
+}
+
+// Iterate values with index
+let vs = values(scores)
+let mut total: Number = 0
+for i, v in vs {
+    total += v
+}
+print(total)
+
+// Find highest score index
+let mut best_idx: Number = 0
+let mut best_score: Number = 0
+for i, v in vs {
+    if v > best_score {
+        best_score = v
+        best_idx = i
+    }
+}
+print(best_idx)
+print(best_score)
