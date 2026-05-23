@@ -23,6 +23,9 @@ pub struct BytecodeCompiler {
     /// Names defined at global scope (depth 0). Used to correctly classify variable
     /// references inside blocks as GLOBAL or LOCAL regardless of current scope depth.
     globals: HashSet<String>,
+    /// Names of declared state machine types. Used to distinguish state variant access
+    /// (`Door.closed` → LoadState) from struct field access (`u.name` → Load + FieldAccess).
+    state_types: HashSet<String>,
     /// Stack of locally-defined name sets, one entry per active block scope. The
     /// innermost scope is at the end. A name present in any layer here is LOCAL; a name
     /// in `globals` that is absent from all layers is GLOBAL.
@@ -40,6 +43,7 @@ impl BytecodeCompiler {
         BytecodeCompiler {
             chunk: Chunk::new(),
             globals: HashSet::new(),
+            state_types: HashSet::new(),
             locals_stack: Vec::new(),
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
@@ -49,11 +53,16 @@ impl BytecodeCompiler {
 
     /// Creates a compiler seeded for a function body. Parameters are pre-loaded as
     /// the innermost local scope so they resolve to LoadLocal inside the body.
-    fn new_for_function(globals: HashSet<String>, params: &[Param]) -> Self {
+    fn new_for_function(
+        globals: HashSet<String>,
+        state_types: HashSet<String>,
+        params: &[Param],
+    ) -> Self {
         let param_scope: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
         BytecodeCompiler {
             chunk: Chunk::new(),
             globals,
+            state_types,
             locals_stack: vec![param_scope],
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
@@ -63,14 +72,12 @@ impl BytecodeCompiler {
 
     /// Creates a compiler seeded for a simulate body. `"time"` is pre-loaded as
     /// the innermost local scope so it resolves to LoadLocal inside the body.
-    /// Outer variables (from globals) remain accessible as globals.
-    /// Note: variables from enclosing block scopes (outer locals) are not
-    /// accessible — only top-level (global) outer variables work.
-    fn new_for_simulate(globals: HashSet<String>) -> Self {
+    fn new_for_simulate(globals: HashSet<String>, state_types: HashSet<String>) -> Self {
         let time_scope: HashSet<String> = ["time".to_string()].into_iter().collect();
         BytecodeCompiler {
             chunk: Chunk::new(),
             globals,
+            state_types,
             locals_stack: vec![time_scope],
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
@@ -269,7 +276,11 @@ impl BytecodeCompiler {
                 // Register in globals before compiling body so recursive calls resolve correctly.
                 self.globals.insert(name.clone());
 
-                let fn_compiler = BytecodeCompiler::new_for_function(self.globals.clone(), params);
+                let fn_compiler = BytecodeCompiler::new_for_function(
+                    self.globals.clone(),
+                    self.state_types.clone(),
+                    params,
+                );
                 let (fn_chunk, nested_fns, nested_sims) =
                     fn_compiler.compile_function_body(body)?;
 
@@ -301,6 +312,7 @@ impl BytecodeCompiler {
                 transitions,
                 ..
             } => {
+                self.state_types.insert(name.clone());
                 self.chunk.emit(Instruction::DefineState {
                     name: name.clone(),
                     variants: variants.iter().map(|v| v.name.clone()).collect(),
@@ -309,6 +321,10 @@ impl BytecodeCompiler {
                         .map(|t| (t.from.clone(), t.to.clone()))
                         .collect(),
                 });
+            }
+
+            Stmt::StructDecl { .. } => {
+                // Struct declarations are purely static — no bytecode needed.
             }
 
             Stmt::Transition {
@@ -787,7 +803,10 @@ impl BytecodeCompiler {
                 // Compile body with a child compiler that knows about globals and has
                 // "time" as a pre-seeded local. Variables from enclosing block-local scopes
                 // are not accessible from simulate bodies — only top-level globals are.
-                let body_compiler = BytecodeCompiler::new_for_simulate(self.globals.clone());
+                let body_compiler = BytecodeCompiler::new_for_simulate(
+                    self.globals.clone(),
+                    self.state_types.clone(),
+                );
                 let (body_chunk, nested_fns, nested_sims) =
                     body_compiler.compile_simulate_body(body)?;
 
@@ -1011,10 +1030,39 @@ impl BytecodeCompiler {
                 variant_name,
                 ..
             } => {
-                self.chunk.emit(Instruction::LoadState {
-                    state_name: state_name.clone(),
-                    variant_name: variant_name.clone(),
+                if self.state_types.contains(state_name) {
+                    // State machine variant literal (e.g. `Door.closed`).
+                    self.chunk.emit(Instruction::LoadState {
+                        state_name: state_name.clone(),
+                        variant_name: variant_name.clone(),
+                    });
+                } else {
+                    // Struct field access (e.g. `u.name`).
+                    if self.is_local(state_name) {
+                        self.chunk.emit(Instruction::LoadLocal(state_name.clone()));
+                    } else {
+                        self.chunk.emit(Instruction::LoadGlobal(state_name.clone()));
+                    }
+                    self.chunk
+                        .emit(Instruction::FieldAccess(variant_name.clone()));
+                }
+            }
+
+            Expr::StructLiteral { name, fields, .. } => {
+                // Compile field values in source order; VM pops in LIFO then reverses.
+                for (_, field_expr) in fields {
+                    self.compile_expr(field_expr)?;
+                }
+                let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                self.chunk.emit(Instruction::StructLiteral {
+                    name: name.clone(),
+                    fields: field_names,
                 });
+            }
+
+            Expr::FieldAccess { object, field, .. } => {
+                self.compile_expr(object)?;
+                self.chunk.emit(Instruction::FieldAccess(field.clone()));
             }
         }
         Ok(())

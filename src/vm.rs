@@ -1154,6 +1154,42 @@ impl Vm {
                     stack.push(removed);
                 }
 
+                Instruction::StructLiteral { name, fields } => {
+                    let count = fields.len();
+                    let mut vals: Vec<Value> = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        vals.push(pop(stack)?);
+                    }
+                    vals.reverse(); // restore source order
+                    let mut field_map = std::collections::BTreeMap::new();
+                    for (field_name, val) in fields.iter().zip(vals.into_iter()) {
+                        field_map.insert(field_name.clone(), val);
+                    }
+                    stack.push(Value::Struct {
+                        name: name.clone(),
+                        fields: field_map,
+                    });
+                }
+
+                Instruction::FieldAccess(field) => {
+                    let val = pop(stack)?;
+                    match val {
+                        Value::Struct { fields, .. } => {
+                            let v = fields.get(&field).ok_or_else(|| {
+                                runtime_err(&format!("struct has no field '{}'", field))
+                            })?;
+                            stack.push(v.clone());
+                        }
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "cannot access field '{}' on {}",
+                                field,
+                                other.type_name()
+                            )));
+                        }
+                    }
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

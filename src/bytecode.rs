@@ -165,6 +165,19 @@ pub enum Instruction {
     /// Missing key → RuntimeError.
     RemoveKey(String),
 
+    /// Construct a struct value from field values on the stack.
+    /// Field values are pushed in source order (left-to-right). VM pops them in LIFO
+    /// order (reverses to restore source order) and maps each to its declared field name.
+    /// Stack: [..., val1, val2, ... valN] → Struct { name, fields: { f1:v1, f2:v2, ... } }
+    StructLiteral {
+        name: String,
+        fields: Vec<String>,
+    },
+
+    /// Read a named field from a struct value on the stack.
+    /// Stack: [..., struct_value] → field_value.
+    FieldAccess(String),
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }

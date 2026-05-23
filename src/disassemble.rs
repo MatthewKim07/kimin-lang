@@ -157,6 +157,10 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Keys => "KEYS".to_string(),
         Instruction::Values => "VALUES".to_string(),
         Instruction::RemoveKey(name) => format!("REMOVE_KEY {}", name),
+        Instruction::StructLiteral { name, fields } => {
+            format!("STRUCT_LITERAL {} fields=[{}]", name, fields.join(", "))
+        }
+        Instruction::FieldAccess(field) => format!("FIELD_ACCESS {}", field),
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }
