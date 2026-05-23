@@ -31872,3 +31872,280 @@ fn vm_state_variant_still_works_after_structs() {
     assert_eq!(out, vec!["Light.green", "5"]);
 }
 
+// --- Section 10: Functions and closures ---
+
+#[test]
+fn type_fn_return_struct_ok() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn make(a: Number, b: Number) -> Pt { return Pt { x: a, y: b } }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_fn_param_struct_ok() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn get_x(p: Pt) -> Number { return p.x }
+        let p = Pt { x: 3, y: 4 }
+        let x = get_x(p)
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn interp_fn_return_struct() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn make(a: Number, b: Number) -> Pt { return Pt { x: a, y: b } }
+        let p = make(3, 4)
+        let px = p.x
+        let py = p.y
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("px"), Some(Value::Number(3.0)));
+    assert_eq!(interp.get_var("py"), Some(Value::Number(4.0)));
+}
+
+#[test]
+fn interp_fn_param_struct() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn sum(p: Pt) -> Number { return p.x + p.y }
+        let p = Pt { x: 10, y: 5 }
+        let s = sum(p)
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Number(15.0)));
+}
+
+#[test]
+fn interp_closure_captures_struct() {
+    // Function closes over a struct value from the enclosing scope
+    let src = r#"
+        struct Pt { x: Number }
+        let origin = Pt { x: 10 }
+        fn get_x() -> Number { return origin.x }
+        let result = get_x()
+    "#;
+    let interp = run(src).unwrap();
+    assert_eq!(interp.get_var("result"), Some(Value::Number(10.0)));
+}
+
+#[test]
+fn vm_fn_return_struct() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn make(a: Number, b: Number) -> Pt { return Pt { x: a, y: b } }
+        let p = make(3, 4)
+        print(p.x)
+        print(p.y)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3", "4"]);
+}
+
+#[test]
+fn vm_fn_param_struct() {
+    let src = r#"
+        struct Pt { x: Number, y: Number }
+        fn sum(p: Pt) -> Number { return p.x + p.y }
+        let p = Pt { x: 10, y: 5 }
+        print(sum(p))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_closure_captures_struct() {
+    let src = r#"
+        struct Pt { x: Number }
+        let origin = Pt { x: 10 }
+        fn get_x() -> Number { return origin.x }
+        print(get_x())
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+// --- Section 11: Collections interaction ---
+
+#[test]
+fn type_struct_array_field_ok() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [1, 2, 3] }
+        let first = c.items[0]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_struct_map_field_ok() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1} }
+        let v = r.data["a"]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn vm_struct_array_field_for_each() {
+    let src = r#"
+        struct Container { items: Array<Number> }
+        let c = Container { items: [1, 2, 3] }
+        let mut sum = 0
+        for item in c.items {
+            sum = sum + item
+        }
+        print(sum)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_struct_map_field_lookup() {
+    let src = r#"
+        struct Registry { data: Map<Text, Number> }
+        let r = Registry { data: {"a": 1, "b": 2} }
+        print(r.data["a"])
+        print(has_key(r.data, "b"))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["1", "true"]);
+}
+
+#[test]
+fn type_array_of_struct_ok() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p1 = Pt { x: 1 }
+        let p2 = Pt { x: 2 }
+        let pts = [p1, p2]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn for_each_array_of_struct() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p1 = Pt { x: 1 }
+        let p2 = Pt { x: 2 }
+        let p3 = Pt { x: 3 }
+        let pts = [p1, p2, p3]
+        let mut sum = 0
+        for pt in pts {
+            sum = sum + pt.x
+        }
+        print(sum)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn indexed_for_each_array_of_struct() {
+    let src = r#"
+        struct Pt { x: Number }
+        let p1 = Pt { x: 10 }
+        let p2 = Pt { x: 20 }
+        let pts = [p1, p2]
+        for i, pt in pts {
+            print(i)
+            print(pt.x)
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["0", "10", "1", "20"]);
+}
+
+// --- Section 12: Units and states interaction ---
+
+#[test]
+fn type_struct_unit_fields_ok() {
+    let src = r#"
+        struct Particle { mass: kilograms, speed: meters }
+        let mass: kilograms = 1
+        let speed: meters = 5
+        let p = Particle { mass: mass, speed: speed }
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn interp_struct_unit_fields_arithmetic() {
+    let src = r#"
+        struct Particle { speed: meters }
+        let speed: meters = 5
+        let p = Particle { speed: speed }
+        let doubled: meters = p.speed + p.speed
+        print(doubled)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_struct_unit_fields_arithmetic() {
+    let src = r#"
+        struct Vel { v: meters }
+        let v: meters = 3
+        let vel = Vel { v: v }
+        let total: meters = vel.v + vel.v
+        print(total)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Section 13: Field mutation unsupported ---
+
+#[test]
+fn field_assignment_rejected() {
+    // `u.name = "bob"` must fail — ParseError since parser can't parse `u.name = ...`
+    let src = r#"
+        struct User { name: Text }
+        let mut u = User { name: "alice" }
+        u.name = "bob"
+    "#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn field_compound_assignment_rejected() {
+    // `u.score += 1` must fail — ParseError
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let mut u = User { name: "alice", score: 10 }
+        u.score += 1
+    "#;
+    assert!(check(src).is_err());
+}
+
+#[test]
+fn array_index_assignment_still_ok_after_structs() {
+    let src = r#"
+        let mut arr = [1, 2, 3]
+        arr[0] = 99
+        print(arr[0])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn map_index_assignment_still_ok_after_structs() {
+    let src = r#"
+        let mut m: Map<Text, Number> = {"a": 1}
+        m["b"] = 2
+        print(m["b"])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
