@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::{AssignTarget, BinaryOp, CompoundAssignOp, Expr, Stmt, UnaryOp};
@@ -6,12 +7,6 @@ use crate::env::{Env, EnvRef};
 use crate::error::RuntimeError;
 use crate::value::{FunctionValue, Value};
 
-/// Internal control-flow signal used to propagate `return`, `break`, and `continue`
-/// through nested statements.
-/// - Normal:   keep executing statements (was previously named `Continue`)
-/// - Return:   propagate return value out to the enclosing function call
-/// - Break:    exit the nearest enclosing while loop
-/// - Continue: skip remainder of current while-body iteration
 enum ExecFlow {
     Normal,
     Return(Value),
@@ -21,12 +16,15 @@ enum ExecFlow {
 
 pub struct Interpreter {
     env: EnvRef,
+    /// Method registry: struct_name → method_name → FunctionValue (with self as first param).
+    methods: HashMap<String, HashMap<String, FunctionValue>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
             env: Env::new_global(),
+            methods: HashMap::new(),
         }
     }
 
@@ -370,6 +368,32 @@ impl Interpreter {
 
             Stmt::StructDecl { .. } => {
                 // Struct declarations are purely static — no runtime work.
+                Ok(ExecFlow::Normal)
+            }
+
+            Stmt::ImplBlock {
+                struct_name,
+                methods: method_stmts,
+                ..
+            } => {
+                // Register each method as a FunctionValue (self is the first param).
+                for method_stmt in method_stmts {
+                    if let Stmt::FnDecl {
+                        name, params, body, ..
+                    } = method_stmt
+                    {
+                        let fv = FunctionValue {
+                            name: name.clone(),
+                            params: params.iter().map(|p| p.name.clone()).collect(),
+                            body: body.clone(),
+                            closure_env: Rc::clone(&self.env),
+                        };
+                        self.methods
+                            .entry(struct_name.clone())
+                            .or_default()
+                            .insert(name.clone(), fv);
+                    }
+                }
                 Ok(ExecFlow::Normal)
             }
 
@@ -796,6 +820,43 @@ impl Interpreter {
                         msg: format!("cannot access field '{}' on {}", field, other.type_name()),
                     }),
                 }
+            }
+
+            Expr::MethodCall {
+                object,
+                method,
+                args,
+                ..
+            } => {
+                let receiver = self.eval_expr(object)?;
+                let struct_name = match &receiver {
+                    Value::Struct { name, .. } => name.clone(),
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "cannot call method '{}' on {}",
+                                method,
+                                other.type_name()
+                            ),
+                        })
+                    }
+                };
+                // Clone FunctionValue to release borrow on self.methods before calling.
+                let fv = self
+                    .methods
+                    .get(&struct_name)
+                    .and_then(|m| m.get(method))
+                    .cloned()
+                    .ok_or_else(|| RuntimeError {
+                        msg: format!("struct '{}' has no method '{}'", struct_name, method),
+                    })?;
+
+                // Build args: receiver (self) first, then explicit args.
+                let mut call_args = vec![receiver];
+                for arg in args {
+                    call_args.push(self.eval_expr(arg)?);
+                }
+                self.call_function(&fv, call_args)
             }
 
             Expr::Variable { name, .. } => {

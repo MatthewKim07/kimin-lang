@@ -120,6 +120,14 @@ pub struct StructInfo {
     pub fields: BTreeMap<String, Type>,
 }
 
+/// Static description of a method registered by an `impl` block.
+#[derive(Clone)]
+struct MethodInfo {
+    /// All params including `("self", Struct type)` as first element.
+    params: Vec<(String, Type)>,
+    return_type: Type,
+}
+
 /// Type and optional known-state-variant for a single variable binding.
 #[derive(Debug, Clone)]
 pub struct VarInfo {
@@ -277,9 +285,9 @@ pub struct TypeChecker {
     states: HashMap<String, StateMachineType>,
     /// Registry of declared struct types. Populated by struct declaration pre-pass.
     structs: HashMap<String, StructInfo>,
+    /// Registry of declared methods: struct_name → method_name → MethodInfo.
+    methods: HashMap<String, HashMap<String, MethodInfo>>,
     /// Number of while loops currently enclosing the statement being checked.
-    /// `break`/`continue` require this to be > 0.
-    /// Reset to 0 on entry to a function or simulate body.
     loop_depth: usize,
 }
 
@@ -290,6 +298,7 @@ impl TypeChecker {
             current_fn_return_type: None,
             states: HashMap::new(),
             structs: HashMap::new(),
+            methods: HashMap::new(),
             loop_depth: 0,
         }
     }
@@ -321,7 +330,7 @@ impl TypeChecker {
                 self.register_struct(name, fields, *span)?;
             }
         }
-        // Pass 2: register function signatures.
+        // Pass 2: register function signatures and method signatures.
         for stmt in stmts {
             if let Stmt::FnDecl {
                 name,
@@ -333,6 +342,14 @@ impl TypeChecker {
             {
                 let ty = self.build_fn_type(params, return_type.as_ref(), *span)?;
                 self.env.define(name.clone(), ty);
+            }
+            if let Stmt::ImplBlock {
+                struct_name,
+                methods,
+                span,
+            } = stmt
+            {
+                self.register_methods(struct_name, methods, *span)?;
             }
         }
         // Pass 3: check all statements.
@@ -448,6 +465,72 @@ impl TypeChecker {
         Ok(())
     }
 
+    fn register_methods(
+        &mut self,
+        struct_name: &str,
+        methods: &[Stmt],
+        span: Span,
+    ) -> Result<(), TypeError> {
+        if !self.structs.contains_key(struct_name) {
+            return Err(TypeError {
+                msg: format!(
+                    "cannot implement methods for unknown struct '{}'",
+                    struct_name
+                ),
+                line: span.line,
+                col: span.col,
+            });
+        }
+        for method in methods {
+            if let Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                span: mspan,
+                ..
+            } = method
+            {
+                if params.is_empty() || params[0].name != "self" {
+                    return Err(TypeError {
+                        msg: format!("method '{}' must declare 'self' as first parameter", name),
+                        line: mspan.line,
+                        col: mspan.col,
+                    });
+                }
+                let ret_ty = match return_type.as_ref() {
+                    Some(ann) => self.resolve_annotation(ann, *mspan)?,
+                    None => Type::Nil,
+                };
+                let param_types: Vec<Type> = params
+                    .iter()
+                    .map(|p| self.resolve_annotation(&p.ty, *mspan))
+                    .collect::<Result<_, _>>()?;
+                let method_params: Vec<(String, Type)> = params
+                    .iter()
+                    .zip(param_types.iter())
+                    .map(|(p, t)| (p.name.clone(), t.clone()))
+                    .collect();
+
+                let struct_methods = self.methods.entry(struct_name.to_string()).or_default();
+                if struct_methods.contains_key(name) {
+                    return Err(TypeError {
+                        msg: format!("duplicate method '{}' for struct '{}'", name, struct_name),
+                        line: mspan.line,
+                        col: mspan.col,
+                    });
+                }
+                struct_methods.insert(
+                    name.clone(),
+                    MethodInfo {
+                        params: method_params,
+                        return_type: ret_ty,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match stmt {
             Stmt::StateDecl { .. } => {
@@ -457,6 +540,57 @@ impl TypeChecker {
 
             Stmt::StructDecl { .. } => {
                 // Already registered in the pre-pass; nothing more to do.
+                Ok(())
+            }
+
+            Stmt::ImplBlock {
+                struct_name,
+                methods,
+                span,
+            } => {
+                // Methods registered in pre-pass. Now type-check each method body.
+                for method in methods {
+                    if let Stmt::FnDecl {
+                        name: _,
+                        params,
+                        return_type,
+                        body,
+                        span: mspan,
+                    } = method
+                    {
+                        let ret_ty = match return_type.as_ref() {
+                            Some(ann) => self.resolve_annotation(ann, *mspan)?,
+                            None => Type::Nil,
+                        };
+
+                        let saved_ret = self.current_fn_return_type.take();
+                        self.current_fn_return_type = Some(ret_ty);
+
+                        self.env.push_scope();
+                        // self is immutable; type is the struct
+                        self.env.define_with_variant(
+                            "self".to_string(),
+                            Type::Struct(struct_name.clone()),
+                            None,
+                            false,
+                        );
+                        // Remaining params (skip self at index 0)
+                        for param in params.iter().skip(1) {
+                            let ty = self.resolve_annotation(&param.ty, *mspan)?;
+                            self.env.define(param.name.clone(), ty);
+                        }
+
+                        let saved_loop = self.loop_depth;
+                        self.loop_depth = 0;
+                        let result = self.check_stmt_list(body);
+                        self.loop_depth = saved_loop;
+
+                        self.env.pop_scope();
+                        self.current_fn_return_type = saved_ret;
+                        result?;
+                    }
+                }
+                let _ = (struct_name, span);
                 Ok(())
             }
 
@@ -1572,6 +1706,76 @@ impl TypeChecker {
                     line: span.line,
                     col: span.col,
                 })
+            }
+
+            Expr::MethodCall {
+                object,
+                method,
+                args,
+                span,
+            } => {
+                let obj_ty = self.check_expr(object, *span)?;
+                if obj_ty.is_unknown() {
+                    for arg in args {
+                        self.check_expr(arg, *span)?;
+                    }
+                    return Ok(Type::Unknown);
+                }
+                let struct_name = match &obj_ty {
+                    Type::Struct(s) => s.clone(),
+                    other => {
+                        return Err(TypeError {
+                            msg: format!("cannot call method '{}' on {}", method, other.name()),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                };
+                let method_info = self
+                    .methods
+                    .get(&struct_name)
+                    .and_then(|m| m.get(method))
+                    .cloned()
+                    .ok_or_else(|| TypeError {
+                        msg: format!("struct '{}' has no method '{}'", struct_name, method),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                // params[0] is self; explicit args map to params[1..]
+                let explicit_params = &method_info.params[1..];
+                if args.len() != explicit_params.len() {
+                    return Err(TypeError {
+                        msg: format!(
+                            "method '{}' expects {} argument(s), got {}",
+                            method,
+                            explicit_params.len(),
+                            args.len()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                for (arg, (_, param_ty)) in args.iter().zip(explicit_params.iter()) {
+                    let arg_ty = self.check_expr(arg, *span)?;
+                    let compatible = arg_ty.is_unknown()
+                        || param_ty.is_unknown()
+                        || arg_ty == *param_ty
+                        || (matches!(param_ty, Type::NumberWithUnit(_)) && arg_ty == Type::Number);
+                    if !compatible {
+                        return Err(TypeError {
+                            msg: format!(
+                                "method '{}' argument expected {}, got {}",
+                                method,
+                                param_ty.name(),
+                                arg_ty.name()
+                            ),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                }
+                Ok(method_info.return_type.clone())
             }
 
             Expr::Grouping(inner) => self.check_expr(inner, context_span),
