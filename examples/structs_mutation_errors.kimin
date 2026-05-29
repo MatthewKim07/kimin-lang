@@ -1,0 +1,21 @@
+// Runnable demonstration of valid field mutation.
+// Commented sections show TypeError examples.
+
+struct User {
+  name: Text
+  score: Number
+}
+
+let mut u = User { name: "alice", score: 10 }
+u.score += 1
+print(u.score)
+
+// Uncomment to test immutable struct:
+// let bad = User { name: "alice", score: 10 }
+// bad.score = 20
+
+// Uncomment to test unknown field:
+// u.age = 20
+
+// Uncomment to test wrong value type:
+// u.score = "high"

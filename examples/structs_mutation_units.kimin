@@ -1,0 +1,13 @@
+struct Position {
+  x: meters
+}
+
+let a: meters = 3
+let b: meters = 4
+
+let mut p = Position { x: a }
+
+p.x = b
+p.x += a
+
+print(p.x)

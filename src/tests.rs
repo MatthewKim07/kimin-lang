@@ -17969,6 +17969,8 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Map { .. }
             | crate::bytecode::Instruction::StructLiteral { .. }
             | crate::bytecode::Instruction::FieldAccess(_)
+            | crate::bytecode::Instruction::SetField { .. }
+            | crate::bytecode::Instruction::FieldCompoundAssign { .. }
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -32103,28 +32105,28 @@ fn vm_struct_unit_fields_arithmetic() {
     assert_eq!(out, vec!["6"]);
 }
 
-// --- Section 13: Field mutation unsupported ---
+// --- Section 13: Field mutation (M15B) ---
 
 #[test]
-fn field_assignment_rejected() {
-    // `u.name = "bob"` must fail — ParseError since parser can't parse `u.name = ...`
+fn field_assignment_accepted() {
+    // `u.name = "bob"` must now succeed (M15B).
     let src = r#"
         struct User { name: Text }
         let mut u = User { name: "alice" }
         u.name = "bob"
     "#;
-    assert!(check(src).is_err());
+    assert!(check(src).is_ok());
 }
 
 #[test]
-fn field_compound_assignment_rejected() {
-    // `u.score += 1` must fail — ParseError
+fn field_compound_assignment_accepted() {
+    // `u.score += 1` must now succeed (M15B).
     let src = r#"
         struct User { name: Text, score: Number }
         let mut u = User { name: "alice", score: 10 }
         u.score += 1
     "#;
-    assert!(check(src).is_err());
+    assert!(check(src).is_ok());
 }
 
 #[test]
@@ -32240,4 +32242,1447 @@ fn field_access_unknown_field_message() {
     "#;
     let err = check(src).unwrap_err().to_string();
     assert!(err.contains("age") && err.contains("User"), "got: {}", err);
+}
+
+// ============================================================
+// Milestone 15B: Struct field mutation
+// ============================================================
+
+// --- Parser tests ---
+
+#[test]
+fn parse_field_assign_number() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(stmts.len() == 3);
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldAssign { name, field, .. }
+        if name == "s" && field == "x"
+    ));
+}
+
+#[test]
+fn parse_field_assign_text() {
+    let src = r#"
+        struct S { name: Text }
+        let mut s = S { name: "a" }
+        s.name = "bob"
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldAssign { name, field, .. }
+        if name == "s" && field == "name"
+    ));
+}
+
+#[test]
+fn parse_field_compound_add() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldCompoundAssign { name, field, op: crate::ast::CompoundAssignOp::Add, .. }
+        if name == "s" && field == "x"
+    ));
+}
+
+#[test]
+fn parse_field_compound_subtract() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x -= 3
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldCompoundAssign {
+            op: crate::ast::CompoundAssignOp::Subtract,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_field_compound_multiply() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 3 }
+        s.x *= 4
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldCompoundAssign {
+            op: crate::ast::CompoundAssignOp::Multiply,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_field_compound_divide() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x /= 2
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldCompoundAssign {
+            op: crate::ast::CompoundAssignOp::Divide,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_field_assign_rhs_uses_field_read() {
+    // RHS can be any expression including another field read.
+    let src = r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 1, y: 2 }
+        s.x = s.y
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::FieldAssign { .. }));
+}
+
+#[test]
+fn parse_field_compound_rhs_uses_field_read() {
+    let src = r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 1, y: 2 }
+        s.x += s.y
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::FieldCompoundAssign { .. }
+    ));
+}
+
+#[test]
+fn parse_field_access_read_still_parses() {
+    // Reading a field (not assigning) still works as an expression statement.
+    let src = r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        let y = s.x
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::Let { .. }));
+}
+
+#[test]
+fn parse_state_variant_still_parses_after_field_mutation() {
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        struct S { x: Number }
+        let mut s = S { x: 0 }
+        s.x = 1
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // 5 statements; last is FieldAssign.
+    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+}
+
+#[test]
+fn parse_array_index_assign_still_parses_after_field_mutation() {
+    let src = r#"
+        let mut arr = [1, 2, 3]
+        arr[0] = 99
+        struct S { x: Number }
+        let mut s = S { x: 0 }
+        s.x = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::IndexAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+}
+
+#[test]
+fn parse_map_index_assign_still_parses_after_field_mutation() {
+    let src = r#"
+        let mut m: Map<Text, Number> = {}
+        m["k"] = 1
+        struct S { x: Number }
+        let mut s = S { x: 0 }
+        s.x = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::IndexAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_field_assign_number_ok() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_assign_text_ok() {
+    let src = r#"
+        struct S { name: Text }
+        let mut s = S { name: "a" }
+        s.name = "bob"
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_assign_bool_ok() {
+    let src = r#"
+        struct S { active: Bool }
+        let mut s = S { active: false }
+        s.active = true
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_assign_array_ok() {
+    let src = r#"
+        struct S { nums: Array<Number> }
+        let mut s = S { nums: [1, 2] }
+        s.nums = [3, 4, 5]
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_assign_map_ok() {
+    let src = r#"
+        struct S { scores: Map<Text, Number> }
+        let mut s = S { scores: {"a": 1} }
+        s.scores = {"b": 2}
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_assign_unit_ok() {
+    let src = r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let mut s = S { dist: d }
+        s.dist = d
+    "#;
+    assert!(check(src).is_ok());
+}
+
+#[test]
+fn type_field_assign_immutable_var_error() {
+    let src = r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.x = 2
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(
+        err.contains("immutable") && err.contains("s"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_field_assign_unknown_field_error() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.age = 2
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("age") && err.contains("S"), "got: {}", err);
+}
+
+#[test]
+fn type_field_assign_non_struct_error() {
+    let src = r#"
+        let mut n = 42
+        n.x = 1
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("x"), "got: {}", err);
+}
+
+#[test]
+fn type_field_assign_wrong_value_type_error() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = "bad"
+    "#;
+    let err = check(src).unwrap_err().to_string();
+    assert!(err.contains("x"), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_add_number_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += 5
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_subtract_number_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x -= 3
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_multiply_number_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 3 }
+        s.x *= 4
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_divide_number_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x /= 2
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_text_concat_ok() {
+    assert!(check(
+        r#"
+        struct S { name: Text }
+        let mut s = S { name: "hello" }
+        s.name += " world"
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_unit_add_ok() {
+    assert!(check(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let mut s = S { dist: d }
+        s.dist += d
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_wrong_unit_error() {
+    let err = check(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let t: seconds = 1
+        let mut s = S { dist: d }
+        s.dist += t
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_bool_error() {
+    let err = check(
+        r#"
+        struct S { active: Bool }
+        let mut s = S { active: true }
+        s.active += true
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_immutable_var_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.x += 1
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") && err.contains("s"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_field_compound_unknown_field_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.age += 1
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("age") && err.contains("S"), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_non_struct_error() {
+    let err = check(
+        r#"
+        let mut n = 42
+        n.x += 1
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("x"), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_wrong_rhs_type_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += "bad"
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_struct_field_read_still_ok_after_mutation() {
+    // Field reads must still type-check after adding mutation.
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 2
+        let v = s.x
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_field_assign_updates_value() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            assert_eq!(fields["x"], Value::Number(42.0));
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_preserves_other_fields() {
+    let interp = run(r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 1, y: 99 }
+        s.x = 42
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            assert_eq!(fields["x"], Value::Number(42.0));
+            assert_eq!(fields["y"], Value::Number(99.0));
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_text() {
+    let interp = run(r#"
+        struct S { name: Text }
+        let mut s = S { name: "alice" }
+        s.name = "bob"
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            assert_eq!(fields["name"], Value::Str("bob".into()));
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_array_field() {
+    let interp = run(r#"
+        struct S { nums: Array<Number> }
+        let mut s = S { nums: [1, 2] }
+        s.nums = [3, 4, 5]
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            assert_eq!(
+                fields["nums"],
+                Value::Array(vec![
+                    Value::Number(3.0),
+                    Value::Number(4.0),
+                    Value::Number(5.0)
+                ])
+            );
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_map_field() {
+    let interp = run(r#"
+        struct S { scores: Map<Text, Number> }
+        let mut s = S { scores: {"a": 1} }
+        s.scores = {"b": 2}
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            let m = match &fields["scores"] {
+                Value::Map(m) => m.clone(),
+                _ => panic!("expected Map"),
+            };
+            assert_eq!(m.get("b"), Some(&Value::Number(2.0)));
+            assert_eq!(m.get("a"), None);
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_add_number() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x += 5
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(15.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_text_concat() {
+    let interp = run(r#"
+        struct S { name: Text }
+        let mut s = S { name: "hello" }
+        s.name += " world"
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            assert_eq!(fields["name"], Value::Str("hello world".into()));
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_preserves_other_fields() {
+    let interp = run(r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 10, y: 99 }
+        s.x += 5
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => {
+            assert_eq!(fields["x"], Value::Number(15.0));
+            assert_eq!(fields["y"], Value::Number(99.0));
+        }
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_block_outer_update() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        {
+            s.x = 99
+        }
+    "#)
+    .unwrap();
+    let val = interp.get_var("s").unwrap();
+    match val {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(99.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_block_shadow() {
+    let src = r#"
+        struct S { x: Number }
+        let mut outer = S { x: 1 }
+        {
+            let mut inner = S { x: 10 }
+            inner.x += 5
+            print(inner.x)
+        }
+        print(outer.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn interp_field_compound_closure_capture() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        fn inc() {
+            c.value += 1
+        }
+        inc()
+        inc()
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_field_compound_repeated_calls() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 0 }
+        s.x += 1
+        s.x += 1
+        s.x += 1
+        print(s.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_field_read_still_works_after_write() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+        print(s.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Bytecode / compiler tests ---
+
+#[test]
+fn bytecode_field_assign_emits_set_field() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#,
+    );
+    let has_set_field =
+        prog.main.instructions.iter().any(
+            |i| matches!(i, Instruction::SetField { name, field } if name == "s" && field == "x"),
+        );
+    assert!(has_set_field, "expected SET_FIELD s.x instruction");
+}
+
+#[test]
+fn bytecode_field_assign_compiles_rhs_only() {
+    // The rhs constant should appear; there should be no extra LOAD for the struct.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#,
+    );
+    let has_set_field = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetField { .. }));
+    let has_field_access = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldAccess(_)));
+    assert!(has_set_field);
+    assert!(
+        !has_field_access,
+        "SET_FIELD should not emit a FIELD_ACCESS read"
+    );
+}
+
+#[test]
+fn bytecode_field_compound_emits_field_compound() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += 5
+    "#,
+    );
+    let has_fca = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::FieldCompoundAssign { name, field, op }
+            if name == "s" && field == "x" && matches!(op, crate::ast::CompoundAssignOp::Add))
+    });
+    assert!(has_fca, "expected FIELD_COMPOUND_ASSIGN s.x +=");
+}
+
+#[test]
+fn bytecode_field_compound_compiles_rhs_only() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += 5
+    "#,
+    );
+    let has_fca = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }));
+    let has_field_access = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldAccess(_)));
+    assert!(has_fca);
+    assert!(
+        !has_field_access,
+        "FIELD_COMPOUND_ASSIGN should not emit a FIELD_ACCESS read"
+    );
+}
+
+#[test]
+fn bytecode_field_assign_inside_function() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        fn update(s_arg: S) {
+        }
+        let mut s = S { x: 1 }
+        s.x = 9
+    "#,
+    );
+    let has_set_field = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetField { .. }));
+    assert!(has_set_field);
+}
+
+#[test]
+fn bytecode_struct_literal_field_access_unchanged_after_field_mutation() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        let v = s.x
+        let mut t = S { x: 2 }
+        t.x = 3
+    "#,
+    );
+    // FieldAccess should appear (for `s.x` read), SetField for `t.x = 3`.
+    let has_fa = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldAccess(_)));
+    let has_sf = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetField { .. }));
+    assert!(has_fa);
+    assert!(has_sf);
+}
+
+#[test]
+fn disassemble_set_field_stable() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("SET_FIELD s.x"), "disassembly: {}", out);
+}
+
+#[test]
+fn disassemble_field_compound_stable() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += 5
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(
+        out.contains("FIELD_COMPOUND_ASSIGN s.x +="),
+        "disassembly: {}",
+        out
+    );
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_field_assign_updates_value() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_field_assign_preserves_other_fields() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 1, y: 99 }
+        s.x = 42
+        print(s.x)
+        print(s.y)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "99"]);
+}
+
+#[test]
+fn vm_field_assign_text() {
+    let out = vm_run(
+        r#"
+        struct S { name: Text }
+        let mut s = S { name: "alice" }
+        s.name = "bob"
+        print(s.name)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["bob"]);
+}
+
+#[test]
+fn vm_field_assign_array_field() {
+    let out = vm_run(
+        r#"
+        struct S { nums: Array<Number> }
+        let mut s = S { nums: [1, 2] }
+        s.nums = [3, 4, 5]
+        print(s.nums[0])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_field_assign_map_field() {
+    let out = vm_run(
+        r#"
+        struct S { scores: Map<Text, Number> }
+        let mut s = S { scores: {"a": 1} }
+        s.scores = {"b": 2}
+        print(s.scores["b"])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_field_compound_add_number() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x += 5
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_field_compound_text_concat() {
+    let out = vm_run(
+        r#"
+        struct S { name: Text }
+        let mut s = S { name: "hello" }
+        s.name += " world"
+        print(s.name)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["hello world"]);
+}
+
+#[test]
+fn vm_field_compound_preserves_other_fields() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 10, y: 99 }
+        s.x += 5
+        print(s.x)
+        print(s.y)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15", "99"]);
+}
+
+#[test]
+fn vm_field_compound_closure_capture() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        fn inc() {
+            c.value += 1
+        }
+        inc()
+        inc()
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_field_assign_stack_clean() {
+    // After field assign, stack should not have leftover values.
+    // Verify by doing field assign then an unrelated print.
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+        print(100)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["100"]);
+}
+
+#[test]
+fn vm_field_compound_stack_clean() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += 10
+        print(200)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["200"]);
+}
+
+#[test]
+fn vm_field_assign_non_struct_error() {
+    // Type checker must reject field assignment on non-struct.
+    assert!(check(
+        r#"
+        let mut n = 42
+        n.x = 1
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn vm_field_assign_unknown_field_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.age = 2
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn vm_matches_tree_field_mutation_basic() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        let mut u = User { name: "alice", score: 10 }
+        u.score = 20
+        u.score += 5
+        print(u.name)
+        print(u.score)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["alice", "25"]);
+    // Also verify interpreter agrees.
+    match tree.get_var("u").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["score"], Value::Number(25.0)),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn vm_matches_tree_field_mutation_function() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        fn inc() { c.value += 1 }
+        inc()
+        inc()
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_matches_tree_field_mutation_simulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+        }
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Env-chain / closure tests ---
+
+#[test]
+fn fn_field_compound_outer_mutable_struct() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        fn inc() { c.value += 1 }
+        inc()
+        inc()
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn function_local_field_assignment() {
+    let src = r#"
+        struct S { x: Number }
+        fn make_and_update() -> Number {
+            let mut s = S { x: 1 }
+            s.x += 9
+            return s.x
+        }
+        print(make_and_update())
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn block_shadow_field_assignment() {
+    let src = r#"
+        struct S { x: Number }
+        let mut outer = S { x: 1 }
+        {
+            let mut inner = S { x: 10 }
+            inner.x += 5
+            print(inner.x)
+        }
+        print(outer.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn nested_block_field_assignment_nearest_binding() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        {
+            s.x = 50
+        }
+        print(s.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["50"]);
+}
+
+#[test]
+fn immutable_captured_struct_field_assign_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.x = 2
+    "#
+    )
+    .is_err());
+}
+
+// --- Interaction with arrays/maps ---
+
+#[test]
+fn field_assign_array_field_whole_value() {
+    let src = r#"
+        struct Bag { nums: Array<Number> }
+        let mut b = Bag { nums: [1] }
+        b.nums = [2, 3]
+        print(b.nums[0])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn field_assign_map_field_whole_value() {
+    let src = r#"
+        struct Bag { scores: Map<Text, Number> }
+        let mut b = Bag { scores: {"a": 1} }
+        b.scores = {"b": 2}
+        print(b.scores["b"])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn field_access_array_field_after_assignment() {
+    let src = r#"
+        struct Bag { nums: Array<Number> }
+        let mut b = Bag { nums: [10, 20] }
+        b.nums = [30, 40, 50]
+        print(b.nums[2])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["50"]);
+}
+
+#[test]
+fn field_access_map_field_after_assignment() {
+    let src = r#"
+        struct Bag { scores: Map<Text, Number> }
+        let mut b = Bag { scores: {"x": 0} }
+        b.scores = {"y": 99}
+        print(b.scores["y"])
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn map_array_existing_features_still_ok_after_field_mutation() {
+    let src = r#"
+        let mut arr = [1, 2, 3]
+        arr[1] = 99
+        let mut m: Map<Text, Number> = {}
+        m["k"] = 5
+        struct S { x: Number }
+        let mut s = S { x: 0 }
+        s.x = 7
+        print(arr[1])
+        print(m["k"])
+        print(s.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99", "5", "7"]);
+}
+
+// --- Interaction with units ---
+
+#[test]
+fn field_assign_unit_field_ok() {
+    let src = r#"
+        struct Position { x: meters }
+        let a: meters = 3
+        let b: meters = 4
+        let mut p = Position { x: a }
+        p.x = b
+        print(p.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn field_compound_unit_field_ok() {
+    let src = r#"
+        struct Position { x: meters }
+        let a: meters = 3
+        let b: meters = 4
+        let mut p = Position { x: a }
+        p.x = b
+        p.x += a
+        print(p.x)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn field_compound_wrong_unit_error() {
+    assert!(check(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let t: seconds = 1
+        let mut s = S { dist: d }
+        s.dist += t
+    "#
+    )
+    .is_err());
+}
+
+// --- Interaction with loops and simulate ---
+
+#[test]
+fn field_compound_inside_for_each() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        for n in [1, 2, 3] {
+            c.value += n
+        }
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn field_compound_inside_indexed_for_each() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        for i, n in [10, 20, 30] {
+            c.value += n
+        }
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn field_compound_inside_while() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let mut i = 0
+        while i < 5 {
+            c.value += 1
+            i += 1
+        }
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn field_compound_inside_for_range() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        for i in range(0, 4) {
+            c.value += 1
+        }
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn simulate_field_compound_accumulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+        }
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn field_assign_immutable_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.x = 2
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") && err.contains("s"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn field_assign_unknown_field_message() {
+    let err = check(
+        r#"
+        struct User { name: Text }
+        let mut u = User { name: "alice" }
+        u.age = 20
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("age") && err.contains("User"), "got: {}", err);
+}
+
+#[test]
+fn field_assign_non_struct_message() {
+    let err = check(
+        r#"
+        let mut n = 42
+        n.x = 1
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("x"), "got: {}", err);
+}
+
+#[test]
+fn field_assign_wrong_type_message() {
+    let err = check(
+        r#"
+        struct S { score: Number }
+        let mut s = S { score: 1 }
+        s.score = "high"
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("score"), "got: {}", err);
+}
+
+#[test]
+fn field_compound_wrong_rhs_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x += "bad"
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
 }

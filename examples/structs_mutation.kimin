@@ -1,0 +1,13 @@
+struct User {
+  name: Text
+  score: Number
+}
+
+let mut u = User { name: "alice", score: 10 }
+
+u.score = 20
+u.score += 5
+u.name = "bob"
+
+print(u.name)
+print(u.score)

@@ -1,0 +1,14 @@
+struct Counter {
+  value: Number
+}
+
+let mut c = Counter { value: 0 }
+
+fn inc() {
+  c.value += 1
+}
+
+inc()
+inc()
+
+print(c.value)

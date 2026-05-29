@@ -1,0 +1,15 @@
+struct Bag {
+  nums: Array<Number>
+  scores: Map<Text, Number>
+}
+
+let mut b = Bag {
+  nums: [1],
+  scores: {"a": 1}
+}
+
+b.nums = [2, 3]
+b.scores = {"b": 2}
+
+print(b.nums[0])
+print(b.scores["b"])
