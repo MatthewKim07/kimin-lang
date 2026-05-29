@@ -1,0 +1,25 @@
+// Runnable demonstration of struct methods.
+
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn get(self) -> Number {
+    return self.value
+  }
+}
+
+let c = Counter { value: 10 }
+print(c.get())
+
+// Uncomment to test unknown method:
+// c.missing()
+
+// Uncomment to test self mutation (TypeError):
+// impl Counter {
+//   fn bad(self) -> Counter {
+//     self.value = 1
+//     return self
+//   }
+// }

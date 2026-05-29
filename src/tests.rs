@@ -5634,6 +5634,7 @@ fn vm_simulate_negative_duration_runtime_error() {
             name: "simulate#0".into(),
             chunk: Chunk::new(),
         }],
+        vec![],
     );
     let mut vm = Vm::new(prog);
     let result = vm.run();
@@ -5763,7 +5764,7 @@ fn vm_simulate_invalid_body_index_errors() {
     main.emit(Instruction::Constant(step_idx));
     main.emit(Instruction::Simulate { body_idx: 99 });
     main.emit(Instruction::Halt);
-    let prog = BytecodeProgram::new(main, vec![], vec![]);
+    let prog = BytecodeProgram::new(main, vec![], vec![], vec![]);
     let mut vm = Vm::new(prog);
     let result = vm.run();
     assert!(result.is_err());
@@ -5821,6 +5822,7 @@ fn vm_simulate_non_number_duration_errors() {
             name: "simulate#0".into(),
             chunk: Chunk::new(),
         }],
+        vec![],
     );
     let mut vm = Vm::new(prog);
     let result = vm.run();
@@ -5854,6 +5856,7 @@ fn vm_simulate_non_number_step_errors() {
             name: "simulate#0".into(),
             chunk: Chunk::new(),
         }],
+        vec![],
     );
     let mut vm = Vm::new(prog);
     let result = vm.run();
@@ -17968,6 +17971,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::FieldAccess(_)
             | crate::bytecode::Instruction::SetPath { .. }
             | crate::bytecode::Instruction::PathCompoundAssign { .. }
+            | crate::bytecode::Instruction::CallMethod { .. }
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -36711,6 +36715,1403 @@ fn path_assign_array_oob_message() {
     .to_string();
     assert!(
         err.contains("5") || err.contains("bounds") || err.contains("index"),
+        "got: {}",
+        err
+    );
+}
+
+// ============================================================
+// Milestone 16A: Struct methods (self-by-value, read-only)
+// ============================================================
+
+// --- Lexer tests ---
+
+#[test]
+fn lex_impl_keyword() {
+    let kinds = tokenize("impl");
+    assert!(matches!(kinds[0], TokenKind::Impl));
+}
+
+#[test]
+fn lex_impl_prefix_identifier() {
+    // "implementation" should still be an identifier.
+    let kinds = tokenize("implementation");
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "implementation"));
+}
+
+#[test]
+fn lex_method_dot_call_tokens() {
+    let kinds = tokenize("c.inc()");
+    // c  .  inc  (  )
+    assert!(matches!(&kinds[0], TokenKind::Ident(s) if s == "c"));
+    assert!(matches!(kinds[1], TokenKind::Dot));
+    assert!(matches!(&kinds[2], TokenKind::Ident(s) if s == "inc"));
+    assert!(matches!(kinds[3], TokenKind::LParen));
+    assert!(matches!(kinds[4], TokenKind::RParen));
+}
+
+// --- Parser tests ---
+
+#[test]
+fn parse_impl_block_basic() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn inc(self) -> Counter { return Counter { value: self.value + 1 } }
+        }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(
+        matches!(&stmts[1], crate::ast::Stmt::ImplBlock { struct_name, .. } if struct_name == "Counter")
+    );
+}
+
+#[test]
+fn parse_impl_method_with_self_only() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        assert_eq!(methods.len(), 1);
+        assert!(matches!(&methods[0], crate::ast::Stmt::FnDecl { name, .. } if name == "get"));
+    } else {
+        panic!("expected ImplBlock");
+    }
+}
+
+#[test]
+fn parse_impl_method_with_self_and_param() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn add(self, n: Number) -> S { return S { x: self.x + n } } }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        if let crate::ast::Stmt::FnDecl { params, .. } = &methods[0] {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].name, "self");
+            assert_eq!(params[1].name, "n");
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_impl_missing_struct_name_error() {
+    let src = "impl { fn f(self) {} }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_impl_empty_error() {
+    let src = r#"struct S { x: Number } impl S { }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_impl_non_fn_body_error() {
+    let src = r#"struct S { x: Number } impl S { let y = 1 }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_impl_method_missing_self_error() {
+    let src = r#"struct S { x: Number } impl S { fn get(n: Number) -> Number { return n } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_method_call_no_args() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        print(s.get())
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // print arg should contain a MethodCall
+    if let crate::ast::Stmt::Print { value } = &stmts[3] {
+        assert!(matches!(value, crate::ast::Expr::MethodCall { method, .. } if method == "get"));
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_call_with_args() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn add(self, n: Number) -> S { return S { x: self.x + n } } }
+        let s = S { x: 1 }
+        let s2 = s.add(5)
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::Let { value, .. } = &stmts[3] {
+        assert!(
+            matches!(value, crate::ast::Expr::MethodCall { method, args, .. } if method == "add" && args.len() == 1)
+        );
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_call_chained() {
+    let src = r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc().get())
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::Print { value } = &stmts[3] {
+        // outer is MethodCall("get"), inner object is MethodCall("inc")
+        if let crate::ast::Expr::MethodCall { object, method, .. } = value {
+            assert_eq!(method, "get");
+            assert!(
+                matches!(object.as_ref(), crate::ast::Expr::MethodCall { method: m, .. } if m == "inc")
+            );
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_call_on_function_result() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        fn make() -> S { return S { x: 5 } }
+        print(make().get())
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::Print { value } = &stmts[3] {
+        assert!(matches!(value, crate::ast::Expr::MethodCall { method, .. } if method == "get"));
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_call_on_array_index() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let arr: Array<S> = [S { x: 1 }]
+        print(arr[0].get())
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::Print { value } = &stmts[3] {
+        assert!(matches!(value, crate::ast::Expr::MethodCall { method, .. } if method == "get"));
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_field_access_still_parses_after_methods() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 5 }
+        let v = s.x
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::Let { value, .. } = &stmts[3] {
+        // s.x → StateVariant (existing behavior)
+        assert!(matches!(value, crate::ast::Expr::StateVariant { .. }));
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_state_variant_still_parses_after_methods() {
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let d = Door.closed
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::Let { value, .. } = &stmts[3] {
+        assert!(
+            matches!(value, crate::ast::Expr::StateVariant { state_name, variant_name, .. }
+            if state_name == "Door" && variant_name == "closed")
+        );
+    } else {
+        panic!();
+    }
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_impl_for_existing_struct_ok() {
+    assert!(check(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_impl_unknown_struct_error() {
+    let err = check(
+        r#"
+        impl Missing { fn get(self) -> Number { return 0 } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("Missing"), "got: {}", err);
+}
+
+#[test]
+fn type_impl_duplicate_method_same_struct_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn get(self) -> Number { return self.x }
+          fn get(self) -> Number { return self.x }
+        }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("get") && err.contains("S"), "got: {}", err);
+}
+
+#[test]
+fn type_impl_same_method_different_structs_ok() {
+    assert!(check(
+        r#"
+        struct A { x: Number }
+        struct B { x: Number }
+        impl A { fn get(self) -> Number { return self.x } }
+        impl B { fn get(self) -> Number { return self.x } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_impl_empty_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {}
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_self_is_struct_type() {
+    // self.x reads correctly when x is a Number field.
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn double(self) -> Number { return self.x + self.x } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_self_immutable_field_assign_error() {
+    // self.x = 5 inside method body — self is immutable.
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(self) -> S {
+            self.x = 5
+            return self
+          }
+        }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("immutable"), "got: {}", err);
+}
+
+#[test]
+fn type_method_body_field_read_ok() {
+    assert!(check(
+        r#"
+        struct S { name: Text, score: Number }
+        impl S {
+          fn label(self) -> Text { return self.name }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_return_struct_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(self) -> S { return S { x: self.x + 1 } } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_return_wrong_type_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn bad(self) -> Text { return self.x } }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_call_no_args_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        let v = s.get()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_call_with_arg_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn add(self, n: Number) -> S { return S { x: self.x + n } } }
+        let s = S { x: 1 }
+        let s2 = s.add(5)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_call_chained_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        let v = s.inc().get()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_call_on_function_result_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        fn make() -> S { return S { x: 5 } }
+        let v = make().get()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_call_on_array_index_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let arr: Array<S> = [S { x: 1 }]
+        let v = arr[0].get()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_call_on_map_index_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let m: Map<Text, S> = {"a": S { x: 1 }}
+        let v = m["a"].get()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_call_non_struct_error() {
+    let err = check(
+        r#"
+        let n = 42
+        n.inc()
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("inc"), "got: {}", err);
+}
+
+#[test]
+fn type_method_call_unknown_method_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.missing()
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("missing") && err.contains("S"), "got: {}", err);
+}
+
+#[test]
+fn type_method_call_wrong_arity_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        s.get(99)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("get") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_method_call_wrong_arg_type_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn add(self, n: Number) -> S { return S { x: self.x + n } } }
+        let s = S { x: 1 }
+        s.add("bad")
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_method_call_same_name_different_structs_resolves_by_receiver() {
+    assert!(check(
+        r#"
+        struct A { x: Number }
+        struct B { x: Text }
+        impl A { fn get(self) -> Number { return self.x } }
+        impl B { fn get(self) -> Text { return self.x } }
+        let a = A { x: 1 }
+        let b = B { x: "hello" }
+        let n = a.get()
+        let t = b.get()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_can_call_other_method_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn inc2(self) -> S { return self.inc().inc() }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_method_call_no_args() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 42 }
+        print(s.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_method_call_with_arg() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn add(self, n: Number) -> S { return S { x: self.x + n } } }
+        let s = S { x: 10 }
+        let s2 = s.add(5)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_method_call_chained() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc().inc().get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_method_call_returns_number() {
+    let interp = run(r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 99 }
+        let v = s.get()
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("v"), Some(Value::Number(99.0)));
+}
+
+#[test]
+fn interp_method_call_on_function_result() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        fn make(n: Number) -> S { return S { x: n } }
+        print(make(7).get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_method_call_on_array_index() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let arr: Array<S> = [S { x: 10 }, S { x: 20 }]
+        print(arr[0].get())
+        print(arr[1].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn interp_method_call_on_map_index() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        impl S { fn get(self) -> Number { return self.score } }
+        let m: Map<Text, S> = {"alice": S { score: 42 }}
+        print(m["alice"].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_method_same_name_different_structs() {
+    let out = vm_run(
+        r#"
+        struct A { x: Number }
+        struct B { x: Text }
+        impl A { fn get(self) -> Number { return self.x } }
+        impl B { fn get(self) -> Text { return self.x } }
+        let a = A { x: 1 }
+        let b = B { x: "hello" }
+        print(a.get())
+        print(b.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "hello"]);
+}
+
+#[test]
+fn interp_method_self_field_read() {
+    let out = vm_run(
+        r#"
+        struct S { name: Text, score: Number }
+        impl S { fn label(self) -> Text { return self.name } }
+        let s = S { name: "alice", score: 10 }
+        print(s.label())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["alice"]);
+}
+
+#[test]
+fn interp_method_calls_other_method() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn inc2(self) -> S { return self.inc().inc() }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc2().get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_method_call_does_not_mutate_original_receiver() {
+    // inc() returns new struct; original unchanged.
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+        print(s.get())
+        print(s2.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn interp_method_returned_struct_can_be_assigned() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(self) -> S { return S { x: self.x + 1 } } }
+        let mut s = S { x: 0 }
+        s = s.inc()
+        s = s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_method_call_emits_call_method() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        print(s.get())
+    "#,
+    );
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::CallMethod { method, arg_count } if method == "get" && *arg_count == 0)
+    });
+    assert!(has, "expected CALL_METHOD get 0");
+}
+
+#[test]
+fn bytecode_method_call_compiles_receiver_first() {
+    // Receiver compiled before args and CallMethod.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        let v = s.get()
+    "#,
+    );
+    let instrs = &prog.main.instructions;
+    let call_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::CallMethod { .. }))
+        .unwrap();
+    // Before CallMethod there should be a LoadGlobal/Local "s"
+    let has_load_before = instrs[..call_pos]
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadGlobal(n) | Instruction::LoadLocal(n) if n == "s"));
+    assert!(
+        has_load_before,
+        "receiver (s) should be loaded before CALL_METHOD"
+    );
+}
+
+#[test]
+fn bytecode_impl_registers_method_chunk() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+    "#,
+    );
+    let has = prog
+        .methods
+        .iter()
+        .any(|mc| mc.struct_name == "S" && mc.method_name == "get");
+    assert!(has, "method chunk S::get should be in program.methods");
+}
+
+#[test]
+fn bytecode_method_self_param_present() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+    "#,
+    );
+    let mc = prog
+        .methods
+        .iter()
+        .find(|mc| mc.method_name == "get")
+        .unwrap();
+    assert_eq!(mc.params[0], "self");
+}
+
+#[test]
+fn bytecode_field_access_unchanged_after_methods() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        let v = s.x
+    "#,
+    );
+    let has_fa = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldAccess(_)));
+    assert!(has_fa, "field access read should still emit FieldAccess");
+}
+
+#[test]
+fn disassemble_call_method_stable() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        print(s.get())
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("CALL_METHOD get 0"), "disassembly: {}", out);
+    assert!(
+        out.contains("method S::get"),
+        "disassembly should include method section: {}",
+        out
+    );
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_method_call_no_args() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 42 }
+        print(s.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_method_call_with_arg() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn add(self, n: Number) -> S { return S { x: self.x + n } } }
+        let s = S { x: 10 }
+        let s2 = s.add(5)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_method_call_chained() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc().inc().get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_method_call_returns_number() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 99 }
+        print(s.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_method_call_on_function_result() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        fn make(n: Number) -> S { return S { x: n } }
+        print(make(7).get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_method_call_on_array_index() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let arr: Array<S> = [S { x: 10 }, S { x: 20 }]
+        print(arr[1].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_method_call_on_map_index() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        impl S { fn get(self) -> Number { return self.score } }
+        let m: Map<Text, S> = {"alice": S { score: 42 }}
+        print(m["alice"].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_method_same_name_different_structs() {
+    let out = vm_run(
+        r#"
+        struct A { x: Number }
+        struct B { x: Text }
+        impl A { fn get(self) -> Number { return self.x } }
+        impl B { fn get(self) -> Text { return self.x } }
+        let a = A { x: 1 }
+        let b = B { x: "hi" }
+        print(a.get())
+        print(b.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "hi"]);
+}
+
+#[test]
+fn vm_method_call_stack_clean() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 5 }
+        s.get()
+        print(99)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_method_call_unknown_method_error() {
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.missing()
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_matches_tree_method_basic() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn inc(self) -> Counter { return Counter { value: self.value + 1 } }
+          fn get(self) -> Number { return self.value }
+        }
+        let c = Counter { value: 0 }
+        let c2 = c.inc()
+        print(c.get())
+        print(c2.get())
+    "#;
+    let tree_out = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["0", "1"]);
+    let _ = tree_out;
+}
+
+#[test]
+fn vm_matches_tree_method_chained() {
+    let src = r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(self) -> S { return S { x: self.x + 1 } }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc().inc().inc().get())
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_method_collections() {
+    let src = r#"
+        struct Group { names: Array<Text> }
+        impl Group {
+          fn count(self) -> Number { return len(self.names) }
+        }
+        let g = Group { names: ["a", "b", "c"] }
+        print(g.count())
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+// --- Self semantics ---
+
+#[test]
+fn method_self_field_read_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number, y: Text }
+        impl S {
+          fn sum_x(self) -> Number { return self.x + self.x }
+          fn get_y(self) -> Text { return self.y }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn method_self_construct_new_struct_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(self) -> S { return S { x: self.x + 1 } } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn method_self_field_mutation_rejected() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(self) -> S {
+            self.x = 5
+            return self
+          }
+        }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn method_call_does_not_mutate_original_receiver() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(self) -> S { return S { x: self.x + 1 } } }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+        print(s.x)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn method_returned_struct_can_be_assigned() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(self) -> S { return S { x: self.x + 1 } } }
+        let mut s = S { x: 0 }
+        s = s.inc()
+        s = s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Interaction with loops and simulate ---
+
+#[test]
+fn method_call_inside_while() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 5 }
+        let mut total = 0
+        let mut i = 0
+        while i < 3 {
+            total += s.get()
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn method_call_inside_for_range() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 10 }
+        let mut total = 0
+        for i in range(0, 3) {
+            total += s.get()
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn method_call_inside_for_each() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let arr: Array<S> = [S { x: 1 }, S { x: 2 }, S { x: 3 }]
+        let mut total = 0
+        for item in arr {
+            total += item.get()
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn method_call_inside_simulate() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn inc(self) -> Counter { return Counter { value: self.value + 1 } }
+        }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            c = c.inc()
+        }
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_methods_in_simulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn inc(self) -> Counter { return Counter { value: self.value + 1 } }
+          fn get(self) -> Number { return self.value }
+        }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            c = c.inc()
+        }
+        print(c.get())
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+// --- Methods with arrays/maps/strings ---
+
+#[test]
+fn method_returns_array_field() {
+    let out = vm_run(
+        r#"
+        struct G { names: Array<Text> }
+        impl G { fn count(self) -> Number { return len(self.names) } }
+        let g = G { names: ["a", "b"] }
+        print(g.count())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn method_uses_string_builtin() {
+    let out = vm_run(
+        r#"
+        struct G { names: Array<Text> }
+        impl G { fn joined(self) -> Text { return join(self.names, ",") } }
+        let g = G { names: ["alice", "bob"] }
+        print(g.joined())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["alice,bob"]);
+}
+
+// --- Interaction with path mutation ---
+
+#[test]
+fn method_call_after_path_mutation() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 42
+        print(arr[0].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn path_mutation_still_ok_after_methods() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let mut arr: Array<S> = [S { x: 1 }, S { x: 2 }]
+        arr[0].x += 10
+        arr[1].x += 20
+        print(arr[0].get())
+        print(arr[1].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11", "22"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn impl_unknown_struct_message() {
+    let err = check(
+        r#"
+        impl Unknown { fn get(self) -> Number { return 0 } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("Unknown"), "got: {}", err);
+}
+
+#[test]
+fn impl_duplicate_method_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn get(self) -> Number { return self.x }
+          fn get(self) -> Number { return self.x }
+        }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("get"), "got: {}", err);
+}
+
+#[test]
+fn impl_missing_self_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(n: Number) -> Number { return n } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("self"), "got: {}", err);
+}
+
+#[test]
+fn method_call_non_struct_message() {
+    let err = check(
+        r#"
+        let n = 42
+        n.inc()
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("inc"), "got: {}", err);
+}
+
+#[test]
+fn method_call_unknown_method_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        s.missing()
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("missing") && err.contains("S"), "got: {}", err);
+}
+
+#[test]
+fn method_call_wrong_arity_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        s.get(99)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("get") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn method_self_mutation_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(self) -> S {
+            self.x = 5
+            return self
+          }
+        }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") || err.contains("self"),
         "got: {}",
         err
     );

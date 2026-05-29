@@ -1,0 +1,14 @@
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn add(self, amount: Number) -> Counter {
+    return Counter { value: self.value + amount }
+  }
+}
+
+let c = Counter { value: 10 }
+let c2 = c.add(5)
+
+print(c2.value)

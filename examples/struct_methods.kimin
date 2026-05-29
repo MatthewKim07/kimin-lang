@@ -1,0 +1,19 @@
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn inc(self) -> Counter {
+    return Counter { value: self.value + 1 }
+  }
+
+  fn get(self) -> Number {
+    return self.value
+  }
+}
+
+let c = Counter { value: 0 }
+let c2 = c.inc()
+
+print(c.get())
+print(c2.get())

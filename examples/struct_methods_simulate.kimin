@@ -1,0 +1,20 @@
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn inc(self) -> Counter {
+    return Counter { value: self.value + 1 }
+  }
+}
+
+let mut c = Counter { value: 0 }
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  c = c.inc()
+}
+
+print(c.value)

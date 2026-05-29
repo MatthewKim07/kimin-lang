@@ -1,0 +1,18 @@
+struct Group {
+  names: Array<Text>
+}
+
+impl Group {
+  fn count(self) -> Number {
+    return len(self.names)
+  }
+
+  fn joined(self) -> Text {
+    return join(self.names, ",")
+  }
+}
+
+let g = Group { names: ["alice", "bob"] }
+
+print(g.count())
+print(g.joined())
