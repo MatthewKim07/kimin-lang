@@ -567,12 +567,13 @@ impl TypeChecker {
                         self.current_fn_return_type = Some(ret_ty);
 
                         self.env.push_scope();
-                        // self is immutable; type is the struct
+                        // self mutability comes from params[0].mutable (mut self vs plain self).
+                        let self_mutable = params.first().map(|p| p.mutable).unwrap_or(false);
                         self.env.define_with_variant(
                             "self".to_string(),
                             Type::Struct(struct_name.clone()),
                             None,
-                            false,
+                            self_mutable,
                         );
                         // Remaining params (skip self at index 0)
                         for param in params.iter().skip(1) {

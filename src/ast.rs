@@ -127,6 +127,9 @@ pub enum TypeAnnotation {
 pub struct Param {
     pub name: String,
     pub ty: TypeAnnotation,
+    /// True when declared `mut self` in a method — makes the self binding mutable.
+    /// Always false for regular typed params and global function params.
+    pub mutable: bool,
     pub span: Span,
 }
 

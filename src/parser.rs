@@ -256,10 +256,18 @@ impl Parser {
         })
     }
 
-    /// Parse method parameters: first param must be bare `self`; rest use normal typed syntax.
+    /// Parse method parameters: first param is `self` or `mut self`; rest use normal typed syntax.
     /// `self` gets a `Named(struct_name)` annotation so the typechecker can resolve it.
     fn parse_method_params(&mut self, struct_name: &str) -> Result<Vec<Param>, ParseError> {
-        // First param must be `self` without a type annotation.
+        // Optional `mut` before `self` makes self a mutable local copy.
+        let self_mutable = if matches!(self.current_kind(), TokenKind::Mut) {
+            self.advance(); // consume `mut`
+            true
+        } else {
+            false
+        };
+
+        // First param must be bare `self` (no type annotation).
         if !matches!(self.current_kind(), TokenKind::Ident(s) if s == "self") {
             return Err(self.error("method must have 'self' as first parameter"));
         }
@@ -270,6 +278,7 @@ impl Parser {
             name: "self".to_string(),
             ty: TypeAnnotation::Named(struct_name.to_string()),
             span: self_span,
+            mutable: self_mutable,
         }];
 
         // Additional typed params.
@@ -501,7 +510,12 @@ impl Parser {
         self.expect_kind(TokenKind::Colon, "expected ':' after parameter name (parameters require a type annotation, e.g. x: Number)")?;
         let ty = self.parse_type_annotation()?;
 
-        Ok(Param { name, ty, span })
+        Ok(Param {
+            name,
+            ty,
+            span,
+            mutable: false,
+        })
     }
 
     /// Parse a type annotation: Number | Text | Bool | Nil | <unit name> | <state machine name> | Array<T>
