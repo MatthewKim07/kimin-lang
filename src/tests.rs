@@ -40195,3 +40195,649 @@ fn mut_self_wrong_return_type_message() {
     .to_string();
     assert!(!err.is_empty(), "got: {}", err);
 }
+
+// ============================================================
+// M16B Audit: additional coverage
+// ============================================================
+
+// --- Parser additions ---
+
+#[test]
+fn parse_method_mut_self_not_first_error() {
+    // `fn add(n: Number, mut self)` — mut self not first param.
+    let src =
+        r#"struct S { x: Number } impl S { fn add(n: Number, mut self) -> S { return self } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_global_fn_mut_self_rejected() {
+    // Global fn `fn f(mut self)` — parse_typed_param sees Mut (not Ident) → error.
+    let tokens = Lexer::new("fn f(mut self) {}").tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_mut_normal_param_rejected() {
+    // `fn f(mut n: Number)` — parse_typed_param doesn't handle `mut`.
+    let tokens = Lexer::new("fn f(mut n: Number) {}").tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_method_calls_still_ok_after_mut_self() {
+    let src = r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(mut self) -> S { self.x += 1 return self }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+        print(s2.get())
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // print arg is a MethodCall
+    if let crate::ast::Stmt::Print { value } = &stmts[4] {
+        assert!(matches!(value, crate::ast::Expr::MethodCall { method, .. } if method == "get"));
+    } else {
+        panic!("expected Print with MethodCall");
+    }
+}
+
+// --- AST / Param model tests ---
+
+#[test]
+fn param_plain_self_mutable_false() {
+    let src = r#"struct S { x: Number } impl S { fn get(self) -> Number { return self.x } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        if let crate::ast::Stmt::FnDecl { params, .. } = &methods[0] {
+            assert!(!params[0].mutable, "plain self should have mutable=false");
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn param_typed_params_mutable_false() {
+    let src = r#"struct S { x: Number } impl S { fn add(mut self, n: Number) -> S { self.x += n return self } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        if let crate::ast::Stmt::FnDecl { params, .. } = &methods[0] {
+            assert!(params[0].mutable); // mut self
+            assert!(!params[1].mutable); // n: Number
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn existing_fn_param_behavior_unchanged() {
+    // Regular global function params have mutable: false.
+    let src = "fn add(a: Number, b: Number) -> Number { return a + b }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::FnDecl { params, .. } = &stmts[0] {
+        assert!(!params[0].mutable);
+        assert!(!params[1].mutable);
+    } else {
+        panic!();
+    }
+}
+
+// --- Typechecker additions ---
+
+#[test]
+fn type_mut_self_method_callable_on_immutable_receiver() {
+    // `let c = Counter { ... }` (no mut) can still call a mut self method.
+    // The mutation is local to self copy; immutability of c is irrelevant.
+    assert!(check(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 0 }
+        let c2 = c.inc()
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_mut_self_allows_map_field_path_mutation() {
+    assert!(check(
+        r#"
+        struct S { m: Map<Text, Number> }
+        impl S {
+          fn set_a(mut self) -> S {
+            self.m = {"a": 42}
+            return self
+          }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_mut_self_not_global_function() {
+    // Method "inc" not accessible as a global fn call.
+    let err = check(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 0 }
+        let c2 = inc(c)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        !err.is_empty(),
+        "inc method should not be a global function"
+    );
+}
+
+// --- Interpreter additions ---
+
+#[test]
+fn interp_mut_self_map_field_path_mutation() {
+    let out = vm_run(
+        r#"
+        struct S { m: Map<Text, Number> }
+        impl S {
+          fn set_a(mut self) -> S {
+            self.m = {"a": 99}
+            return self
+          }
+        }
+        let s = S { m: {"x": 0} }
+        let s2 = s.set_a()
+        print(s.m["x"])
+        print(s2.m["a"])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "99"]);
+}
+
+#[test]
+fn interp_mut_self_receiver_eval_once() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut calls = 0
+        fn make_s() -> S {
+            calls += 1
+            return S { x: 0 }
+        }
+        let s2 = make_s().inc()
+        print(s2.x)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "1"]);
+}
+
+#[test]
+fn interp_mut_self_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn add2(mut self, a: Number, b: Number) -> S {
+            self.x += a + b
+            return self
+          }
+        }
+        let mut order = 0
+        fn first() -> Number { order += 1 return 10 }
+        fn second() -> Number { order += 1 return 5 }
+        let s = S { x: 0 }
+        let s2 = s.add2(first(), second())
+        print(s2.x)
+        print(order)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15", "2"]);
+}
+
+// --- Bytecode additions ---
+
+#[test]
+fn bytecode_mut_self_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt {
+            s = s.inc()
+        }
+    "#,
+    );
+    let has_call_method_in_sim = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::CallMethod { .. }))
+    });
+    assert!(
+        has_call_method_in_sim,
+        "simulate body should contain CALL_METHOD for mut self method"
+    );
+}
+
+#[test]
+fn bytecode_existing_method_call_unchanged_after_mut_self() {
+    // Plain self method still emits CALL_METHOD (not affected by mut self addition).
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 1 }
+        print(s.get())
+    "#,
+    );
+    assert!(prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::CallMethod { method, arg_count } if method == "get" && *arg_count == 0)
+    }));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_mut_self() {
+    // Direct path mutation (not through method) still uses SET_PATH.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+}
+
+// --- VM additions ---
+
+#[test]
+fn vm_mut_self_repeated_assignments() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        s = s.inc()
+        s = s.inc()
+        s = s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_mut_self_collections() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        impl User { fn add(mut self, n: Number) -> User { self.score += n return self } }
+        let mut users: Array<User> = [User { name: "alice", score: 10 }]
+        users[0] = users[0].add(5)
+        print(users[0].score)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["15"]);
+    let _ = tree;
+}
+
+#[test]
+fn vm_matches_tree_mut_self_loops_simulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut c = Counter { value: 0 }
+        for i in range(0, 3) {
+            c = c.inc()
+        }
+        print(c.value)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3"]);
+    let _ = tree;
+}
+
+// --- Call semantics additions ---
+
+#[test]
+fn mut_self_call_does_not_mutate_map_value_receiver() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut m: Map<Text, S> = {"a": S { x: 0 }}
+        m["a"].inc()
+        print(m["a"].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn mut_self_assign_return_to_map_value_persists() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut m: Map<Text, S> = {"a": S { x: 0 }}
+        m["a"] = m["a"].inc()
+        m["a"] = m["a"].inc()
+        print(m["a"].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn mut_self_receiver_eval_once() {
+    // Receiver (make_s()) evaluated exactly once even for mut self method.
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut calls = 0
+        fn make_s() -> S { calls += 1 return S { x: 0 } }
+        let s2 = make_s().inc()
+        print(s2.x)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "1"]);
+}
+
+#[test]
+fn mut_self_callable_on_immutable_receiver() {
+    // Calling a mut self method on an immutable variable is OK — copy semantics.
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 0 }
+        let c2 = c.inc()
+        print(c.value)
+        print(c2.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+// --- Loops and simulate additions ---
+
+#[test]
+fn mut_self_assign_return_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut c = Counter { value: 0 }
+        for i, n in [10, 20, 30] {
+            c = c.inc()
+        }
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Array/map/string/units/states interactions ---
+
+#[test]
+fn mut_self_array_field_assignment() {
+    let out = vm_run(
+        r#"
+        struct Bag { nums: Array<Number> }
+        impl Bag {
+          fn set(mut self, arr: Array<Number>) -> Bag {
+            self.nums = arr
+            return self
+          }
+        }
+        let b = Bag { nums: [1, 2] }
+        let b2 = b.set([3, 4, 5])
+        print(b.nums[0])
+        print(b2.nums[0])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "3"]);
+}
+
+#[test]
+fn mut_self_map_field_assignment() {
+    let out = vm_run(
+        r#"
+        struct S { scores: Map<Text, Number> }
+        impl S {
+          fn update(mut self) -> S {
+            self.scores = {"alice": 99}
+            return self
+          }
+        }
+        let s = S { scores: {"x": 0} }
+        let s2 = s.update()
+        print(s2.scores["alice"])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn mut_self_existing_state_machine_features_unaffected() {
+    let out = vm_run(
+        r#"
+        state Light { red green transition red -> green }
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut l = Light.red
+        transition l -> green
+        let c = Counter { value: 0 }
+        let c2 = c.inc()
+        print(l)
+        print(c2.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Light.green", "1"]);
+}
+
+// --- M16A regression ---
+
+#[test]
+fn plain_self_method_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 42 }
+        print(s.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn method_call_chained_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(mut self) -> S { self.x += 1 return self }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc().inc().get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn method_with_args_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn add(mut self, n: Number) -> S { self.x += n return self } }
+        let s = S { x: 10 }
+        let s2 = s.add(5)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn method_on_array_map_value_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let arr: Array<S> = [S { x: 10 }]
+        let m: Map<Text, S> = {"a": S { x: 20 }}
+        print(arr[0].get())
+        print(m["a"].get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn recursive_method_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn sum(self) -> Number {
+            if self.value == 0 {
+                return 0
+            }
+            let next = Counter { value: self.value - 1 }
+            return self.value + next.sum()
+          }
+        }
+        let c = Counter { value: 4 }
+        print(c.sum())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn method_calls_later_method_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn double_inc(mut self) -> S { return self.inc().inc() }
+          fn inc(mut self) -> S { self.x += 1 return self }
+        }
+        let s = S { x: 0 }
+        print(s.double_inc().x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn same_method_name_different_structs_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct Foo { x: Number }
+        struct Bar { x: Number }
+        impl Foo { fn inc(mut self) -> Foo { self.x += 1 return self } }
+        impl Bar { fn inc(mut self) -> Bar { self.x += 10 return self } }
+        let a = Foo { x: 0 }
+        let b = Bar { x: 0 }
+        print(a.inc().x)
+        print(b.inc().x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "10"]);
+}
+
+#[test]
+fn method_call_inside_simulate_still_ok_after_mut_self() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let s = S { x: 5 }
+        let mut total = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            total += s.get()
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn mut_self_outside_method_message() {
+    // `fn f(mut self)` globally — parse error (Mut not Ident at start of typed param).
+    let tokens = Lexer::new("fn f(mut self) -> Number { return 0 }")
+        .tokenize()
+        .unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "fn f(mut self) globally should fail at parse level"
+    );
+}
+
+#[test]
+fn mut_self_typed_self_message() {
+    // `fn inc(mut self: Counter)` — parse error: expects `)` after consuming `mut self`.
+    let src = r#"struct S { x: Number } impl S { fn inc(mut self: S) -> S { return self } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err(), "typed mut self should fail at parse level");
+}
