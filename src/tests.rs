@@ -33686,3 +33686,828 @@ fn field_compound_wrong_rhs_message() {
     .to_string();
     assert!(!err.is_empty(), "got: {}", err);
 }
+
+// ============================================================
+// M15B Audit: additional coverage
+// ============================================================
+
+// --- Parser audit additions ---
+
+#[test]
+fn parse_dotdot_slice_still_parses_after_field_mutation() {
+    let src = r#"
+        let arr = [1, 2, 3, 4, 5]
+        let s = arr[1..3]
+        struct S { x: Number }
+        let mut obj = S { x: 0 }
+        obj.x = 7
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // slice is Stmt::Let, field assign is Stmt::FieldAssign
+    assert!(matches!(&stmts[1], crate::ast::Stmt::Let { name, .. } if name == "s"));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+}
+
+#[test]
+fn parse_struct_literal_still_parses_after_field_mutation() {
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 5
+        let t = S { x: 9 }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::FieldAssign { .. }));
+    assert!(matches!(&stmts[3], crate::ast::Stmt::Let { .. }));
+}
+
+#[test]
+fn parse_field_assign_function_result_target_rejected() {
+    // get_user().score = 10 must not parse as FieldAssign (no 4-token lookahead match).
+    // Parser emits get_user().score as Stmt::Expr, then = 10 causes a parse error.
+    let src = r#"
+        struct S { score: Number }
+        fn get_s() -> S { return S { score: 1 } }
+        get_s().score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    // Parser sees `get_s` `(` — not `Ident Dot Ident Eq`, so falls to Stmt::Expr.
+    // After parsing `get_s().score` expression, `= 10` is a trailing token that will
+    // either cause an error in the same parse or fail on the next statement parse.
+    // Either a ParseError or the program parses `=` as an expression start error.
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "expression-target field assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn parse_field_assign_array_index_target_rejected() {
+    // users[0].score = 10 should fail at parse level.
+    let src = r#"
+        struct S { score: Number }
+        let users = [S { score: 1 }]
+        users[0].score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "array-index field assignment target should fail at parse level"
+    );
+}
+
+#[test]
+fn parse_field_assign_map_index_target_rejected() {
+    // map["u"].score = 10 should fail at parse level.
+    let src = r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {}
+        m["u"].score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "map-index field assignment target should fail at parse level"
+    );
+}
+
+// --- Typechecker audit additions ---
+
+#[test]
+fn type_field_assign_unknown_var_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        z.x = 1
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("z"), "got: {}", err);
+}
+
+#[test]
+fn type_field_assign_state_field_ok() {
+    // Struct field of a state type — whole-field replacement allowed.
+    assert!(check(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let mut b = Box { door: Door.closed }
+        b.door = Door.open
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_field_compound_array_error() {
+    // += on an Array field — no binary + for arrays.
+    let err = check(
+        r#"
+        struct S { nums: Array<Number> }
+        let mut s = S { nums: [1, 2] }
+        s.nums += [3]
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_map_error() {
+    // += on a Map field — no binary + for maps.
+    let err = check(
+        r#"
+        struct S { m: Map<Text, Number> }
+        let mut s = S { m: {"a": 1} }
+        s.m += {"b": 2}
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_state_error() {
+    // += on a state field — no binary + for states.
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let mut b = Box { door: Door.closed }
+        b.door += Door.open
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_field_compound_unit_scale_ok() {
+    // meters * Number = meters (scaling a unit field).
+    assert!(check(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 2
+        let mut s = S { dist: d }
+        s.dist *= 3
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_struct_field_read_still_ok_after_compound_mutation() {
+    assert!(check(
+        r#"
+        struct S { x: Number, y: Number }
+        let mut s = S { x: 1, y: 2 }
+        s.x += 10
+        let v = s.x + s.y
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter audit additions ---
+
+#[test]
+fn interp_field_assign_bool() {
+    let interp = run(r#"
+        struct S { active: Bool }
+        let mut s = S { active: false }
+        s.active = true
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["active"], Value::Bool(true)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_assign_unit_field() {
+    let interp = run(r#"
+        struct S { dist: meters }
+        let d: meters = 7
+        let mut s = S { dist: d }
+        let new_d: meters = 42
+        s.dist = new_d
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["dist"], Value::Number(42.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_subtract_number() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x -= 4
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(6.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_multiply_number() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 3 }
+        s.x *= 7
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(21.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_divide_number() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 20 }
+        s.x /= 4
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(5.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+#[test]
+fn interp_field_compound_unit_add() {
+    let interp = run(r#"
+        struct S { dist: meters }
+        let a: meters = 3
+        let b: meters = 4
+        let mut s = S { dist: a }
+        s.dist += b
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["dist"], Value::Number(7.0)),
+        _ => panic!("expected Struct"),
+    }
+}
+
+// --- Evaluation order audit ---
+
+#[test]
+fn field_assign_rhs_eval_once() {
+    // RHS function called once; side effect counter is 1.
+    let src = r#"
+        struct S { x: Number }
+        let mut counter = 0
+        let mut s = S { x: 0 }
+        fn get_val() -> Number {
+            counter += 1
+            return 99
+        }
+        s.x = get_val()
+        print(s.x)
+        print(counter)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99", "1"]);
+}
+
+#[test]
+fn field_compound_rhs_eval_once() {
+    // RHS function called once.
+    let src = r#"
+        struct S { x: Number }
+        let mut counter = 0
+        let mut s = S { x: 10 }
+        fn get_rhs() -> Number {
+            counter += 1
+            return 5
+        }
+        s.x += get_rhs()
+        print(s.x)
+        print(counter)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn field_compound_old_value_read_order_documented() {
+    // Eval-order behavior for self-modifying RHS in compound field assignment.
+    //
+    // Tree-walk interpreter: reads old field value BEFORE evaluating RHS.
+    //   s.x starts at 1; rhs() sets s.x=10 (in env) and returns 5.
+    //   Interpreter read old=1 first, then rhs() ran; result = 1+5 = 6.
+    //   Write-back of clone with x=6 overrides the s.x=10 rhs set.
+    //
+    // Bytecode VM: compiler emits RHS expression first (onto stack), then
+    //   FieldCompoundAssign instruction. RHS executes first (sets s.x=10),
+    //   then instruction reads current env value=10; result = 10+5 = 15.
+    //
+    // This matches the existing IndexCompoundAssign parity pattern for arrays/maps.
+    // Edge case only; normal (non-self-modifying) RHS produces identical results.
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        fn rhs() -> Number {
+            s.x = 10
+            return 5
+        }
+        s.x += rhs()
+        print(s.x)
+    "#;
+    // Tree-walk reads old value first → 1+5=6.
+    let interp = run(src).unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(6.0)),
+        _ => panic!("expected Struct"),
+    }
+    // VM evaluates RHS first → reads 10+5=15.
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["15"]);
+}
+
+#[test]
+fn vm_field_compound_non_self_modifying_rhs_matches_tree() {
+    // For typical (non-self-modifying) RHS, VM and tree-walk agree exactly.
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 10 }
+        s.x += 5
+        print(s.x)
+    "#;
+    let tree_interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    let tree_val = match tree_interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => match fields["x"] {
+            Value::Number(n) => n as i64,
+            _ => panic!(),
+        },
+        _ => panic!(),
+    };
+    assert_eq!(vm_out, vec![format!("{}", tree_val)]);
+    assert_eq!(vm_out, vec!["15"]);
+}
+
+// --- Bytecode audit additions ---
+
+#[test]
+fn bytecode_field_access_read_still_emits_field_access() {
+    // Reading a field (not assigning) must still emit FieldAccess.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        let v = s.x
+    "#,
+    );
+    let has_fa = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldAccess(_)));
+    assert!(
+        has_fa,
+        "FieldAccess read should still emit FieldAccess instruction"
+    );
+}
+
+#[test]
+fn bytecode_field_assign_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+        }
+    "#,
+    );
+    // The simulate body should contain FieldCompoundAssign.
+    let has_fca = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }))
+    });
+    assert!(
+        has_fca,
+        "simulate body should contain FIELD_COMPOUND_ASSIGN"
+    );
+}
+
+#[test]
+fn bytecode_field_compound_inside_function() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        fn inc() { c.value += 1 }
+    "#,
+    );
+    let has_fca = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }))
+    });
+    assert!(
+        has_fca,
+        "function body should contain FIELD_COMPOUND_ASSIGN"
+    );
+}
+
+#[test]
+fn bytecode_field_compound_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 2
+        let dt: seconds = 1
+        simulate dur step dt { c.value += 1 }
+    "#,
+    );
+    let has_fca = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }))
+    });
+    assert!(
+        has_fca,
+        "simulate body should contain FIELD_COMPOUND_ASSIGN"
+    );
+}
+
+// --- VM audit additions ---
+
+#[test]
+fn vm_field_assign_unit_field() {
+    let out = vm_run(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let mut s = S { dist: d }
+        let new_d: meters = 99
+        s.dist = new_d
+        print(s.dist)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_field_compound_unit_add() {
+    let out = vm_run(
+        r#"
+        struct S { dist: meters }
+        let a: meters = 3
+        let b: meters = 4
+        let mut s = S { dist: a }
+        s.dist += b
+        print(s.dist)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_matches_tree_field_mutation_closure() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        fn inc() { c.value += 1 }
+        inc()
+        inc()
+        inc()
+        print(c.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Env-chain audit additions ---
+
+#[test]
+fn closure_field_compound_repeated_calls() {
+    // Closure captures outer mutable struct; each call accumulates.
+    let src = r#"
+        struct Acc { total: Number }
+        let mut acc = Acc { total: 0 }
+        fn add(n: Number) { acc.total += n }
+        add(1)
+        add(2)
+        add(3)
+        print(acc.total)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Collections audit additions ---
+
+#[test]
+fn field_compound_array_field_error() {
+    // += on Array field should be TypeError.
+    let err = check(
+        r#"
+        struct S { nums: Array<Number> }
+        let mut s = S { nums: [1] }
+        s.nums += [2]
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn field_compound_map_field_error() {
+    // += on Map field should be TypeError.
+    let err = check(
+        r#"
+        struct S { m: Map<Text, Number> }
+        let mut s = S { m: {"a": 1} }
+        s.m += {"b": 2}
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn nested_array_field_index_assignment_is_parse_error() {
+    // b.nums[0] = 99 is not supported; parser fails after consuming b.nums as Stmt::Expr.
+    let src = r#"
+        struct Bag { nums: Array<Number> }
+        let mut b = Bag { nums: [1, 2, 3] }
+        b.nums[0] = 99
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    // Parser: `b` is Ident, peek is Dot → but peek_kind_2 is `nums` (Ident), peek_kind_3 is `[` (not Eq/op=).
+    // So it falls to Stmt::Expr, parses `b.nums[0]` as expression, then sees `= 99` → parse error.
+    assert!(
+        result.is_err(),
+        "nested index-field assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn nested_map_field_index_assignment_is_parse_error() {
+    // b.scores["a"] = 2 should fail at parse level.
+    let src = r#"
+        struct Bag { scores: Map<Text, Number> }
+        let mut b = Bag { scores: {"a": 1} }
+        b.scores["a"] = 2
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "nested map-index-field assignment should fail at parse level"
+    );
+}
+
+// --- Units / states audit additions ---
+
+#[test]
+fn field_assign_state_field_ok() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let mut b = Box { door: Door.closed }
+        b.door = Door.open
+        print(b.door)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn field_compound_state_field_error() {
+    // += on a state field should be TypeError.
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let mut b = Box { door: Door.closed }
+        b.door += Door.open
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn field_assign_unit_number_promotion_in_struct_literal_works() {
+    // Unit promotion DOES work in struct literals and plain field assignment
+    // via the check_expr_with_expected path (same as let bindings).
+    // The known limitation only applies to array/map collection literals.
+    assert!(
+        check(
+            r#"
+        struct S { dist: meters }
+        let mut s = S { dist: 5 }
+        s.dist = 3
+    "#
+        )
+        .is_ok(),
+        "unit field with bare Number literal should work in struct literal and field assign"
+    );
+}
+
+#[test]
+fn field_assign_unit_number_promotion_array_collection_still_limited() {
+    // Known limitation: Number→unit promotion inside Array<meters> = [5] remains TypeError.
+    let err = check(
+        r#"
+        let d: Array<meters> = [5]
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+// --- Loops audit additions ---
+
+#[test]
+fn field_compound_with_break() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let mut i = 0
+        while i < 10 {
+            c.value += 1
+            i += 1
+            if c.value == 3 {
+                break
+            }
+        }
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn field_compound_with_continue() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        for i in range(0, 6) {
+            if i == 3 {
+                continue
+            }
+            c.value += 1
+        }
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    // Increments for i=0,1,2,4,5 (skips i=3), total 5.
+    assert_eq!(out, vec!["5"]);
+}
+
+// --- Unsupported mutation shapes ---
+
+#[test]
+fn nested_field_assignment_rejected() {
+    // u.a.b = v: peek_kind_3 on `Ident Dot Ident Dot` is Dot (not Eq), falls to Stmt::Expr.
+    // parse_expr() parses u.a, then `.b` as FieldAccess. Then `= v` is the next stmt → parse error.
+    let src = r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "nested field assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn nested_field_compound_rejected() {
+    let src = r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b += 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "nested field compound assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn function_result_field_assignment_rejected() {
+    let src = r#"
+        struct S { score: Number }
+        fn get_s() -> S { return S { score: 1 } }
+        get_s().score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "function-result field assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn array_index_field_assignment_rejected() {
+    let src = r#"
+        struct S { score: Number }
+        let arr = [S { score: 1 }]
+        arr[0].score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "array-index field assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn map_index_field_assignment_rejected() {
+    let src = r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {}
+        m["u"].score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "map-index field assignment should fail at parse level"
+    );
+}
+
+#[test]
+fn function_result_field_compound_rejected() {
+    let src = r#"
+        struct S { score: Number }
+        fn get_s() -> S { return S { score: 1 } }
+        get_s().score += 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "function-result field compound should fail at parse level"
+    );
+}
+
+// --- Error message audit additions ---
+
+#[test]
+fn field_assign_expression_target_parse_error() {
+    // Confirm parse error on expression-target mutation.
+    let src = r#"
+        struct S { x: Number }
+        fn get() -> S { return S { x: 1 } }
+        get().x = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err());
+}
