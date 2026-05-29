@@ -1202,6 +1202,166 @@ impl TypeChecker {
                 self.loop_depth = saved_loop_depth;
                 result
             }
+
+            Stmt::FieldAssign {
+                name,
+                field,
+                value,
+                span,
+            } => {
+                let (var_ty, var_mutable) = self
+                    .env
+                    .get(name)
+                    .map(|vi| (vi.ty.clone(), vi.mutable))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                if !var_mutable {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let struct_name = match &var_ty {
+                    Type::Struct(s) => s.clone(),
+                    Type::Unknown => {
+                        self.check_expr(value, *span)?;
+                        return Ok(());
+                    }
+                    other => {
+                        return Err(TypeError {
+                            msg: format!("cannot assign field '{}' on {}", field, other.name()),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                };
+
+                let field_ty = self
+                    .structs
+                    .get(&struct_name)
+                    .ok_or_else(|| TypeError {
+                        msg: format!("unknown struct '{}'", struct_name),
+                        line: span.line,
+                        col: span.col,
+                    })?
+                    .fields
+                    .get(field)
+                    .cloned()
+                    .ok_or_else(|| TypeError {
+                        msg: format!("struct '{}' has no field '{}'", struct_name, field),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                let val_ty = self.check_expr_with_expected(value, Some(&field_ty), *span)?;
+                let compatible = val_ty.is_unknown()
+                    || field_ty.is_unknown()
+                    || val_ty == field_ty
+                    || (matches!(&field_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "field '{}' expected {} but got {}",
+                            field,
+                            field_ty.name(),
+                            val_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::FieldCompoundAssign {
+                name,
+                field,
+                op,
+                value,
+                span,
+            } => {
+                let (var_ty, var_mutable) = self
+                    .env
+                    .get(name)
+                    .map(|vi| (vi.ty.clone(), vi.mutable))
+                    .ok_or_else(|| TypeError {
+                        msg: format!("undefined variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                if !var_mutable {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
+                let struct_name = match &var_ty {
+                    Type::Struct(s) => s.clone(),
+                    Type::Unknown => {
+                        self.check_expr(value, *span)?;
+                        return Ok(());
+                    }
+                    other => {
+                        return Err(TypeError {
+                            msg: format!("cannot assign field '{}' on {}", field, other.name()),
+                            line: span.line,
+                            col: span.col,
+                        })
+                    }
+                };
+
+                let field_ty = self
+                    .structs
+                    .get(&struct_name)
+                    .ok_or_else(|| TypeError {
+                        msg: format!("unknown struct '{}'", struct_name),
+                        line: span.line,
+                        col: span.col,
+                    })?
+                    .fields
+                    .get(field)
+                    .cloned()
+                    .ok_or_else(|| TypeError {
+                        msg: format!("struct '{}' has no field '{}'", struct_name, field),
+                        line: span.line,
+                        col: span.col,
+                    })?;
+
+                let rhs_ty = self.check_expr(value, *span)?;
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+                let result_ty = self.check_binary(&binary_op, field_ty.clone(), rhs_ty, *span)?;
+                let compatible = result_ty.is_unknown()
+                    || field_ty.is_unknown()
+                    || result_ty == field_ty
+                    || (matches!(&field_ty, Type::NumberWithUnit(_)) && result_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "field '{}' has type {} but compound assignment result has type {}",
+                            field,
+                            field_ty.name(),
+                            result_ty.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
         }
     }
 

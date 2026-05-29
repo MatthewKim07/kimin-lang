@@ -373,6 +373,106 @@ impl Interpreter {
                 Ok(ExecFlow::Normal)
             }
 
+            Stmt::FieldAssign {
+                name, field, value, ..
+            } => {
+                let new_val = self.eval_expr(value)?;
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+                match current {
+                    Value::Struct {
+                        name: struct_name,
+                        mut fields,
+                    } => {
+                        if !fields.contains_key(field.as_str()) {
+                            return Err(RuntimeError {
+                                msg: format!("struct '{}' has no field '{}'", struct_name, field),
+                            });
+                        }
+                        fields.insert(field.clone(), new_val);
+                        if !self.env.borrow_mut().assign_existing(
+                            name,
+                            Value::Struct {
+                                name: struct_name,
+                                fields,
+                            },
+                        ) {
+                            return Err(RuntimeError {
+                                msg: format!("undefined variable '{}'", name),
+                            });
+                        }
+                    }
+                    other => {
+                        return Err(RuntimeError {
+                            msg: format!(
+                                "cannot assign field '{}' on {}",
+                                field,
+                                other.type_name()
+                            ),
+                        })
+                    }
+                }
+                Ok(ExecFlow::Normal)
+            }
+
+            Stmt::FieldCompoundAssign {
+                name,
+                field,
+                op,
+                value,
+                ..
+            } => {
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+
+                // Clone the struct out of the env; borrow released at end of statement.
+                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", name),
+                })?;
+                let (struct_name, old_field_val, mut fields) =
+                    match current {
+                        Value::Struct { name: sn, fields } => {
+                            let old = fields.get(field.as_str()).cloned().ok_or_else(|| {
+                                RuntimeError {
+                                    msg: format!("struct '{}' has no field '{}'", sn, field),
+                                }
+                            })?;
+                            (sn, old, fields)
+                        }
+                        other => {
+                            return Err(RuntimeError {
+                                msg: format!(
+                                    "cannot assign field '{}' on {}",
+                                    field,
+                                    other.type_name()
+                                ),
+                            })
+                        }
+                    };
+
+                // Evaluate RHS after releasing the borrow above.
+                let rhs = self.eval_expr(value)?;
+                let new_val = eval_binary(&binary_op, old_field_val, rhs)?;
+                fields.insert(field.clone(), new_val);
+                if !self.env.borrow_mut().assign_existing(
+                    name,
+                    Value::Struct {
+                        name: struct_name,
+                        fields,
+                    },
+                ) {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", name),
+                    });
+                }
+                Ok(ExecFlow::Normal)
+            }
+
             Stmt::While {
                 condition, body, ..
             } => {
