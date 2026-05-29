@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, CompoundAssignOp, Expr, Param, StateTransition, StateVariant, Stmt, TypeAnnotation,
-    UnaryOp,
+    AssignTarget, BinaryOp, CompoundAssignOp, Expr, Param, StateTransition, StateVariant, Stmt,
+    TypeAnnotation, UnaryOp,
 };
 use crate::error::ParseError;
 use crate::token::{Span, Token, TokenKind};
@@ -88,42 +88,8 @@ impl Parser {
             self.parse_if()
         } else if matches!(self.current_kind(), TokenKind::LBrace) {
             self.parse_block()
-        } else if matches!(self.current_kind(), TokenKind::Ident(_))
-            && matches!(self.peek_kind(), TokenKind::LBracket)
-        {
-            self.parse_index_assign_or_expr()
-        } else if matches!(self.current_kind(), TokenKind::Ident(_))
-            && matches!(self.peek_kind(), TokenKind::Dot)
-            && matches!(self.peek_kind_2(), TokenKind::Ident(_))
-            && matches!(self.peek_kind_3(), TokenKind::Eq)
-        {
-            self.parse_field_assign()
-        } else if matches!(self.current_kind(), TokenKind::Ident(_))
-            && matches!(self.peek_kind(), TokenKind::Dot)
-            && matches!(self.peek_kind_2(), TokenKind::Ident(_))
-            && matches!(
-                self.peek_kind_3(),
-                TokenKind::PlusEqual
-                    | TokenKind::MinusEqual
-                    | TokenKind::StarEqual
-                    | TokenKind::SlashEqual
-            )
-        {
-            self.parse_field_compound_assign()
-        } else if matches!(self.current_kind(), TokenKind::Ident(_))
-            && matches!(self.peek_kind(), TokenKind::Eq)
-        {
-            self.parse_assign()
-        } else if matches!(self.current_kind(), TokenKind::Ident(_))
-            && matches!(
-                self.peek_kind(),
-                TokenKind::PlusEqual
-                    | TokenKind::MinusEqual
-                    | TokenKind::StarEqual
-                    | TokenKind::SlashEqual
-            )
-        {
-            self.parse_compound_assign()
+        } else if matches!(self.current_kind(), TokenKind::Ident(_)) {
+            self.parse_target_assign_or_expr()
         } else {
             Ok(Stmt::Expr(self.parse_expr()?))
         }
@@ -588,146 +554,111 @@ impl Parser {
         })
     }
 
-    fn parse_compound_assign(&mut self) -> Result<Stmt, ParseError> {
-        let span = self.current_span();
-        let name = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => unreachable!(),
-        };
-        self.advance(); // consume identifier
-        let op = match self.current_kind() {
-            TokenKind::PlusEqual => CompoundAssignOp::Add,
-            TokenKind::MinusEqual => CompoundAssignOp::Subtract,
-            TokenKind::StarEqual => CompoundAssignOp::Multiply,
-            TokenKind::SlashEqual => CompoundAssignOp::Divide,
-            _ => unreachable!(),
-        };
-        self.advance(); // consume compound operator
-        let value = self.parse_expr()?;
-        Ok(Stmt::CompoundAssign {
-            name,
-            op,
-            value,
-            span,
-        })
-    }
-
-    fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
-        let span = self.current_span();
-        let name = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => unreachable!(),
-        };
-        self.advance(); // consume identifier
-        self.advance(); // consume `=`
-        let value = self.parse_expr()?;
-        Ok(Stmt::Assign { name, value, span })
-    }
-
-    fn parse_field_assign(&mut self) -> Result<Stmt, ParseError> {
-        let span = self.current_span();
-        let name = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => unreachable!(),
-        };
-        self.advance(); // consume `name`
-        self.advance(); // consume `.`
-        let field = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => return Err(self.error("expected field name after '.' in field assignment")),
-        };
-        self.advance(); // consume field name
-        self.advance(); // consume `=`
-        let value = self.parse_expr()?;
-        Ok(Stmt::FieldAssign {
-            name,
-            field,
-            value,
-            span,
-        })
-    }
-
-    fn parse_field_compound_assign(&mut self) -> Result<Stmt, ParseError> {
-        let span = self.current_span();
-        let name = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => unreachable!(),
-        };
-        self.advance(); // consume `name`
-        self.advance(); // consume `.`
-        let field = match self.current_kind() {
-            TokenKind::Ident(n) => n.clone(),
-            _ => {
-                return Err(self.error("expected field name after '.' in field compound assignment"))
-            }
-        };
-        self.advance(); // consume field name
-        let op = match self.current_kind() {
-            TokenKind::PlusEqual => CompoundAssignOp::Add,
-            TokenKind::MinusEqual => CompoundAssignOp::Subtract,
-            TokenKind::StarEqual => CompoundAssignOp::Multiply,
-            TokenKind::SlashEqual => CompoundAssignOp::Divide,
-            _ => unreachable!(),
-        };
-        self.advance(); // consume op=
-        let value = self.parse_expr()?;
-        Ok(Stmt::FieldCompoundAssign {
-            name,
-            field,
-            op,
-            value,
-            span,
-        })
-    }
-
-    /// Try to parse `name[index] = value` as `Stmt::IndexAssign`,
-    /// or `name[index] op= value` as `Stmt::IndexCompoundAssign`.
-    /// If after `]` there is no assignment operator, backtrack and parse as a plain expression statement.
-    fn parse_index_assign_or_expr(&mut self) -> Result<Stmt, ParseError> {
+    /// Unified assignment/expression parser for all identifier-led statements.
+    ///
+    /// Attempts to parse an assignment target path (chained `.field` and `[index]` steps),
+    /// then checks for `=` or `op=`. If found, produces the appropriate assignment statement.
+    /// Otherwise backtracks and parses the entire thing as an expression statement.
+    ///
+    /// Produces existing statement types for backward-compatible shapes:
+    ///   `u = v`        → Stmt::Assign
+    ///   `u op= v`      → Stmt::CompoundAssign
+    ///   `arr[i] = v`   → Stmt::IndexAssign   (root-only index)
+    ///   `arr[i] op= v` → Stmt::IndexCompoundAssign
+    ///   `u.f = v`      → Stmt::TargetAssign  (path ending in field)
+    ///   `u.f op= v`    → Stmt::TargetCompoundAssign
+    ///   `arr[i].f = v` → Stmt::TargetAssign
+    ///   `u.f.g = v`    → Stmt::TargetAssign
+    fn parse_target_assign_or_expr(&mut self) -> Result<Stmt, ParseError> {
         let saved_pos = self.pos;
         let span = self.current_span();
+
         let name = match self.current_kind() {
             TokenKind::Ident(n) => n.clone(),
-            _ => unreachable!(),
+            _ => return Ok(Stmt::Expr(self.parse_expr()?)),
         };
         self.advance(); // consume name
-        self.advance(); // consume `[`
 
-        // Let expression parsing produce the dedicated open-start slice error.
-        if matches!(self.current_kind(), TokenKind::DotDot) {
-            self.pos = saved_pos;
-            return Ok(Stmt::Expr(self.parse_expr()?));
+        let mut target = AssignTarget::Var(name);
+
+        // Extend target with chained .field and [index] steps.
+        // Stop on function call `(`, DotDot inside `[]`, or any non-target token.
+        loop {
+            if matches!(self.current_kind(), TokenKind::Dot) {
+                self.advance(); // consume .
+                let field = match self.current_kind() {
+                    TokenKind::Ident(f) => f.clone(),
+                    _ => {
+                        // Unexpected token after . — backtrack and parse as expression.
+                        self.pos = saved_pos;
+                        return Ok(Stmt::Expr(self.parse_expr()?));
+                    }
+                };
+                self.advance(); // consume field name
+                target = AssignTarget::Field(Box::new(target), field);
+            } else if matches!(self.current_kind(), TokenKind::LBracket) {
+                self.advance(); // consume [
+                                // Immediately DotDot → open-start slice, not a valid index step.
+                if matches!(self.current_kind(), TokenKind::DotDot) {
+                    self.pos = saved_pos;
+                    return Ok(Stmt::Expr(self.parse_expr()?));
+                }
+                // Parse index expression.
+                let index = self.parse_expr()?;
+                // DotDot after index → slice expression, not assignment target.
+                if matches!(self.current_kind(), TokenKind::DotDot) {
+                    self.pos = saved_pos;
+                    return Ok(Stmt::Expr(self.parse_expr()?));
+                }
+                if !matches!(self.current_kind(), TokenKind::RBracket) {
+                    return Err(self.error("expected ']' after index expression"));
+                }
+                self.advance(); // consume ]
+                target = AssignTarget::Index(Box::new(target), index);
+            } else {
+                break;
+            }
         }
 
-        let index = self.parse_expr()?;
-
-        // If DotDot follows, this is a slice expression — backtrack and parse as Stmt::Expr.
-        if matches!(self.current_kind(), TokenKind::DotDot) {
-            self.pos = saved_pos;
-            return Ok(Stmt::Expr(self.parse_expr()?));
-        }
-
-        if !matches!(self.current_kind(), TokenKind::RBracket) {
-            return Err(self.error("expected ']' after index expression"));
-        }
-        self.advance(); // consume `]`
-
-        if matches!(self.current_kind(), TokenKind::Eq) {
-            self.advance(); // consume `=`
-            let value = self.parse_expr()?;
-            Ok(Stmt::IndexAssign {
-                name,
-                index,
-                value,
-                span,
-            })
-        } else if matches!(
+        // Check for assignment operator.
+        let is_compound = matches!(
             self.current_kind(),
             TokenKind::PlusEqual
                 | TokenKind::MinusEqual
                 | TokenKind::StarEqual
                 | TokenKind::SlashEqual
-        ) {
+        );
+
+        if matches!(self.current_kind(), TokenKind::Eq) {
+            self.advance(); // consume =
+            let value = self.parse_expr()?;
+            return Ok(match target {
+                AssignTarget::Var(n) => Stmt::Assign {
+                    name: n,
+                    value,
+                    span,
+                },
+                AssignTarget::Index(inner, idx) if matches!(*inner, AssignTarget::Var(_)) => {
+                    let n = match *inner {
+                        AssignTarget::Var(n) => n,
+                        _ => unreachable!(),
+                    };
+                    Stmt::IndexAssign {
+                        name: n,
+                        index: idx,
+                        value,
+                        span,
+                    }
+                }
+                other => Stmt::TargetAssign {
+                    target: other,
+                    value,
+                    span,
+                },
+            });
+        }
+
+        if is_compound {
             let op = match self.current_kind() {
                 TokenKind::PlusEqual => CompoundAssignOp::Add,
                 TokenKind::MinusEqual => CompoundAssignOp::Subtract,
@@ -737,18 +668,38 @@ impl Parser {
             };
             self.advance(); // consume op=
             let value = self.parse_expr()?;
-            Ok(Stmt::IndexCompoundAssign {
-                name,
-                index,
-                op,
-                value,
-                span,
-            })
-        } else {
-            // Not an index assignment — backtrack and fall through to expression statement.
-            self.pos = saved_pos;
-            Ok(Stmt::Expr(self.parse_expr()?))
+            return Ok(match target {
+                AssignTarget::Var(n) => Stmt::CompoundAssign {
+                    name: n,
+                    op,
+                    value,
+                    span,
+                },
+                AssignTarget::Index(inner, idx) if matches!(*inner, AssignTarget::Var(_)) => {
+                    let n = match *inner {
+                        AssignTarget::Var(n) => n,
+                        _ => unreachable!(),
+                    };
+                    Stmt::IndexCompoundAssign {
+                        name: n,
+                        index: idx,
+                        op,
+                        value,
+                        span,
+                    }
+                }
+                other => Stmt::TargetCompoundAssign {
+                    target: other,
+                    op,
+                    value,
+                    span,
+                },
+            });
         }
+
+        // Not an assignment — backtrack and parse as expression statement.
+        self.pos = saved_pos;
+        Ok(Stmt::Expr(self.parse_expr()?))
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
@@ -1131,15 +1082,6 @@ impl Parser {
         let next2 = self.pos + 2;
         if next2 < self.tokens.len() {
             &self.tokens[next2].kind
-        } else {
-            &self.tokens[self.pos].kind
-        }
-    }
-
-    fn peek_kind_3(&self) -> &TokenKind {
-        let next3 = self.pos + 3;
-        if next3 < self.tokens.len() {
-            &self.tokens[next3].kind
         } else {
             &self.tokens[self.pos].kind
         }

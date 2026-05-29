@@ -145,6 +145,35 @@ pub enum CompoundAssignOp {
     Divide,
 }
 
+/// A recursive assignment target for path-based mutation.
+///
+/// Represents the left-hand side of `target = expr` and `target op= expr`
+/// where the target can be a nested chain of field accesses and index operations.
+///
+/// Examples:
+///   `u.score`                    → Field(Var("u"), "score")
+///   `users[0].score`             → Field(Index(Var("users"), 0_expr), "score")
+///   `company.owner.name`         → Field(Field(Var("company"), "owner"), "name")
+///   `scores["alice"].value`      → Field(Index(Var("scores"), "alice"_expr), "value")
+#[derive(Debug, Clone)]
+pub enum AssignTarget {
+    /// A root mutable variable.
+    Var(String),
+    /// Field access step: `target.field`.
+    Field(Box<AssignTarget>, String),
+    /// Index step: `target[expr]` — array index (Number) or map key (Text).
+    Index(Box<AssignTarget>, Expr),
+}
+
+/// A single step in a compiled assignment path (index steps consume a stack value).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathStep {
+    /// Access a named struct field. No stack value consumed.
+    Field(String),
+    /// Array/map index step. Consumes one value from the index-value sequence.
+    Index,
+}
+
 /// Statement nodes.
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -278,19 +307,17 @@ pub enum Stmt {
         fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },
-    /// Direct struct field assignment: `ident.field = expr`.
-    /// Only valid when `ident` names a mutable struct variable.
-    FieldAssign {
-        name: String,
-        field: String,
+    /// Path-based field mutation: `target.field = expr`.
+    /// `target` can be a variable, nested field path, array index, or map index.
+    /// The root variable must be mutable. Only valid as a statement.
+    TargetAssign {
+        target: AssignTarget,
         value: Expr,
         span: Span,
     },
-    /// Struct field compound assignment: `ident.field op= expr`.
-    /// Only valid when `ident` names a mutable struct variable.
-    FieldCompoundAssign {
-        name: String,
-        field: String,
+    /// Path-based field compound mutation: `target.field op= expr`.
+    TargetCompoundAssign {
+        target: AssignTarget,
         op: CompoundAssignOp,
         value: Expr,
         span: Span,
