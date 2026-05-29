@@ -50,6 +50,17 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
     out
 }
 
+fn fmt_path_steps(root: &str, steps: &[crate::ast::PathStep]) -> String {
+    let mut out = root.to_string();
+    for step in steps {
+        match step {
+            crate::ast::PathStep::Field(f) => out.push_str(&format!(".{}", f)),
+            crate::ast::PathStep::Index => out.push_str("[?]"),
+        }
+    }
+    out
+}
+
 fn fmt_constant(c: &Constant) -> String {
     match c {
         Constant::Number(n) => {
@@ -161,16 +172,20 @@ fn fmt_instruction(instr: &Instruction) -> String {
             format!("STRUCT_LITERAL {} fields=[{}]", name, fields.join(", "))
         }
         Instruction::FieldAccess(field) => format!("FIELD_ACCESS {}", field),
-        Instruction::SetField { name, field } => format!("SET_FIELD {}.{}", name, field),
-        Instruction::FieldCompoundAssign { name, field, op } => {
+        Instruction::SetPath { root, steps } => {
+            let path = fmt_path_steps(root, steps);
+            format!("SET_PATH {}", path)
+        }
+        Instruction::PathCompoundAssign { root, steps, op } => {
             use crate::ast::CompoundAssignOp;
+            let path = fmt_path_steps(root, steps);
             let op_str = match op {
                 CompoundAssignOp::Add => "+=",
                 CompoundAssignOp::Subtract => "-=",
                 CompoundAssignOp::Multiply => "*=",
                 CompoundAssignOp::Divide => "/=",
             };
-            format!("FIELD_COMPOUND_ASSIGN {}.{} {}", name, field, op_str)
+            format!("PATH_COMPOUND_ASSIGN {} {}", path, op_str)
         }
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }

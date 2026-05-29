@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{BinaryOp, CompoundAssignOp, Expr, Param, Stmt, UnaryOp};
+use crate::ast::{AssignTarget, BinaryOp, CompoundAssignOp, Expr, Param, PathStep, Stmt, UnaryOp};
 use crate::bytecode::{
     BytecodeProgram, Chunk, Constant, FunctionChunk, Instruction, SimulateChunk,
 };
@@ -214,30 +214,28 @@ impl BytecodeCompiler {
                 });
             }
 
-            Stmt::FieldAssign {
-                name, field, value, ..
-            } => {
-                // Stack before SetField: [..., new_value]
+            Stmt::TargetAssign { target, value, .. } => {
+                // Compile index expressions left-to-right, then RHS, then SetPath.
+                let (root, steps, index_exprs) = compiler_flatten_target(target);
+                for expr in &index_exprs {
+                    self.compile_expr(expr)?;
+                }
                 self.compile_expr(value)?;
-                self.chunk.emit(Instruction::SetField {
-                    name: name.clone(),
-                    field: field.clone(),
-                });
+                self.chunk.emit(Instruction::SetPath { root, steps });
             }
 
-            Stmt::FieldCompoundAssign {
-                name,
-                field,
-                op,
-                value,
-                ..
+            Stmt::TargetCompoundAssign {
+                target, op, value, ..
             } => {
-                // Stack before FieldCompoundAssign: [..., rhs_value]
-                // VM reads old field value internally.
+                // Compile index expressions left-to-right, then RHS, then PathCompoundAssign.
+                let (root, steps, index_exprs) = compiler_flatten_target(target);
+                for expr in &index_exprs {
+                    self.compile_expr(expr)?;
+                }
                 self.compile_expr(value)?;
-                self.chunk.emit(Instruction::FieldCompoundAssign {
-                    name: name.clone(),
-                    field: field.clone(),
+                self.chunk.emit(Instruction::PathCompoundAssign {
+                    root,
+                    steps,
                     op: op.clone(),
                 });
             }
@@ -1094,5 +1092,24 @@ impl BytecodeCompiler {
             }
         }
         Ok(())
+    }
+}
+
+/// Decompose an AssignTarget into (root_name, bytecode_steps, index_exprs_in_source_order).
+/// Index expressions must be compiled left-to-right before the RHS.
+fn compiler_flatten_target(target: &AssignTarget) -> (String, Vec<PathStep>, Vec<Expr>) {
+    match target {
+        AssignTarget::Var(name) => (name.clone(), vec![], vec![]),
+        AssignTarget::Field(inner, field) => {
+            let (root, mut steps, exprs) = compiler_flatten_target(inner);
+            steps.push(PathStep::Field(field.clone()));
+            (root, steps, exprs)
+        }
+        AssignTarget::Index(inner, expr) => {
+            let (root, mut steps, mut exprs) = compiler_flatten_target(inner);
+            steps.push(PathStep::Index);
+            exprs.push(expr.clone());
+            (root, steps, exprs)
+        }
     }
 }

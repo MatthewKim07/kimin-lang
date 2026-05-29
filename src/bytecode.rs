@@ -178,20 +178,27 @@ pub enum Instruction {
     /// Stack: [..., struct_value] → field_value.
     FieldAccess(String),
 
-    /// Assign a value to a named field on a named struct variable.
-    /// Stack before: [..., new_value] — pops value; loads struct `name` from env;
-    /// clones field map; updates `field`; assigns updated struct back via assign_existing.
-    SetField {
-        name: String,
-        field: String,
+    /// Assign a value through a path rooted at a named variable.
+    ///
+    /// Stack before: [..., index0_val, ..., indexN_val, new_value]
+    /// where index_k is the k-th Index step's value compiled left-to-right.
+    ///
+    /// Pops new_value (top), then pops N index values (reverses to left-to-right order),
+    /// loads root variable from env, walks path (Field steps use embedded name; Index steps
+    /// consume index values), updates the final location, assigns updated root back.
+    SetPath {
+        root: String,
+        steps: Vec<crate::ast::PathStep>,
     },
 
-    /// Compound-assign a field on a named struct variable: `name.field op= rhs`.
-    /// Stack before: [..., rhs_value] — pops rhs; loads struct `name` from env;
-    /// reads old field value; applies op(old, rhs); updates field; assigns back.
-    FieldCompoundAssign {
-        name: String,
-        field: String,
+    /// Compound-assign through a path: `target op= rhs`.
+    ///
+    /// Stack before: [..., index0_val, ..., indexN_val, rhs_value]
+    /// Pops rhs, pops N index values (reverses to order), reads old value at path,
+    /// applies op(old, rhs), writes new value back through path.
+    PathCompoundAssign {
+        root: String,
+        steps: Vec<crate::ast::PathStep>,
         op: crate::ast::CompoundAssignOp,
     },
 

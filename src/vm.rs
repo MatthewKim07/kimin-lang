@@ -1190,75 +1190,48 @@ impl Vm {
                     }
                 }
 
-                Instruction::SetField { name, field } => {
+                Instruction::SetPath { root, steps } => {
+                    // Stack: [..., index0_val, ..., indexN_val, new_value]
+                    let n_index = steps
+                        .iter()
+                        .filter(|s| matches!(s, crate::ast::PathStep::Index))
+                        .count();
                     let new_val = pop(stack)?;
-                    let current = current_env
+                    // Pop index values in stack order (top = last compiled = rightmost index).
+                    let mut idx_vals_rev: Vec<Value> =
+                        (0..n_index).map(|_| pop(stack)).collect::<Result<_, _>>()?;
+                    idx_vals_rev.reverse(); // restore left-to-right (source) order
+                    let root_val = current_env
                         .borrow()
-                        .get(&name)
-                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
-                    match current {
-                        Value::Struct {
-                            name: struct_name,
-                            mut fields,
-                        } => {
-                            if !fields.contains_key(&field) {
-                                return Err(runtime_err(&format!(
-                                    "struct '{}' has no field '{}'",
-                                    struct_name, field
-                                )));
-                            }
-                            fields.insert(field.clone(), new_val);
-                            if !current_env.borrow_mut().assign_existing(
-                                &name,
-                                Value::Struct {
-                                    name: struct_name,
-                                    fields,
-                                },
-                            ) {
-                                return Err(runtime_err(&format!("undefined variable '{}'", name)));
-                            }
-                        }
-                        other => {
-                            return Err(runtime_err(&format!(
-                                "cannot assign field '{}' on {}",
-                                field,
-                                other.type_name()
-                            )));
-                        }
+                        .get(&root)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", root)))?;
+                    let updated = vm_update_path(root_val, &steps, &idx_vals_rev, &mut 0, new_val)?;
+                    if !current_env.borrow_mut().assign_existing(&root, updated) {
+                        return Err(runtime_err(&format!("undefined variable '{}'", root)));
                     }
                 }
 
-                Instruction::FieldCompoundAssign { name, field, op } => {
+                Instruction::PathCompoundAssign { root, steps, op } => {
+                    // Stack: [..., index0_val, ..., indexN_val, rhs_value]
+                    // RHS is evaluated first (compiler order), so it is on top.
+                    let n_index = steps
+                        .iter()
+                        .filter(|s| matches!(s, crate::ast::PathStep::Index))
+                        .count();
                     let rhs = pop(stack)?;
-                    let current = current_env
+                    let mut idx_vals_rev: Vec<Value> =
+                        (0..n_index).map(|_| pop(stack)).collect::<Result<_, _>>()?;
+                    idx_vals_rev.reverse();
+                    let root_val = current_env
                         .borrow()
-                        .get(&name)
-                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
-                    let (struct_name, old_val, mut fields) = match current {
-                        Value::Struct { name: sn, fields } => {
-                            let old = fields.get(&field).cloned().ok_or_else(|| {
-                                runtime_err(&format!("struct '{}' has no field '{}'", sn, field))
-                            })?;
-                            (sn, old, fields)
-                        }
-                        other => {
-                            return Err(runtime_err(&format!(
-                                "cannot assign field '{}' on {}",
-                                field,
-                                other.type_name()
-                            )));
-                        }
-                    };
+                        .get(&root)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", root)))?;
+                    // Read old value at path (struct was already modified by RHS side effects if any).
+                    let old_val = vm_read_path(&root_val, &steps, &idx_vals_rev, &mut 0)?;
                     let new_val = apply_compound_op(&op, old_val, rhs)?;
-                    fields.insert(field.clone(), new_val);
-                    if !current_env.borrow_mut().assign_existing(
-                        &name,
-                        Value::Struct {
-                            name: struct_name,
-                            fields,
-                        },
-                    ) {
-                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    let updated = vm_update_path(root_val, &steps, &idx_vals_rev, &mut 0, new_val)?;
+                    if !current_env.borrow_mut().assign_existing(&root, updated) {
+                        return Err(runtime_err(&format!("undefined variable '{}'", root)));
                     }
                 }
 
@@ -1330,5 +1303,156 @@ fn apply_compound_op(
             }
             _ => Err(runtime_err("'/=' requires numbers")),
         },
+    }
+}
+
+// ---- Path read/update helpers for SetPath / PathCompoundAssign ----
+
+fn vm_read_path(
+    val: &Value,
+    steps: &[crate::ast::PathStep],
+    index_vals: &[Value],
+    idx_pos: &mut usize,
+) -> Result<Value, KiminError> {
+    if steps.is_empty() {
+        return Ok(val.clone());
+    }
+    match &steps[0] {
+        crate::ast::PathStep::Field(field) => match val {
+            Value::Struct { fields, .. } => {
+                let inner = fields
+                    .get(field.as_str())
+                    .ok_or_else(|| runtime_err(&format!("struct has no field '{}'", field)))?;
+                vm_read_path(inner, &steps[1..], index_vals, idx_pos)
+            }
+            other => Err(runtime_err(&format!(
+                "cannot access field on {}",
+                other.type_name()
+            ))),
+        },
+        crate::ast::PathStep::Index => {
+            let idx_val = &index_vals[*idx_pos];
+            *idx_pos += 1;
+            match val {
+                Value::Array(elems) => {
+                    let i = vm_array_index(idx_val, elems.len())?;
+                    vm_read_path(&elems[i], &steps[1..], index_vals, idx_pos)
+                }
+                Value::Map(map) => {
+                    let key = vm_map_key(idx_val)?;
+                    let inner = map
+                        .get(&key)
+                        .ok_or_else(|| runtime_err(&format!("map key '{}' not found", key)))?;
+                    vm_read_path(inner, &steps[1..], index_vals, idx_pos)
+                }
+                other => Err(runtime_err(&format!(
+                    "cannot index into {}",
+                    other.type_name()
+                ))),
+            }
+        }
+    }
+}
+
+fn vm_update_path(
+    val: Value,
+    steps: &[crate::ast::PathStep],
+    index_vals: &[Value],
+    idx_pos: &mut usize,
+    new_val: Value,
+) -> Result<Value, KiminError> {
+    if steps.is_empty() {
+        return Ok(new_val);
+    }
+    match &steps[0] {
+        crate::ast::PathStep::Field(field) => match val {
+            Value::Struct {
+                name: sn,
+                mut fields,
+            } => {
+                if !fields.contains_key(field.as_str()) {
+                    return Err(runtime_err(&format!(
+                        "struct '{}' has no field '{}'",
+                        sn, field
+                    )));
+                }
+                let old = fields.remove(field).unwrap();
+                let updated = vm_update_path(old, &steps[1..], index_vals, idx_pos, new_val)?;
+                fields.insert(field.clone(), updated);
+                Ok(Value::Struct { name: sn, fields })
+            }
+            other => Err(runtime_err(&format!(
+                "cannot assign field on {}",
+                other.type_name()
+            ))),
+        },
+        crate::ast::PathStep::Index => {
+            let idx_val = index_vals[*idx_pos].clone();
+            *idx_pos += 1;
+            match val {
+                Value::Array(mut elems) => {
+                    let i = vm_array_index(&idx_val, elems.len())?;
+                    let old = elems[i].clone();
+                    elems[i] = vm_update_path(old, &steps[1..], index_vals, idx_pos, new_val)?;
+                    Ok(Value::Array(elems))
+                }
+                Value::Map(mut map) => {
+                    let key = vm_map_key(&idx_val)?;
+                    let old = map
+                        .get(&key)
+                        .cloned()
+                        .ok_or_else(|| runtime_err(&format!("map key '{}' not found", key)))?;
+                    let updated = vm_update_path(old, &steps[1..], index_vals, idx_pos, new_val)?;
+                    map.insert(key, updated);
+                    Ok(Value::Map(map))
+                }
+                other => Err(runtime_err(&format!(
+                    "cannot index into {}",
+                    other.type_name()
+                ))),
+            }
+        }
+    }
+}
+
+fn vm_array_index(idx_val: &Value, len: usize) -> Result<usize, KiminError> {
+    let n = match idx_val {
+        Value::Number(n) => *n,
+        other => {
+            return Err(runtime_err(&format!(
+                "array index must be Number, got {}",
+                other.type_name()
+            )))
+        }
+    };
+    if n.fract() != 0.0 {
+        return Err(runtime_err(&format!(
+            "array index must be an integer, got {}",
+            n
+        )));
+    }
+    if n < 0.0 {
+        return Err(runtime_err(&format!(
+            "array index out of bounds: {} is negative",
+            n as i64
+        )));
+    }
+    let i = n as usize;
+    if i >= len {
+        return Err(runtime_err(&format!(
+            "array index out of bounds: index {} but length is {}",
+            i, len
+        )));
+    }
+    Ok(i)
+}
+
+fn vm_map_key(idx_val: &Value) -> Result<String, KiminError> {
+    match idx_val {
+        Value::Str(s) => Ok(s.clone()),
+        other => Err(runtime_err(&format!(
+            "map index key must be Text, got {}",
+            other.type_name()
+        ))),
     }
 }
