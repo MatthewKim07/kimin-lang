@@ -1500,12 +1500,69 @@ Structs print as `User { name: alice, score: 10 }` — field names in BTreeMap a
 
 #### Restrictions
 
-- **No field mutation**: `u.name = "bob"` is unsupported; structs are fully immutable
 - **No methods**: no `fn` attached to a struct; no `self` parameter
 - **Struct type annotations require exact match**: `let u: User = User { ... }` is valid; `let u: User = Point { ... }` is a `TypeError`; annotation and literal struct name must agree
 - **No nested struct literals**: `User { address: Address { city: "NY" } }` is unsupported
 - **No generics**: `struct Box<T> { value: T }` is unsupported
 - **No inheritance**: no extends/implements/traits
+- **No nested field mutation**: `u.a.b = v` is unsupported
+- **No expression-target field mutation**: `arr[0].f = v`, `get_user().f = v` unsupported; only plain mutable variable targets
+
+---
+
+### 4.11c Struct Field Mutation (Milestone 15B)
+
+Mutable struct variables support direct field assignment and compound field assignment.
+
+#### Plain field assignment
+
+```kimin
+struct User { name: Text, score: Number }
+
+let mut u = User { name: "alice", score: 10 }
+u.score = 20
+u.name = "bob"
+```
+
+Rules:
+- Target must be a plain identifier (not an expression): `ident.field = expr`
+- The variable must be declared `let mut`
+- The variable must hold a struct value
+- The field must exist on the struct
+- The assigned value must be compatible with the field's declared type
+
+#### Compound field assignment
+
+```kimin
+u.score += 5
+u.score -= 2
+u.score *= 3
+u.score /= 2
+u.name += " kim"
+```
+
+Rules:
+- Same variable and field requirements as plain assignment
+- Old field value is read, RHS evaluated, binary op applied
+- Result must be compatible with the field's declared type
+- Follows the same operator rules as regular compound assignment (`+=` on Text concatenates)
+
+#### Runtime semantics
+
+- Struct is cloned out of the environment, the named field is updated in the cloned BTreeMap, and the updated struct is written back via `assign_existing` — all other fields are preserved
+- Works through the full env chain (closures can mutate outer mutable structs)
+
+#### Type rules
+
+| Construct | Rule |
+|-----------|------|
+| `s.f = v` | `s` must be mutable `Type::Struct("S")`; `f` must exist; `v` must be compatible with field type |
+| `s.f += v` | Same requirements; `check_binary(field_type, op, rhs_type)` must succeed; result assignable back to field type |
+
+#### Bytecode
+
+- `Instruction::SetField { name, field }` — compiler emits RHS value; VM pops value, loads struct variable by name, updates field, assigns back; disassembled as `SET_FIELD name.field`
+- `Instruction::FieldCompoundAssign { name, field, op }` — compiler emits RHS; VM pops rhs, loads struct, reads old field value, applies `apply_compound_op(op, old, rhs)`, updates field, assigns back; disassembled as `FIELD_COMPOUND_ASSIGN name.field op=`
 
 ---
 
