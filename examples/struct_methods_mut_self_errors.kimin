@@ -1,0 +1,31 @@
+// Runnable demonstration of mut self methods.
+
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn inc(mut self) -> Counter {
+    self.value += 1
+    return self
+  }
+}
+
+let c = Counter { value: 0 }
+let c2 = c.inc()
+
+print(c.value)
+print(c2.value)
+
+// Uncomment to test typed self (ParseError):
+// impl Counter {
+//   fn bad(mut self: Counter) -> Counter { return self }
+// }
+
+// Uncomment to test wrong field type (TypeError):
+// impl Counter {
+//   fn bad(mut self) -> Counter {
+//     self.value = "wrong"
+//     return self
+//   }
+// }

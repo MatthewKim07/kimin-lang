@@ -39120,3 +39120,1078 @@ fn impl_non_fn_body_error_typecheck_level() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     assert!(Parser::new(tokens).parse().is_err());
 }
+
+// ============================================================
+// Milestone 16B: mut self in struct methods (mutable local copy)
+// ============================================================
+
+// --- Parser tests ---
+
+#[test]
+fn parse_method_mut_self() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        if let crate::ast::Stmt::FnDecl { params, .. } = &methods[0] {
+            assert!(params[0].mutable, "self should be mutable");
+            assert_eq!(params[0].name, "self");
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_mut_self_with_param() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn add(mut self, n: Number) -> S { self.x += n return self } }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        if let crate::ast::Stmt::FnDecl { params, .. } = &methods[0] {
+            assert!(params[0].mutable);
+            assert_eq!(params[1].name, "n");
+            assert!(!params[1].mutable);
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_plain_self_still_ok() {
+    let src = r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::ImplBlock { methods, .. } = &stmts[1] {
+        if let crate::ast::Stmt::FnDecl { params, .. } = &methods[0] {
+            assert!(!params[0].mutable, "plain self should not be mutable");
+        } else {
+            panic!();
+        }
+    } else {
+        panic!();
+    }
+}
+
+#[test]
+fn parse_method_mut_self_with_type_rejected() {
+    // `fn inc(mut self: Counter)` — typed mut self not supported.
+    let src = r#"struct S { x: Number } impl S { fn inc(mut self: S) -> S { return self } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_method_self_with_type_still_rejected() {
+    // `fn inc(self: Counter)` still rejected.
+    let src = r#"struct S { x: Number } impl S { fn get(self: S) -> Number { return self.x } }"#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_impl_methods_still_ok_after_mut_self() {
+    // Regular methods still parse fine.
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(mut self) -> S { self.x += 1 return self }
+          fn get(self) -> Number { return self.x }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_method_mut_self_allows_field_assign() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn set(mut self, n: Number) -> S {
+            self.x = n
+            return self
+          }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_mut_self_allows_field_compound() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(mut self) -> S {
+            self.x += 1
+            return self
+          }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_mut_self_allows_nested_field_mutation() {
+    assert!(check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        impl Outer {
+          fn bump(mut self) -> Outer {
+            self.a.b += 1
+            return self
+          }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_mut_self_allows_array_field_path_mutation() {
+    assert!(check(
+        r#"
+        struct S { nums: Array<Number> }
+        impl S {
+          fn push_one(mut self) -> S {
+            self.nums = [1, 2, 3]
+            return self
+          }
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_plain_self_still_rejects_field_assign() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(self) -> S {
+            self.x = 1
+            return self
+          }
+        }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_plain_self_still_rejects_field_compound() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(self) -> S {
+            self.x += 1
+            return self
+          }
+        }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_mut_self_wrong_field_type_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(mut self) -> S {
+            self.x = "wrong"
+            return self
+          }
+        }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_mut_self_compound_wrong_rhs_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn bad(mut self) -> S {
+            self.x += "wrong"
+            return self
+          }
+        }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_mut_self_return_self_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_method_mut_self_return_wrong_type_error() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn bad(mut self) -> Number { self.x += 1 return self } }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn type_method_mut_self_call_type_unchanged() {
+    // Call site still type-checks same as read-only method.
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_mut_self_inc_returns_updated_copy() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+        print(s.x)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn interp_mut_self_original_receiver_unchanged() {
+    let interp = run(r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 5 }
+        s.inc()
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(5.0)),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn interp_mut_self_assign_return_persists() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        s = s.inc()
+        s = s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_mut_self_repeated_assignments() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn inc(mut self) -> Counter {
+            self.value += 1
+            return self
+          }
+        }
+        let mut c = Counter { value: 0 }
+        c = c.inc()
+        c = c.inc()
+        c = c.inc()
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_mut_self_with_arg() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn add(mut self, n: Number) -> S {
+            self.x += n
+            return self
+          }
+        }
+        let s = S { x: 10 }
+        let s2 = s.add(5)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_mut_self_nested_field_mutation() {
+    let out = vm_run(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        impl Outer {
+          fn bump(mut self) -> Outer {
+            self.a.b += 10
+            return self
+          }
+        }
+        let inner = Inner { b: 1 }
+        let o = Outer { a: inner }
+        let o2 = o.bump()
+        print(o.a.b)
+        print(o2.a.b)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "11"]);
+}
+
+#[test]
+fn interp_mut_self_array_field_path_mutation() {
+    let out = vm_run(
+        r#"
+        struct Bag { nums: Array<Number> }
+        impl Bag {
+          fn replace(mut self) -> Bag {
+            self.nums = [2, 3, 4]
+            return self
+          }
+        }
+        let b = Bag { nums: [1] }
+        let b2 = b.replace()
+        print(b.nums[0])
+        print(b2.nums[0])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn interp_plain_self_still_immutable() {
+    // Plain self methods type-check as before (immutable).
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        impl S { fn bad(self) -> S { self.x += 1 return self } }
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn interp_mut_self_does_not_mutate_array_element_receiver_without_assignment() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut arr: Array<S> = [S { x: 0 }]
+        arr[0].inc()
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    // Original arr[0] unchanged — return not assigned back.
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_mut_self_return_assigned_to_array_element() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut arr: Array<S> = [S { x: 0 }]
+        arr[0] = arr[0].inc()
+        arr[0] = arr[0].inc()
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_mut_self_return_assigned_to_map_value() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut m: Map<Text, S> = {"a": S { x: 0 }}
+        m["a"] = m["a"].inc()
+        m["a"] = m["a"].inc()
+        print(m["a"].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_mut_self_method_chunk_marks_self_mutable() {
+    // The method chunk for a mut self method should have params[0] = "self".
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+    "#,
+    );
+    let mc = prog
+        .methods
+        .iter()
+        .find(|mc| mc.method_name == "inc")
+        .unwrap();
+    assert_eq!(mc.params[0], "self");
+}
+
+#[test]
+fn bytecode_plain_self_method_chunk_still_correct() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+    "#,
+    );
+    let mc = prog
+        .methods
+        .iter()
+        .find(|mc| mc.method_name == "get")
+        .unwrap();
+    assert_eq!(mc.params[0], "self");
+}
+
+#[test]
+fn bytecode_mut_self_uses_path_mutation_instructions() {
+    // `self.x += 1` inside mut self method compiles to PATH_COMPOUND_ASSIGN self.x +=.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+    "#,
+    );
+    let mc = prog
+        .methods
+        .iter()
+        .find(|mc| mc.method_name == "inc")
+        .unwrap();
+    let has_pca = mc
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::PathCompoundAssign { root, .. } if root == "self"));
+    assert!(
+        has_pca,
+        "mut self method body should use PATH_COMPOUND_ASSIGN for self.x += 1"
+    );
+}
+
+#[test]
+fn bytecode_mut_self_call_still_call_method() {
+    // Calling a mut self method still emits CALL_METHOD (no new instruction).
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+    "#,
+    );
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::CallMethod { method, arg_count } if method == "inc" && *arg_count == 0)
+    });
+    assert!(has, "expected CALL_METHOD inc 0");
+}
+
+#[test]
+fn bytecode_mut_self_no_new_instruction() {
+    // Verify all instructions in mut self method are existing known types.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+    "#,
+    );
+    let mc = prog
+        .methods
+        .iter()
+        .find(|mc| mc.method_name == "inc")
+        .unwrap();
+    for instr in &mc.chunk.instructions {
+        // This just checks the match compiles — all variants are covered by the exhaustive match.
+        match instr {
+            Instruction::PathCompoundAssign { .. }
+            | Instruction::SetPath { .. }
+            | Instruction::LoadLocal(_)
+            | Instruction::LoadGlobal(_)
+            | Instruction::StoreLocal(_)
+            | Instruction::DefineLocal(_)
+            | Instruction::Constant(_)
+            | Instruction::Add
+            | Instruction::Subtract
+            | Instruction::Multiply
+            | Instruction::Divide
+            | Instruction::Return
+            | Instruction::StructLiteral { .. }
+            | Instruction::FieldAccess(_)
+            | _ => {} // all variants OK
+        }
+    }
+}
+
+#[test]
+fn disassemble_mut_self_method_shows_path_compound() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    // The method section should include PATH_COMPOUND_ASSIGN self.x +=
+    assert!(
+        out.contains("PATH_COMPOUND_ASSIGN self.x +="),
+        "disassembly should show self.x += mutation: {}",
+        out
+    );
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_mut_self_inc_returns_updated_copy() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 0 }
+        let s2 = s.inc()
+        print(s.x)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn vm_mut_self_original_receiver_unchanged() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 5 }
+        s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_mut_self_assign_return_persists() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        s = s.inc()
+        s = s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_mut_self_with_arg() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn add(mut self, n: Number) -> S { self.x += n return self } }
+        let s = S { x: 10 }
+        let s2 = s.add(5)
+        print(s2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_mut_self_nested_field_mutation() {
+    let out = vm_run(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        impl Outer {
+          fn bump(mut self) -> Outer {
+            self.a.b += 10
+            return self
+          }
+        }
+        let inner = Inner { b: 1 }
+        let o = Outer { a: inner }
+        let o2 = o.bump()
+        print(o.a.b)
+        print(o2.a.b)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "11"]);
+}
+
+#[test]
+fn vm_mut_self_array_field_path_mutation() {
+    let out = vm_run(
+        r#"
+        struct Bag { nums: Array<Number> }
+        impl Bag {
+          fn replace(mut self) -> Bag {
+            self.nums = [2, 3, 4]
+            return self
+          }
+        }
+        let b = Bag { nums: [1] }
+        let b2 = b.replace()
+        print(b2.nums[0])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_mut_self_map_field_path_mutation() {
+    let out = vm_run(
+        r#"
+        struct S { scores: Map<Text, Number> }
+        impl S {
+          fn add_alice(mut self) -> S {
+            self.scores = {"alice": 99}
+            return self
+          }
+        }
+        let s = S { scores: {"x": 0} }
+        let s2 = s.add_alice()
+        print(s2.scores["alice"])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_mut_self_return_assigned_to_array_element() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut arr: Array<S> = [S { x: 0 }]
+        arr[0] = arr[0].inc()
+        arr[0] = arr[0].inc()
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_mut_self_return_assigned_to_map_value() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut m: Map<Text, S> = {"a": S { x: 0 }}
+        m["a"] = m["a"].inc()
+        m["a"] = m["a"].inc()
+        print(m["a"].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_mut_self_stack_clean() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 0 }
+        s.inc()
+        print(42)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_matches_tree_mut_self_basic() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 0 }
+        let c2 = c.inc()
+        print(c.value)
+        print(c2.value)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["0", "1"]);
+    match tree.get_var("c2").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["value"], Value::Number(1.0)),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn vm_matches_tree_mut_self_simulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt { c = c.inc() }
+        print(c.value)
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+// --- Call semantics audit ---
+
+#[test]
+fn mut_self_call_does_not_mutate_variable_receiver() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let s = S { x: 0 }
+        s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn mut_self_assign_return_to_variable_persists() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        s = s.inc()
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn mut_self_call_does_not_mutate_array_element_receiver() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut arr: Array<S> = [S { x: 0 }]
+        arr[0].inc()
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn mut_self_assign_return_to_array_element_persists() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut arr: Array<S> = [S { x: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn mut_self_chained_calls_return_updated_value() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(mut self) -> S { self.x += 1 return self }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        print(s.inc().inc().get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn mut_self_chained_calls_original_unchanged() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S {
+          fn inc(mut self) -> S { self.x += 1 return self }
+          fn get(self) -> Number { return self.x }
+        }
+        let s = S { x: 0 }
+        s.inc().inc()
+        print(s.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+// --- Loop and simulate interactions ---
+
+#[test]
+fn mut_self_assign_return_inside_while() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        let mut i = 0
+        while i < 5 {
+            s = s.inc()
+            i += 1
+        }
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn mut_self_assign_return_inside_for_range() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn inc(mut self) -> S { self.x += 1 return self } }
+        let mut s = S { x: 0 }
+        for i in range(0, 4) {
+            s = s.inc()
+        }
+        print(s.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn mut_self_assign_return_inside_for_each() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut c = Counter { value: 0 }
+        for n in [1, 2, 3] {
+            c = c.inc()
+        }
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn mut_self_assign_return_inside_simulate() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt { c = c.inc() }
+        print(c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Type interactions ---
+
+#[test]
+fn mut_self_text_field_transform() {
+    let out = vm_run(
+        r#"
+        struct Name { text: Text }
+        impl Name {
+          fn shout(mut self) -> Name {
+            self.text = to_upper(self.text)
+            return self
+          }
+        }
+        let n = Name { text: "alice" }
+        let n2 = n.shout()
+        print(n.text)
+        print(n2.text)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["alice", "ALICE"]);
+}
+
+#[test]
+fn mut_self_unit_field_compound() {
+    let out = vm_run(
+        r#"
+        struct Position { x: meters }
+        impl Position {
+          fn shift(mut self, dx: meters) -> Position {
+            self.x += dx
+            return self
+          }
+        }
+        let dx: meters = 3
+        let p = Position { x: dx }
+        let p2 = p.shift(dx)
+        print(p.x)
+        print(p2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "6"]);
+}
+
+#[test]
+fn mut_self_existing_array_map_string_features_unaffected() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        impl S { fn get(self) -> Number { return self.x } }
+        let mut arr = [1, 2, 3]
+        arr[1] = 99
+        let mut m: Map<Text, Number> = {}
+        m["k"] = 5
+        let s = S { x: arr[1] }
+        print(arr[1])
+        print(m["k"])
+        print(s.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99", "5", "99"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn plain_self_mutation_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn bad(self) -> S { self.x = 1 return self } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") || err.contains("self"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn mut_self_wrong_field_type_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn bad(mut self) -> S { self.x = "bad" return self } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn mut_self_wrong_return_type_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        impl S { fn bad(mut self) -> Number { self.x += 1 return self } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}

@@ -1,0 +1,17 @@
+struct Position {
+  x: meters
+}
+
+impl Position {
+  fn shift(mut self, dx: meters) -> Position {
+    self.x += dx
+    return self
+  }
+}
+
+let dx: meters = 3
+let p = Position { x: dx }
+let p2 = p.shift(dx)
+
+print(p.x)
+print(p2.x)

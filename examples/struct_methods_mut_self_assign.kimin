@@ -1,0 +1,17 @@
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn inc(mut self) -> Counter {
+    self.value += 1
+    return self
+  }
+}
+
+let mut c = Counter { value: 0 }
+
+c = c.inc()
+c = c.inc()
+
+print(c.value)

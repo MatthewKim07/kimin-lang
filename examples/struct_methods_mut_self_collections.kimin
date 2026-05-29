@@ -1,0 +1,19 @@
+struct User {
+  name: Text
+  score: Number
+}
+
+impl User {
+  fn add(mut self, amount: Number) -> User {
+    self.score += amount
+    return self
+  }
+}
+
+let mut users: Array<User> = [
+  User { name: "alice", score: 10 }
+]
+
+users[0] = users[0].add(5)
+
+print(users[0].score)
