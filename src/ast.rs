@@ -278,4 +278,21 @@ pub enum Stmt {
         fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },
+    /// Direct struct field assignment: `ident.field = expr`.
+    /// Only valid when `ident` names a mutable struct variable.
+    FieldAssign {
+        name: String,
+        field: String,
+        value: Expr,
+        span: Span,
+    },
+    /// Struct field compound assignment: `ident.field op= expr`.
+    /// Only valid when `ident` names a mutable struct variable.
+    FieldCompoundAssign {
+        name: String,
+        field: String,
+        op: CompoundAssignOp,
+        value: Expr,
+        span: Span,
+    },
 }

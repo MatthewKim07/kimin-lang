@@ -93,6 +93,24 @@ impl Parser {
         {
             self.parse_index_assign_or_expr()
         } else if matches!(self.current_kind(), TokenKind::Ident(_))
+            && matches!(self.peek_kind(), TokenKind::Dot)
+            && matches!(self.peek_kind_2(), TokenKind::Ident(_))
+            && matches!(self.peek_kind_3(), TokenKind::Eq)
+        {
+            self.parse_field_assign()
+        } else if matches!(self.current_kind(), TokenKind::Ident(_))
+            && matches!(self.peek_kind(), TokenKind::Dot)
+            && matches!(self.peek_kind_2(), TokenKind::Ident(_))
+            && matches!(
+                self.peek_kind_3(),
+                TokenKind::PlusEqual
+                    | TokenKind::MinusEqual
+                    | TokenKind::StarEqual
+                    | TokenKind::SlashEqual
+            )
+        {
+            self.parse_field_compound_assign()
+        } else if matches!(self.current_kind(), TokenKind::Ident(_))
             && matches!(self.peek_kind(), TokenKind::Eq)
         {
             self.parse_assign()
@@ -606,6 +624,62 @@ impl Parser {
         Ok(Stmt::Assign { name, value, span })
     }
 
+    fn parse_field_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        self.advance(); // consume `name`
+        self.advance(); // consume `.`
+        let field = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected field name after '.' in field assignment")),
+        };
+        self.advance(); // consume field name
+        self.advance(); // consume `=`
+        let value = self.parse_expr()?;
+        Ok(Stmt::FieldAssign {
+            name,
+            field,
+            value,
+            span,
+        })
+    }
+
+    fn parse_field_compound_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        self.advance(); // consume `name`
+        self.advance(); // consume `.`
+        let field = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => {
+                return Err(self.error("expected field name after '.' in field compound assignment"))
+            }
+        };
+        self.advance(); // consume field name
+        let op = match self.current_kind() {
+            TokenKind::PlusEqual => CompoundAssignOp::Add,
+            TokenKind::MinusEqual => CompoundAssignOp::Subtract,
+            TokenKind::StarEqual => CompoundAssignOp::Multiply,
+            TokenKind::SlashEqual => CompoundAssignOp::Divide,
+            _ => unreachable!(),
+        };
+        self.advance(); // consume op=
+        let value = self.parse_expr()?;
+        Ok(Stmt::FieldCompoundAssign {
+            name,
+            field,
+            op,
+            value,
+            span,
+        })
+    }
+
     /// Try to parse `name[index] = value` as `Stmt::IndexAssign`,
     /// or `name[index] op= value` as `Stmt::IndexCompoundAssign`.
     /// If after `]` there is no assignment operator, backtrack and parse as a plain expression statement.
@@ -1057,6 +1131,15 @@ impl Parser {
         let next2 = self.pos + 2;
         if next2 < self.tokens.len() {
             &self.tokens[next2].kind
+        } else {
+            &self.tokens[self.pos].kind
+        }
+    }
+
+    fn peek_kind_3(&self) -> &TokenKind {
+        let next3 = self.pos + 3;
+        if next3 < self.tokens.len() {
+            &self.tokens[next3].kind
         } else {
             &self.tokens[self.pos].kind
         }
