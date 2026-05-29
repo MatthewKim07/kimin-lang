@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::ast::{BinaryOp, CompoundAssignOp, Expr, Stmt, UnaryOp};
+use crate::ast::{AssignTarget, BinaryOp, CompoundAssignOp, Expr, Stmt, UnaryOp};
 use crate::env::{Env, EnvRef};
 use crate::error::RuntimeError;
 use crate::value::{FunctionValue, Value};
@@ -373,55 +373,30 @@ impl Interpreter {
                 Ok(ExecFlow::Normal)
             }
 
-            Stmt::FieldAssign {
-                name, field, value, ..
-            } => {
-                let new_val = self.eval_expr(value)?;
-                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
-                    msg: format!("undefined variable '{}'", name),
+            Stmt::TargetAssign { target, value, .. } => {
+                let (root, steps, index_exprs) = interp_flatten_target(target);
+                // Evaluate index expressions in source order.
+                let index_vals: Vec<Value> = index_exprs
+                    .iter()
+                    .map(|e| self.eval_expr(e))
+                    .collect::<Result<_, _>>()?;
+                // Evaluate RHS.
+                let rhs = self.eval_expr(value)?;
+                // Read root, update at path, write back.
+                let root_val = self.env.borrow().get(&root).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", root),
                 })?;
-                match current {
-                    Value::Struct {
-                        name: struct_name,
-                        mut fields,
-                    } => {
-                        if !fields.contains_key(field.as_str()) {
-                            return Err(RuntimeError {
-                                msg: format!("struct '{}' has no field '{}'", struct_name, field),
-                            });
-                        }
-                        fields.insert(field.clone(), new_val);
-                        if !self.env.borrow_mut().assign_existing(
-                            name,
-                            Value::Struct {
-                                name: struct_name,
-                                fields,
-                            },
-                        ) {
-                            return Err(RuntimeError {
-                                msg: format!("undefined variable '{}'", name),
-                            });
-                        }
-                    }
-                    other => {
-                        return Err(RuntimeError {
-                            msg: format!(
-                                "cannot assign field '{}' on {}",
-                                field,
-                                other.type_name()
-                            ),
-                        })
-                    }
+                let updated = interp_update_path(root_val, &steps, &index_vals, &mut 0, rhs)?;
+                if !self.env.borrow_mut().assign_existing(&root, updated) {
+                    return Err(RuntimeError {
+                        msg: format!("undefined variable '{}'", root),
+                    });
                 }
                 Ok(ExecFlow::Normal)
             }
 
-            Stmt::FieldCompoundAssign {
-                name,
-                field,
-                op,
-                value,
-                ..
+            Stmt::TargetCompoundAssign {
+                target, op, value, ..
             } => {
                 let binary_op = match op {
                     CompoundAssignOp::Add => BinaryOp::Add,
@@ -429,45 +404,28 @@ impl Interpreter {
                     CompoundAssignOp::Multiply => BinaryOp::Mul,
                     CompoundAssignOp::Divide => BinaryOp::Div,
                 };
-
-                // Clone the struct out of the env; borrow released at end of statement.
-                let current = self.env.borrow().get(name).ok_or_else(|| RuntimeError {
-                    msg: format!("undefined variable '{}'", name),
+                let (root, steps, index_exprs) = interp_flatten_target(target);
+                // Evaluate index expressions first.
+                let index_vals: Vec<Value> = index_exprs
+                    .iter()
+                    .map(|e| self.eval_expr(e))
+                    .collect::<Result<_, _>>()?;
+                // Read root and extract old leaf value (before RHS is evaluated).
+                let root_val = self.env.borrow().get(&root).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", root),
                 })?;
-                let (struct_name, old_field_val, mut fields) =
-                    match current {
-                        Value::Struct { name: sn, fields } => {
-                            let old = fields.get(field.as_str()).cloned().ok_or_else(|| {
-                                RuntimeError {
-                                    msg: format!("struct '{}' has no field '{}'", sn, field),
-                                }
-                            })?;
-                            (sn, old, fields)
-                        }
-                        other => {
-                            return Err(RuntimeError {
-                                msg: format!(
-                                    "cannot assign field '{}' on {}",
-                                    field,
-                                    other.type_name()
-                                ),
-                            })
-                        }
-                    };
-
-                // Evaluate RHS after releasing the borrow above.
+                let old_val = interp_read_path(&root_val, &steps, &index_vals, &mut 0)?;
+                // Evaluate RHS.
                 let rhs = self.eval_expr(value)?;
-                let new_val = eval_binary(&binary_op, old_field_val, rhs)?;
-                fields.insert(field.clone(), new_val);
-                if !self.env.borrow_mut().assign_existing(
-                    name,
-                    Value::Struct {
-                        name: struct_name,
-                        fields,
-                    },
-                ) {
+                let new_val = eval_binary(&binary_op, old_val, rhs)?;
+                // Re-read root (RHS may have modified it) and update at path.
+                let root_val2 = self.env.borrow().get(&root).ok_or_else(|| RuntimeError {
+                    msg: format!("undefined variable '{}'", root),
+                })?;
+                let updated = interp_update_path(root_val2, &steps, &index_vals, &mut 0, new_val)?;
+                if !self.env.borrow_mut().assign_existing(&root, updated) {
                     return Err(RuntimeError {
-                        msg: format!("undefined variable '{}'", name),
+                        msg: format!("undefined variable '{}'", root),
                     });
                 }
                 Ok(ExecFlow::Normal)
@@ -1669,4 +1627,174 @@ fn numeric_cmp(
 
 fn values_equal(a: &Value, b: &Value) -> bool {
     a == b
+}
+
+// ---- Target path helpers ----
+
+/// Step kind for interpreter path traversal.
+enum InterpStep {
+    Field(String),
+    Index, // value supplied from index_vals
+}
+
+/// Decompose an AssignTarget into (root_name, steps, index_exprs) all in source order.
+fn interp_flatten_target(target: &AssignTarget) -> (String, Vec<InterpStep>, Vec<Expr>) {
+    match target {
+        AssignTarget::Var(name) => (name.clone(), vec![], vec![]),
+        AssignTarget::Field(inner, field) => {
+            let (root, mut steps, exprs) = interp_flatten_target(inner);
+            steps.push(InterpStep::Field(field.clone()));
+            (root, steps, exprs)
+        }
+        AssignTarget::Index(inner, expr) => {
+            let (root, mut steps, mut exprs) = interp_flatten_target(inner);
+            steps.push(InterpStep::Index);
+            exprs.push(expr.clone());
+            (root, steps, exprs)
+        }
+    }
+}
+
+/// Read the leaf value at the end of a path without mutating anything.
+fn interp_read_path(
+    val: &Value,
+    steps: &[InterpStep],
+    index_vals: &[Value],
+    idx_pos: &mut usize,
+) -> Result<Value, RuntimeError> {
+    if steps.is_empty() {
+        return Ok(val.clone());
+    }
+    match &steps[0] {
+        InterpStep::Field(field) => match val {
+            Value::Struct { fields, .. } => {
+                let inner = fields.get(field.as_str()).ok_or_else(|| RuntimeError {
+                    msg: format!("struct has no field '{}'", field),
+                })?;
+                interp_read_path(inner, &steps[1..], index_vals, idx_pos)
+            }
+            other => Err(RuntimeError {
+                msg: format!("cannot access field on {}", other.type_name()),
+            }),
+        },
+        InterpStep::Index => {
+            let idx_val = &index_vals[*idx_pos];
+            *idx_pos += 1;
+            match val {
+                Value::Array(elems) => {
+                    let i = interp_array_index(idx_val, elems.len())?;
+                    interp_read_path(&elems[i], &steps[1..], index_vals, idx_pos)
+                }
+                Value::Map(map) => {
+                    let key = interp_map_key(idx_val)?;
+                    let inner = map.get(&key).ok_or_else(|| RuntimeError {
+                        msg: format!("map key '{}' not found", key),
+                    })?;
+                    interp_read_path(inner, &steps[1..], index_vals, idx_pos)
+                }
+                other => Err(RuntimeError {
+                    msg: format!("cannot index into {}", other.type_name()),
+                }),
+            }
+        }
+    }
+}
+
+/// Clone `val`, update the leaf at the end of `steps`, and return the updated clone.
+fn interp_update_path(
+    val: Value,
+    steps: &[InterpStep],
+    index_vals: &[Value],
+    idx_pos: &mut usize,
+    new_val: Value,
+) -> Result<Value, RuntimeError> {
+    if steps.is_empty() {
+        return Ok(new_val);
+    }
+    match &steps[0] {
+        InterpStep::Field(field) => match val {
+            Value::Struct {
+                name: sn,
+                mut fields,
+            } => {
+                if !fields.contains_key(field.as_str()) {
+                    return Err(RuntimeError {
+                        msg: format!("struct '{}' has no field '{}'", sn, field),
+                    });
+                }
+                let old = fields.remove(field).unwrap();
+                let updated = interp_update_path(old, &steps[1..], index_vals, idx_pos, new_val)?;
+                fields.insert(field.clone(), updated);
+                Ok(Value::Struct { name: sn, fields })
+            }
+            other => Err(RuntimeError {
+                msg: format!("cannot assign field on {}", other.type_name()),
+            }),
+        },
+        InterpStep::Index => {
+            let idx_val = index_vals[*idx_pos].clone();
+            *idx_pos += 1;
+            match val {
+                Value::Array(mut elems) => {
+                    let i = interp_array_index(&idx_val, elems.len())?;
+                    let old = elems[i].clone();
+                    elems[i] = interp_update_path(old, &steps[1..], index_vals, idx_pos, new_val)?;
+                    Ok(Value::Array(elems))
+                }
+                Value::Map(mut map) => {
+                    let key = interp_map_key(&idx_val)?;
+                    let old = map.get(&key).cloned().ok_or_else(|| RuntimeError {
+                        msg: format!("map key '{}' not found", key),
+                    })?;
+                    let updated =
+                        interp_update_path(old, &steps[1..], index_vals, idx_pos, new_val)?;
+                    map.insert(key, updated);
+                    Ok(Value::Map(map))
+                }
+                other => Err(RuntimeError {
+                    msg: format!("cannot index into {}", other.type_name()),
+                }),
+            }
+        }
+    }
+}
+
+fn interp_array_index(idx_val: &Value, len: usize) -> Result<usize, RuntimeError> {
+    let n = match idx_val {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError {
+                msg: format!("array index must be Number, got {}", other.type_name()),
+            })
+        }
+    };
+    if n.fract() != 0.0 {
+        return Err(RuntimeError {
+            msg: format!("array index must be an integer, got {}", n),
+        });
+    }
+    if n < 0.0 {
+        return Err(RuntimeError {
+            msg: format!("array index out of bounds: index {} is negative", n as i64),
+        });
+    }
+    let i = n as usize;
+    if i >= len {
+        return Err(RuntimeError {
+            msg: format!(
+                "array index out of bounds: index {} but length is {}",
+                i, len
+            ),
+        });
+    }
+    Ok(i)
+}
+
+fn interp_map_key(idx_val: &Value) -> Result<String, RuntimeError> {
+    match idx_val {
+        Value::Str(s) => Ok(s.clone()),
+        other => Err(RuntimeError {
+            msg: format!("map index key must be Text, got {}", other.type_name()),
+        }),
+    }
 }

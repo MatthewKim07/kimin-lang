@@ -262,6 +262,13 @@ impl Default for TypeEnv {
     }
 }
 
+/// Result of walking an assignment target path: root variable identity and final type.
+struct TargetInfo {
+    root: String,
+    mutable: bool,
+    final_type: Type,
+}
+
 pub struct TypeChecker {
     pub env: TypeEnv,
     /// Return type of the function currently being checked. None at top level.
@@ -1203,73 +1210,30 @@ impl TypeChecker {
                 result
             }
 
-            Stmt::FieldAssign {
-                name,
-                field,
+            Stmt::TargetAssign {
+                target,
                 value,
                 span,
             } => {
-                let (var_ty, var_mutable) = self
-                    .env
-                    .get(name)
-                    .map(|vi| (vi.ty.clone(), vi.mutable))
-                    .ok_or_else(|| TypeError {
-                        msg: format!("undefined variable '{}'", name),
-                        line: span.line,
-                        col: span.col,
-                    })?;
-
-                if !var_mutable {
+                let info = self.check_assign_target(target, *span)?;
+                if !info.mutable {
                     return Err(TypeError {
-                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        msg: format!("cannot assign to immutable variable '{}'", info.root),
                         line: span.line,
                         col: span.col,
                     });
                 }
-
-                let struct_name = match &var_ty {
-                    Type::Struct(s) => s.clone(),
-                    Type::Unknown => {
-                        self.check_expr(value, *span)?;
-                        return Ok(());
-                    }
-                    other => {
-                        return Err(TypeError {
-                            msg: format!("cannot assign field '{}' on {}", field, other.name()),
-                            line: span.line,
-                            col: span.col,
-                        })
-                    }
-                };
-
-                let field_ty = self
-                    .structs
-                    .get(&struct_name)
-                    .ok_or_else(|| TypeError {
-                        msg: format!("unknown struct '{}'", struct_name),
-                        line: span.line,
-                        col: span.col,
-                    })?
-                    .fields
-                    .get(field)
-                    .cloned()
-                    .ok_or_else(|| TypeError {
-                        msg: format!("struct '{}' has no field '{}'", struct_name, field),
-                        line: span.line,
-                        col: span.col,
-                    })?;
-
-                let val_ty = self.check_expr_with_expected(value, Some(&field_ty), *span)?;
+                let val_ty = self.check_expr_with_expected(value, Some(&info.final_type), *span)?;
                 let compatible = val_ty.is_unknown()
-                    || field_ty.is_unknown()
-                    || val_ty == field_ty
-                    || (matches!(&field_ty, Type::NumberWithUnit(_)) && val_ty == Type::Number);
+                    || info.final_type.is_unknown()
+                    || val_ty == info.final_type
+                    || (matches!(&info.final_type, Type::NumberWithUnit(_))
+                        && val_ty == Type::Number);
                 if !compatible {
                     return Err(TypeError {
                         msg: format!(
-                            "field '{}' expected {} but got {}",
-                            field,
-                            field_ty.name(),
+                            "expected {} but got {}",
+                            info.final_type.name(),
                             val_ty.name()
                         ),
                         line: span.line,
@@ -1279,46 +1243,89 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::FieldCompoundAssign {
-                name,
-                field,
+            Stmt::TargetCompoundAssign {
+                target,
                 op,
                 value,
                 span,
             } => {
-                let (var_ty, var_mutable) = self
-                    .env
-                    .get(name)
-                    .map(|vi| (vi.ty.clone(), vi.mutable))
-                    .ok_or_else(|| TypeError {
-                        msg: format!("undefined variable '{}'", name),
-                        line: span.line,
-                        col: span.col,
-                    })?;
-
-                if !var_mutable {
+                let info = self.check_assign_target(target, *span)?;
+                if !info.mutable {
                     return Err(TypeError {
-                        msg: format!("cannot assign to immutable variable '{}'", name),
+                        msg: format!("cannot assign to immutable variable '{}'", info.root),
                         line: span.line,
                         col: span.col,
                     });
                 }
+                let rhs_ty = self.check_expr(value, *span)?;
+                let binary_op = match op {
+                    CompoundAssignOp::Add => BinaryOp::Add,
+                    CompoundAssignOp::Subtract => BinaryOp::Sub,
+                    CompoundAssignOp::Multiply => BinaryOp::Mul,
+                    CompoundAssignOp::Divide => BinaryOp::Div,
+                };
+                let result_ty =
+                    self.check_binary(&binary_op, info.final_type.clone(), rhs_ty, *span)?;
+                let compatible = result_ty.is_unknown()
+                    || info.final_type.is_unknown()
+                    || result_ty == info.final_type
+                    || (matches!(&info.final_type, Type::NumberWithUnit(_))
+                        && result_ty == Type::Number);
+                if !compatible {
+                    return Err(TypeError {
+                        msg: format!(
+                            "compound assignment result has type {} but target has type {}",
+                            result_ty.name(),
+                            info.final_type.name()
+                        ),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                Ok(())
+            }
+        }
+    }
 
-                let struct_name = match &var_ty {
+    /// Walk an `AssignTarget` and return the root variable name, its mutability,
+    /// and the final type at the end of the path.
+    fn check_assign_target(
+        &mut self,
+        target: &crate::ast::AssignTarget,
+        span: Span,
+    ) -> Result<TargetInfo, TypeError> {
+        use crate::ast::AssignTarget;
+        match target {
+            AssignTarget::Var(name) => {
+                let vi = self.env.get(name).ok_or_else(|| TypeError {
+                    msg: format!("undefined variable '{}'", name),
+                    line: span.line,
+                    col: span.col,
+                })?;
+                Ok(TargetInfo {
+                    root: name.clone(),
+                    mutable: vi.mutable,
+                    final_type: vi.ty.clone(),
+                })
+            }
+            AssignTarget::Field(inner, field) => {
+                let info = self.check_assign_target(inner, span)?;
+                let struct_name = match &info.final_type {
                     Type::Struct(s) => s.clone(),
                     Type::Unknown => {
-                        self.check_expr(value, *span)?;
-                        return Ok(());
+                        return Ok(TargetInfo {
+                            final_type: Type::Unknown,
+                            ..info
+                        })
                     }
                     other => {
                         return Err(TypeError {
-                            msg: format!("cannot assign field '{}' on {}", field, other.name()),
+                            msg: format!("cannot access field '{}' on {}", field, other.name()),
                             line: span.line,
                             col: span.col,
                         })
                     }
                 };
-
                 let field_ty = self
                     .structs
                     .get(&struct_name)
@@ -1335,32 +1342,55 @@ impl TypeChecker {
                         line: span.line,
                         col: span.col,
                     })?;
-
-                let rhs_ty = self.check_expr(value, *span)?;
-                let binary_op = match op {
-                    CompoundAssignOp::Add => BinaryOp::Add,
-                    CompoundAssignOp::Subtract => BinaryOp::Sub,
-                    CompoundAssignOp::Multiply => BinaryOp::Mul,
-                    CompoundAssignOp::Divide => BinaryOp::Div,
-                };
-                let result_ty = self.check_binary(&binary_op, field_ty.clone(), rhs_ty, *span)?;
-                let compatible = result_ty.is_unknown()
-                    || field_ty.is_unknown()
-                    || result_ty == field_ty
-                    || (matches!(&field_ty, Type::NumberWithUnit(_)) && result_ty == Type::Number);
-                if !compatible {
-                    return Err(TypeError {
-                        msg: format!(
-                            "field '{}' has type {} but compound assignment result has type {}",
-                            field,
-                            field_ty.name(),
-                            result_ty.name()
-                        ),
+                Ok(TargetInfo {
+                    final_type: field_ty,
+                    ..info
+                })
+            }
+            AssignTarget::Index(inner, index_expr) => {
+                let info = self.check_assign_target(inner, span)?;
+                match &info.final_type {
+                    Type::Array(elem_ty) => {
+                        let idx_ty = self.check_expr(index_expr, span)?;
+                        if !idx_ty.is_unknown() && idx_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("array index must be Number, got {}", idx_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        Ok(TargetInfo {
+                            final_type: *elem_ty.clone(),
+                            ..info
+                        })
+                    }
+                    Type::Map(_, val_ty) => {
+                        let key_ty = self.check_expr(index_expr, span)?;
+                        if !key_ty.is_unknown() && key_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("map index key must be Text, got {}", key_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        Ok(TargetInfo {
+                            final_type: *val_ty.clone(),
+                            ..info
+                        })
+                    }
+                    Type::Unknown => {
+                        self.check_expr(index_expr, span)?;
+                        Ok(TargetInfo {
+                            final_type: Type::Unknown,
+                            ..info
+                        })
+                    }
+                    other => Err(TypeError {
+                        msg: format!("cannot index into {}", other.name()),
                         line: span.line,
                         col: span.col,
-                    });
+                    }),
                 }
-                Ok(())
             }
         }
     }
