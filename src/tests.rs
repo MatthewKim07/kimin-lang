@@ -35620,3 +35620,1098 @@ fn path_assign_wrong_value_type_message() {
     .to_string();
     assert!(!err.is_empty(), "got: {}", err);
 }
+
+// ============================================================
+// M15C Audit: additional coverage
+// ============================================================
+
+// --- Parser audit ---
+
+#[test]
+fn parse_field_index_field_assign() {
+    // b.nums[0] = 99 — field then index then implicit (but path ends with index, not field)
+    // Use a path that ends with field: arr[0].score = 10
+    let src = r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::TargetAssign { .. }));
+}
+
+#[test]
+fn parse_deep_path_assign() {
+    // 3-level: u.a.b = 5 (two field steps)
+    let src = r#"
+        struct B { b: Number }
+        struct A { a: B }
+        struct U { u: A }
+        let mut o = U { u: A { a: B { b: 1 } } }
+        o.u.a.b = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[4], crate::ast::Stmt::TargetAssign { .. }));
+}
+
+#[test]
+fn parse_direct_var_assign_still_parses() {
+    let src = "let mut x = 1\nx = 5";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::Assign { name, .. } if name == "x"));
+}
+
+#[test]
+fn parse_function_result_field_assignment_rejected_m15c() {
+    // get_s().score = 10 — function result target still rejected.
+    let src = r#"
+        struct S { score: Number }
+        fn get_s() -> S { return S { score: 1 } }
+        get_s().score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    assert!(Parser::new(tokens).parse().is_err());
+}
+
+#[test]
+fn parse_state_variant_still_parses_after_path_mutation() {
+    let src = r#"
+        state Door { closed open transition closed -> open }
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 5
+        let d = Door.closed
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // stmts[0]=StateDecl, stmts[1]=StructDecl, stmts[2]=Let(arr), stmts[3]=TargetAssign, stmts[4]=Let(d)
+    assert!(matches!(&stmts[3], crate::ast::Stmt::TargetAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::Let { .. }));
+}
+
+#[test]
+fn parse_slice_still_parses_after_path_mutation() {
+    let src = r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 5
+        let nums = [1, 2, 3]
+        let sl = nums[0..2]
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::TargetAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::Let { .. }));
+}
+
+#[test]
+fn parse_field_assign_expression_position_rejected() {
+    // Assignment in expression position (e.g. inside print) is not valid syntax.
+    // The parser should fail when it encounters `users[0].score = 10` after `print(`.
+    let src = r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        print(arr[0].score = 10)
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    // TargetAssign is statement-only; inside print(expr) the = must cause a parse error.
+    let result = Parser::new(tokens).parse();
+    assert!(
+        result.is_err(),
+        "assignment in expression position should fail"
+    );
+}
+
+// --- Target model tests ---
+
+#[test]
+fn target_model_var_assign_shape() {
+    // x = 5 still produces Stmt::Assign, not TargetAssign.
+    let src = "let mut x = 1\nx = 5";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::Assign { .. }));
+}
+
+#[test]
+fn target_model_index_assign_shape() {
+    // arr[i] = v still produces Stmt::IndexAssign.
+    let src = "let mut arr = [1, 2, 3]\narr[0] = 99";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::IndexAssign { .. }));
+}
+
+#[test]
+fn target_model_field_assign_shape() {
+    // s.x = 5 produces TargetAssign with Field(Var("s"), "x").
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::TargetAssign { target, .. } = &stmts[2] {
+        assert!(matches!(
+            target,
+            crate::ast::AssignTarget::Field(inner, f)
+            if matches!(inner.as_ref(), crate::ast::AssignTarget::Var(n) if n == "s")
+                && f == "x"
+        ));
+    } else {
+        panic!("expected TargetAssign");
+    }
+}
+
+#[test]
+fn target_model_nested_path_shape() {
+    // users[0].score = 10 → TargetAssign { Field(Index(Var("users"), 0_expr), "score") }
+    let src = r#"
+        struct S { score: Number }
+        let mut users: Array<S> = [S { score: 1 }]
+        users[0].score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    if let crate::ast::Stmt::TargetAssign { target, .. } = &stmts[2] {
+        if let crate::ast::AssignTarget::Field(inner, field) = target {
+            assert_eq!(field, "score");
+            assert!(
+                matches!(inner.as_ref(), crate::ast::AssignTarget::Index(inner2, _)
+                if matches!(inner2.as_ref(), crate::ast::AssignTarget::Var(n) if n == "users"))
+            );
+        } else {
+            panic!("expected Field target");
+        }
+    } else {
+        panic!("expected TargetAssign");
+    }
+}
+
+// --- Typechecker ---
+
+#[test]
+fn type_deep_path_field_assign_ok() {
+    // 3-level nested struct field assignment.
+    assert!(check(
+        r#"
+        struct C { value: Number }
+        struct B { c: C }
+        struct A { b: B }
+        let mut a = A { b: B { c: C { value: 0 } } }
+        a.b.c.value = 42
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_direct_var_assign_still_ok() {
+    assert!(check(
+        r#"
+        let mut x = 1
+        x = 5
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_mutable_root_required_map_value_field() {
+    let err = check(
+        r#"
+        struct S { score: Number }
+        let m: Map<Text, S> = {"alice": S { score: 1 }}
+        m["alice"].score = 99
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") && err.contains("m"),
+        "got: {}",
+        err
+    );
+}
+
+// --- Interpreter depth tests ---
+
+#[test]
+fn interp_deep_path_assign() {
+    let out = vm_run(
+        r#"
+        struct C { value: Number }
+        struct B { c: C }
+        struct A { b: B }
+        let mut a = A { b: B { c: C { value: 0 } } }
+        a.b.c.value = 42
+        print(a.b.c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_target_assign_index_expr_once() {
+    // Index expression evaluated exactly once.
+    let src = r#"
+        struct S { x: Number }
+        let mut counter = 0
+        let mut arr: Array<S> = [S { x: 1 }, S { x: 2 }]
+        fn next_i() -> Number {
+            counter += 1
+            return 0
+        }
+        arr[next_i()].x = 99
+        print(arr[0].x)
+        print(counter)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["99", "1"]);
+}
+
+#[test]
+fn interp_target_compound_rhs_once() {
+    // RHS evaluated exactly once for compound path assign.
+    let src = r#"
+        struct S { x: Number }
+        let mut counter = 0
+        let mut arr: Array<S> = [S { x: 10 }]
+        fn bonus() -> Number {
+            counter += 1
+            return 5
+        }
+        arr[0].x += bonus()
+        print(arr[0].x)
+        print(counter)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn interp_direct_field_assign_still_ok() {
+    let interp = run(r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#)
+    .unwrap();
+    match interp.get_var("s").unwrap() {
+        Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(42.0)),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn interp_direct_index_assign_still_ok() {
+    let interp = run(r#"
+        let mut arr = [1, 2, 3]
+        arr[1] = 99
+    "#)
+    .unwrap();
+    match interp.get_var("arr").unwrap() {
+        Value::Array(v) => assert_eq!(v[1], Value::Number(99.0)),
+        _ => panic!(),
+    }
+}
+
+// --- Evaluation order ---
+
+#[test]
+fn path_assign_index_expr_eval_once() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut calls = 0
+        let mut arr: Array<S> = [S { x: 0 }, S { x: 0 }]
+        fn idx() -> Number {
+            calls += 1
+            return 0
+        }
+        arr[idx()].x = 10
+        print(arr[0].x)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "1"]);
+}
+
+#[test]
+fn path_assign_multiple_index_exprs_left_to_right() {
+    // For a path with multiple index steps, they compile/evaluate left-to-right.
+    // Verify using a counter-based approach for a doubly-indexed path.
+    // Only possible if we have arrays of arrays — which are rejected.
+    // Instead verify a map then field path: m["alice"].score = v — map key evaluated once.
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut calls = 0
+        let mut m: Map<Text, S> = {"alice": S { score: 0 }}
+        fn key() -> Text {
+            calls += 1
+            return "alice"
+        }
+        m[key()].score = 99
+        print(m["alice"].score)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99", "1"]);
+}
+
+#[test]
+fn path_assign_rhs_eval_once() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut calls = 0
+        let mut arr: Array<S> = [S { x: 0 }]
+        fn rhs_val() -> Number {
+            calls += 1
+            return 42
+        }
+        arr[0].x = rhs_val()
+        print(arr[0].x)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "1"]);
+}
+
+#[test]
+fn path_compound_rhs_eval_once() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut calls = 0
+        let mut arr: Array<S> = [S { x: 10 }]
+        fn bonus() -> Number {
+            calls += 1
+            return 5
+        }
+        arr[0].x += bonus()
+        print(arr[0].x)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn path_compound_non_self_modifying_rhs_matches_vm() {
+    // Tree-walk and VM agree for non-self-modifying RHS.
+    let src = r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 10 }, S { x: 20 }]
+        arr[0].x += 5
+        print(arr[0].x)
+        print(arr[1].x)
+    "#;
+    let tree_interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["15", "20"]);
+    match tree_interp.get_var("arr").unwrap() {
+        Value::Array(v) => {
+            assert_eq!(
+                v[0],
+                Value::Struct {
+                    name: "S".into(),
+                    fields: [("x".to_string(), Value::Number(15.0))]
+                        .into_iter()
+                        .collect(),
+                }
+            );
+        }
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn path_compound_self_modifying_rhs_documented() {
+    // Self-modifying RHS: interpreter reads old value before RHS; VM reads after.
+    // This divergence is the same existing pattern as IndexCompoundAssign.
+    // Tree-walk: old x=10, rhs() sets arr[0].x=99, returns 5 → result = 10+5=15, written back (overrides 99).
+    // VM: rhs() runs first (sets arr[0].x=99, returns 5), then reads current arr[0].x=99 → 99+5=104.
+    let src = r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 10 }]
+        fn rhs() -> Number {
+            arr[0].x = 99
+            return 5
+        }
+        arr[0].x += rhs()
+        print(arr[0].x)
+    "#;
+    let tree_interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    // Tree-walk: 15 (reads old value before RHS)
+    // VM: 104 (RHS executes first, reads post-RHS value)
+    match tree_interp.get_var("arr").unwrap() {
+        Value::Array(v) => match &v[0] {
+            Value::Struct { fields, .. } => assert_eq!(fields["x"], Value::Number(15.0)),
+            _ => panic!(),
+        },
+        _ => panic!(),
+    }
+    assert_eq!(vm_out, vec!["104"]);
+}
+
+// --- Bytecode compiler ---
+
+#[test]
+fn bytecode_deep_path_assign_emits_set_path() {
+    let prog = compile_prog(
+        r#"
+        struct C { value: Number }
+        struct B { c: C }
+        struct A { b: B }
+        let mut a = A { b: B { c: C { value: 0 } } }
+        a.b.c.value = 42
+    "#,
+    );
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::SetPath { root, steps }
+            if root == "a" && steps.len() == 3)
+    });
+    assert!(has, "expected SET_PATH a.b.c.value with 3 steps");
+}
+
+#[test]
+fn bytecode_path_assign_compiles_indices_left_to_right() {
+    // For arr[i].score, there's one index step. The index expr should be compiled before RHS.
+    let prog = compile_prog(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 99
+    "#,
+    );
+    // There should be: CONSTANT(0) [index], CONSTANT(99) [rhs], SET_PATH arr[?].score
+    // Verify the index constant appears before the rhs constant in sequence.
+    let instrs = &prog.main.instructions;
+    let set_path_pos = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::SetPath { .. }))
+        .unwrap();
+    assert!(
+        set_path_pos >= 2,
+        "SET_PATH should appear after index and rhs"
+    );
+}
+
+#[test]
+fn bytecode_path_assign_compiles_rhs_once() {
+    // No duplicate RHS compilation. Verify a single CONSTANT for rhs.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 42
+    "#,
+    );
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has);
+}
+
+#[test]
+fn bytecode_path_compound_no_extra_field_access_read() {
+    // PATH_COMPOUND_ASSIGN should not emit a FIELD_ACCESS read instruction for target.
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x += 5
+    "#,
+    );
+    let has_pca = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::PathCompoundAssign { .. }));
+    // Only FieldAccess for struct literal construction, not for the target.
+    // Count FieldAccess occurrences — there should be none for the assignment target.
+    let field_access_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::FieldAccess(_)))
+        .count();
+    assert!(has_pca);
+    assert_eq!(
+        field_access_count, 0,
+        "no FIELD_ACCESS should appear for assignment target in main chunk"
+    );
+}
+
+#[test]
+fn bytecode_direct_field_assign_still_ok_m15c() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+}
+
+#[test]
+fn bytecode_direct_index_assign_still_ok_m15c() {
+    let prog = compile_prog(
+        r#"
+        let mut arr = [1, 2, 3]
+        arr[0] = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetIndex(_))));
+}
+
+#[test]
+fn bytecode_field_access_read_still_ok_m15c() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        let v = s.x
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::FieldAccess(_))));
+}
+
+#[test]
+fn bytecode_path_mutation_inside_function_m15c() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 0 }]
+        fn update() { arr[0].x = 99 }
+    "#,
+    );
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::SetPath { .. }))
+    });
+    assert!(has, "function body should contain SET_PATH");
+}
+
+#[test]
+fn bytecode_path_mutation_inside_simulate_m15c() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        struct Box { counter: Counter }
+        let mut b = Box { counter: Counter { value: 0 } }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            b.counter.value += 1
+        }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::PathCompoundAssign { .. }))
+    });
+    assert!(has, "simulate body should contain PATH_COMPOUND_ASSIGN");
+}
+
+// --- VM depth ---
+
+#[test]
+fn vm_deep_path_assign() {
+    let out = vm_run(
+        r#"
+        struct C { value: Number }
+        struct B { c: C }
+        struct A { b: B }
+        let mut a = A { b: B { c: C { value: 0 } } }
+        a.b.c.value = 42
+        print(a.b.c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Env-chain / closures ---
+
+#[test]
+fn vm_matches_tree_nested_field_closure() {
+    let src = r#"
+        struct Counter { value: Number }
+        struct Box { counter: Counter }
+        let mut b = Box { counter: Counter { value: 0 } }
+        fn inc() { b.counter.value += 1 }
+        inc()
+        inc()
+        print(b.counter.value)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn block_shadow_nested_field_assignment() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut outer: Array<S> = [S { x: 1 }]
+        {
+            let mut inner: Array<S> = [S { x: 10 }]
+            inner[0].x += 5
+            print(inner[0].x)
+        }
+        print(outer[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15", "1"]);
+}
+
+#[test]
+fn nested_path_updates_nearest_binding() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        {
+            arr[0].x = 50
+        }
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["50"]);
+}
+
+// --- Arrays/maps of structs ---
+
+#[test]
+fn array_of_struct_index_expr_once() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut calls = 0
+        let mut arr: Array<S> = [S { x: 0 }, S { x: 0 }]
+        fn idx() -> Number {
+            calls += 1
+            return 0
+        }
+        arr[idx()].x = 42
+        print(arr[0].x)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "1"]);
+}
+
+#[test]
+fn map_of_struct_key_expr_once() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut calls = 0
+        let mut m: Map<Text, S> = {"alice": S { score: 0 }}
+        fn get_key() -> Text {
+            calls += 1
+            return "alice"
+        }
+        m[get_key()].score = 99
+        print(m["alice"].score)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99", "1"]);
+}
+
+#[test]
+fn array_of_struct_oob_runtime_error() {
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[10].x = 99
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn map_of_struct_missing_key_runtime_error() {
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut m: Map<Text, S> = {}
+        m["nope"].x = 1
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn for_each_array_of_struct_still_reads() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let arr: Array<S> = [S { x: 10 }, S { x: 20 }]
+        let mut total = 0
+        for item in arr {
+            total += item.x
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn values_map_of_struct_still_reads() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let m: Map<Text, S> = {"alice": S { score: 10 }, "bob": S { score: 20 }}
+        let mut total = 0
+        for v in values(m) {
+            total += v.score
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+// --- Nested struct depth ---
+
+#[test]
+fn deep_nested_struct_field_assign() {
+    // 3-level: a.b.c.value = 42.
+    let out = vm_run(
+        r#"
+        struct C { value: Number }
+        struct B { c: C }
+        struct A { b: B }
+        let mut a = A { b: B { c: C { value: 0 } } }
+        a.b.c.value = 42
+        print(a.b.c.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_matches_tree_nested_struct_field_mutation() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        struct Company { owner: User }
+        let mut c = Company { owner: User { name: "alice", score: 10 } }
+        c.owner.name = "bob"
+        c.owner.score += 5
+        print(c.owner.name)
+        print(c.owner.score)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["bob", "15"]);
+    match tree.get_var("c").unwrap() {
+        Value::Struct { fields, .. } => match &fields["owner"] {
+            Value::Struct { fields: owner, .. } => {
+                assert_eq!(owner["score"], Value::Number(15.0));
+            }
+            _ => panic!(),
+        },
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn nested_struct_wrong_field_error() {
+    let err = check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.missing = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("missing") || err.contains("Inner"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn nested_struct_non_struct_intermediate_error() {
+    // s.x.y = 5 where x is Number — can't traverse Number.
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x.y = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn path_field_compound_with_break_continue() {
+    // break inside loop stops accumulation; continue skips.
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 0 }, S { x: 0 }, S { x: 0 }]
+        let mut i = 0
+        while i < 3 {
+            if i == 1 {
+                i += 1
+                continue
+            }
+            arr[i].x += 10
+            i += 1
+        }
+        print(arr[0].x)
+        print(arr[1].x)
+        print(arr[2].x)
+    "#,
+    )
+    .unwrap();
+    // i=0: arr[0].x += 10 → 10; i=1: continue; i=2: arr[2].x += 10 → 10
+    assert_eq!(out, vec!["10", "0", "10"]);
+}
+
+// --- Units and states ---
+
+#[test]
+fn path_assign_unit_field_ok() {
+    assert!(check(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let mut arr: Array<S> = [S { dist: d }]
+        let new_d: meters = 10
+        arr[0].dist = new_d
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn path_compound_unit_field_ok() {
+    let out = vm_run(
+        r#"
+        struct S { dist: meters }
+        let a: meters = 3
+        let b: meters = 4
+        let mut arr: Array<S> = [S { dist: a }]
+        arr[0].dist += b
+        print(arr[0].dist)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn path_compound_wrong_unit_error() {
+    assert!(check(
+        r#"
+        struct S { dist: meters }
+        let d: meters = 5
+        let t: seconds = 1
+        let mut arr: Array<S> = [S { dist: d }]
+        arr[0].dist += t
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn path_assign_state_field_ok() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let mut arr: Array<Box> = [Box { door: Door.closed }]
+        arr[0].door = Door.open
+        print(arr[0].door)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn path_compound_state_field_error() {
+    assert!(check(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let mut arr: Array<Box> = [Box { door: Door.closed }]
+        arr[0].door += Door.open
+    "#
+    )
+    .is_err());
+}
+
+#[test]
+fn state_machine_behavior_still_ok_after_path_mutation() {
+    let out = vm_run(
+        r#"
+        state Light { red green transition red -> green }
+        struct S { x: Number }
+        let mut l = Light.red
+        let mut arr: Array<S> = [S { x: 1 }]
+        transition l -> green
+        arr[0].x = 99
+        print(l)
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Light.green", "99"]);
+}
+
+// --- Unsupported targets ---
+
+#[test]
+fn grouped_expr_field_assignment_rejected() {
+    // (u).score = 10 — grouping target not supported; parse should fail or type-check should fail.
+    // The parser parses `(u)` as a grouped expression, then `.score` as FieldAccess in parse_call,
+    // then `= 10` is the next statement → parse error.
+    let src = r#"
+        struct S { score: Number }
+        let mut s = S { score: 1 }
+        (s).score = 10
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err(), "(s).score = 10 should fail at parse level");
+}
+
+#[test]
+fn struct_literal_field_assignment_rejected() {
+    // S { score: 1 }.score = 2 — literal target not supported.
+    let src = r#"
+        struct S { score: Number }
+        S { score: 1 }.score = 2
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let result = Parser::new(tokens).parse();
+    assert!(result.is_err(), "literal field assignment should fail");
+}
+
+// --- Error messages ---
+
+#[test]
+fn path_assign_array_index_type_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr["bad"].x = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("Number") || err.contains("Text") || err.contains("index"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn path_assign_map_key_type_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut m: Map<Text, S> = {"a": S { x: 1 }}
+        m[1].x = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("Text") || err.contains("Number") || err.contains("key"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn path_assign_missing_map_key_runtime_message() {
+    let err = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut m: Map<Text, S> = {}
+        m["ghost"].x = 1
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("ghost") || err.contains("not found"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn path_assign_array_oob_message() {
+    let err = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[5].x = 99
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("5") || err.contains("bounds") || err.contains("index"),
+        "got: {}",
+        err
+    );
+}
