@@ -1190,6 +1190,78 @@ impl Vm {
                     }
                 }
 
+                Instruction::SetField { name, field } => {
+                    let new_val = pop(stack)?;
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    match current {
+                        Value::Struct {
+                            name: struct_name,
+                            mut fields,
+                        } => {
+                            if !fields.contains_key(&field) {
+                                return Err(runtime_err(&format!(
+                                    "struct '{}' has no field '{}'",
+                                    struct_name, field
+                                )));
+                            }
+                            fields.insert(field.clone(), new_val);
+                            if !current_env.borrow_mut().assign_existing(
+                                &name,
+                                Value::Struct {
+                                    name: struct_name,
+                                    fields,
+                                },
+                            ) {
+                                return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                            }
+                        }
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "cannot assign field '{}' on {}",
+                                field,
+                                other.type_name()
+                            )));
+                        }
+                    }
+                }
+
+                Instruction::FieldCompoundAssign { name, field, op } => {
+                    let rhs = pop(stack)?;
+                    let current = current_env
+                        .borrow()
+                        .get(&name)
+                        .ok_or_else(|| runtime_err(&format!("undefined variable '{}'", name)))?;
+                    let (struct_name, old_val, mut fields) = match current {
+                        Value::Struct { name: sn, fields } => {
+                            let old = fields.get(&field).cloned().ok_or_else(|| {
+                                runtime_err(&format!("struct '{}' has no field '{}'", sn, field))
+                            })?;
+                            (sn, old, fields)
+                        }
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "cannot assign field '{}' on {}",
+                                field,
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let new_val = apply_compound_op(&op, old_val, rhs)?;
+                    fields.insert(field.clone(), new_val);
+                    if !current_env.borrow_mut().assign_existing(
+                        &name,
+                        Value::Struct {
+                            name: struct_name,
+                            fields,
+                        },
+                    ) {
+                        return Err(runtime_err(&format!("undefined variable '{}'", name)));
+                    }
+                }
+
                 Instruction::Unsupported(feature) => {
                     return Err(runtime_err(&format!(
                         "bytecode feature not yet executable: {}",

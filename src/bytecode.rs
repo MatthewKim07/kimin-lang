@@ -178,6 +178,23 @@ pub enum Instruction {
     /// Stack: [..., struct_value] → field_value.
     FieldAccess(String),
 
+    /// Assign a value to a named field on a named struct variable.
+    /// Stack before: [..., new_value] — pops value; loads struct `name` from env;
+    /// clones field map; updates `field`; assigns updated struct back via assign_existing.
+    SetField {
+        name: String,
+        field: String,
+    },
+
+    /// Compound-assign a field on a named struct variable: `name.field op= rhs`.
+    /// Stack before: [..., rhs_value] — pops rhs; loads struct `name` from env;
+    /// reads old field value; applies op(old, rhs); updates field; assigns back.
+    FieldCompoundAssign {
+        name: String,
+        field: String,
+        op: crate::ast::CompoundAssignOp,
+    },
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }

@@ -161,6 +161,17 @@ fn fmt_instruction(instr: &Instruction) -> String {
             format!("STRUCT_LITERAL {} fields=[{}]", name, fields.join(", "))
         }
         Instruction::FieldAccess(field) => format!("FIELD_ACCESS {}", field),
+        Instruction::SetField { name, field } => format!("SET_FIELD {}.{}", name, field),
+        Instruction::FieldCompoundAssign { name, field, op } => {
+            use crate::ast::CompoundAssignOp;
+            let op_str = match op {
+                CompoundAssignOp::Add => "+=",
+                CompoundAssignOp::Subtract => "-=",
+                CompoundAssignOp::Multiply => "*=",
+                CompoundAssignOp::Divide => "/=",
+            };
+            format!("FIELD_COMPOUND_ASSIGN {}.{} {}", name, field, op_str)
+        }
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
 }

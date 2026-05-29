@@ -214,6 +214,34 @@ impl BytecodeCompiler {
                 });
             }
 
+            Stmt::FieldAssign {
+                name, field, value, ..
+            } => {
+                // Stack before SetField: [..., new_value]
+                self.compile_expr(value)?;
+                self.chunk.emit(Instruction::SetField {
+                    name: name.clone(),
+                    field: field.clone(),
+                });
+            }
+
+            Stmt::FieldCompoundAssign {
+                name,
+                field,
+                op,
+                value,
+                ..
+            } => {
+                // Stack before FieldCompoundAssign: [..., rhs_value]
+                // VM reads old field value internally.
+                self.compile_expr(value)?;
+                self.chunk.emit(Instruction::FieldCompoundAssign {
+                    name: name.clone(),
+                    field: field.clone(),
+                    op: op.clone(),
+                });
+            }
+
             Stmt::Print { value } => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Instruction::Print);
