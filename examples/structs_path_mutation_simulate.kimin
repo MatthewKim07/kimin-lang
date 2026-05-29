@@ -1,0 +1,18 @@
+struct Counter {
+  value: Number
+}
+
+struct Box {
+  counter: Counter
+}
+
+let mut b = Box { counter: Counter { value: 0 } }
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  b.counter.value += 1
+}
+
+print(b.counter.value)

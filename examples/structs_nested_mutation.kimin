@@ -1,0 +1,18 @@
+struct User {
+  name: Text
+  score: Number
+}
+
+struct Company {
+  owner: User
+}
+
+let mut c = Company {
+  owner: User { name: "alice", score: 10 }
+}
+
+c.owner.name = "bob"
+c.owner.score += 5
+
+print(c.owner.name)
+print(c.owner.score)

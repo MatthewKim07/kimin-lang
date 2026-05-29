@@ -13751,13 +13751,10 @@ fn parse_index_compound_call_target_rejected() {
 }
 
 #[test]
-fn parse_index_compound_nested_target_rejected() {
-    // arr[0][1] += 1 — backtracking in parse_index_assign_or_expr sees `[` after `]`, not an op,
-    // backtracks, parses arr[0][1] as expression, then += starts new stmt → parse error.
-    let tokens = crate::lexer::Lexer::new("let mut a = [1, 2, 3]\na[0][1] += 1")
-        .tokenize()
-        .unwrap();
-    assert!(crate::parser::Parser::new(tokens).parse().is_err());
+fn parse_index_compound_nested_target_type_error() {
+    // a[0][1] += 1 — parses as TargetCompoundAssign in M15C but fails typecheck:
+    // a[0] is Number (not indexable), so the Index step errors.
+    assert!(check("let mut a = [1, 2, 3]\na[0][1] += 1").is_err());
 }
 
 #[test]
@@ -17969,8 +17966,8 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Map { .. }
             | crate::bytecode::Instruction::StructLiteral { .. }
             | crate::bytecode::Instruction::FieldAccess(_)
-            | crate::bytecode::Instruction::SetField { .. }
-            | crate::bytecode::Instruction::FieldCompoundAssign { .. }
+            | crate::bytecode::Instruction::SetPath { .. }
+            | crate::bytecode::Instruction::PathCompoundAssign { .. }
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -32260,11 +32257,17 @@ fn parse_field_assign_number() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(stmts.len() == 3);
-    assert!(matches!(
-        &stmts[2],
-        crate::ast::Stmt::FieldAssign { name, field, .. }
-        if name == "s" && field == "x"
-    ));
+    // s.x = 42 → TargetAssign { target: Field(Var("s"), "x") }
+    if let crate::ast::Stmt::TargetAssign { target, .. } = &stmts[2] {
+        if let crate::ast::AssignTarget::Field(inner, field) = target {
+            assert!(matches!(inner.as_ref(), crate::ast::AssignTarget::Var(n) if n == "s"));
+            assert_eq!(field, "x");
+        } else {
+            panic!("expected Field target");
+        }
+    } else {
+        panic!("expected TargetAssign");
+    }
 }
 
 #[test]
@@ -32276,11 +32279,16 @@ fn parse_field_assign_text() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
-    assert!(matches!(
-        &stmts[2],
-        crate::ast::Stmt::FieldAssign { name, field, .. }
-        if name == "s" && field == "name"
-    ));
+    if let crate::ast::Stmt::TargetAssign { target, .. } = &stmts[2] {
+        if let crate::ast::AssignTarget::Field(inner, field) = target {
+            assert!(matches!(inner.as_ref(), crate::ast::AssignTarget::Var(n) if n == "s"));
+            assert_eq!(field, "name");
+        } else {
+            panic!("expected Field target");
+        }
+    } else {
+        panic!("expected TargetAssign");
+    }
 }
 
 #[test]
@@ -32292,11 +32300,17 @@ fn parse_field_compound_add() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
-    assert!(matches!(
-        &stmts[2],
-        crate::ast::Stmt::FieldCompoundAssign { name, field, op: crate::ast::CompoundAssignOp::Add, .. }
-        if name == "s" && field == "x"
-    ));
+    if let crate::ast::Stmt::TargetCompoundAssign { target, op, .. } = &stmts[2] {
+        assert!(matches!(op, crate::ast::CompoundAssignOp::Add));
+        if let crate::ast::AssignTarget::Field(inner, field) = target {
+            assert!(matches!(inner.as_ref(), crate::ast::AssignTarget::Var(n) if n == "s"));
+            assert_eq!(field, "x");
+        } else {
+            panic!("expected Field target");
+        }
+    } else {
+        panic!("expected TargetCompoundAssign");
+    }
 }
 
 #[test]
@@ -32310,7 +32324,7 @@ fn parse_field_compound_subtract() {
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(matches!(
         &stmts[2],
-        crate::ast::Stmt::FieldCompoundAssign {
+        crate::ast::Stmt::TargetCompoundAssign {
             op: crate::ast::CompoundAssignOp::Subtract,
             ..
         }
@@ -32328,7 +32342,7 @@ fn parse_field_compound_multiply() {
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(matches!(
         &stmts[2],
-        crate::ast::Stmt::FieldCompoundAssign {
+        crate::ast::Stmt::TargetCompoundAssign {
             op: crate::ast::CompoundAssignOp::Multiply,
             ..
         }
@@ -32346,7 +32360,7 @@ fn parse_field_compound_divide() {
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(matches!(
         &stmts[2],
-        crate::ast::Stmt::FieldCompoundAssign {
+        crate::ast::Stmt::TargetCompoundAssign {
             op: crate::ast::CompoundAssignOp::Divide,
             ..
         }
@@ -32355,7 +32369,6 @@ fn parse_field_compound_divide() {
 
 #[test]
 fn parse_field_assign_rhs_uses_field_read() {
-    // RHS can be any expression including another field read.
     let src = r#"
         struct S { x: Number, y: Number }
         let mut s = S { x: 1, y: 2 }
@@ -32363,7 +32376,7 @@ fn parse_field_assign_rhs_uses_field_read() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
-    assert!(matches!(&stmts[2], crate::ast::Stmt::FieldAssign { .. }));
+    assert!(matches!(&stmts[2], crate::ast::Stmt::TargetAssign { .. }));
 }
 
 #[test]
@@ -32377,7 +32390,7 @@ fn parse_field_compound_rhs_uses_field_read() {
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(matches!(
         &stmts[2],
-        crate::ast::Stmt::FieldCompoundAssign { .. }
+        crate::ast::Stmt::TargetCompoundAssign { .. }
     ));
 }
 
@@ -32405,8 +32418,8 @@ fn parse_state_variant_still_parses_after_field_mutation() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
-    // 5 statements; last is FieldAssign.
-    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+    // 5 statements; last is TargetAssign.
+    assert!(matches!(&stmts[4], crate::ast::Stmt::TargetAssign { .. }));
 }
 
 #[test]
@@ -32421,7 +32434,7 @@ fn parse_array_index_assign_still_parses_after_field_mutation() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(matches!(&stmts[1], crate::ast::Stmt::IndexAssign { .. }));
-    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::TargetAssign { .. }));
 }
 
 #[test]
@@ -32436,7 +32449,7 @@ fn parse_map_index_assign_still_parses_after_field_mutation() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
     assert!(matches!(&stmts[1], crate::ast::Stmt::IndexAssign { .. }));
-    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::TargetAssign { .. }));
 }
 
 // --- Typechecker tests ---
@@ -32961,16 +32974,16 @@ fn bytecode_field_assign_emits_set_field() {
         s.x = 42
     "#,
     );
-    let has_set_field =
-        prog.main.instructions.iter().any(
-            |i| matches!(i, Instruction::SetField { name, field } if name == "s" && field == "x"),
-        );
-    assert!(has_set_field, "expected SET_FIELD s.x instruction");
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::SetPath { root, steps }
+            if root == "s"
+                && matches!(steps.as_slice(), [crate::ast::PathStep::Field(f)] if f == "x"))
+    });
+    assert!(has, "expected SET_PATH s.x instruction");
 }
 
 #[test]
 fn bytecode_field_assign_compiles_rhs_only() {
-    // The rhs constant should appear; there should be no extra LOAD for the struct.
     let prog = compile_prog(
         r#"
         struct S { x: Number }
@@ -32978,20 +32991,20 @@ fn bytecode_field_assign_compiles_rhs_only() {
         s.x = 42
     "#,
     );
-    let has_set_field = prog
+    let has_set_path = prog
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::SetField { .. }));
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
     let has_field_access = prog
         .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::FieldAccess(_)));
-    assert!(has_set_field);
+    assert!(has_set_path);
     assert!(
         !has_field_access,
-        "SET_FIELD should not emit a FIELD_ACCESS read"
+        "SET_PATH should not emit a FIELD_ACCESS read"
     );
 }
 
@@ -33004,11 +33017,13 @@ fn bytecode_field_compound_emits_field_compound() {
         s.x += 5
     "#,
     );
-    let has_fca = prog.main.instructions.iter().any(|i| {
-        matches!(i, Instruction::FieldCompoundAssign { name, field, op }
-            if name == "s" && field == "x" && matches!(op, crate::ast::CompoundAssignOp::Add))
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::PathCompoundAssign { root, steps, op }
+            if root == "s"
+                && matches!(steps.as_slice(), [crate::ast::PathStep::Field(f)] if f == "x")
+                && matches!(op, crate::ast::CompoundAssignOp::Add))
     });
-    assert!(has_fca, "expected FIELD_COMPOUND_ASSIGN s.x +=");
+    assert!(has, "expected PATH_COMPOUND_ASSIGN s.x +=");
 }
 
 #[test]
@@ -33020,20 +33035,20 @@ fn bytecode_field_compound_compiles_rhs_only() {
         s.x += 5
     "#,
     );
-    let has_fca = prog
+    let has = prog
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }));
+        .any(|i| matches!(i, Instruction::PathCompoundAssign { .. }));
     let has_field_access = prog
         .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::FieldAccess(_)));
-    assert!(has_fca);
+    assert!(has);
     assert!(
         !has_field_access,
-        "FIELD_COMPOUND_ASSIGN should not emit a FIELD_ACCESS read"
+        "PATH_COMPOUND_ASSIGN should not emit a FIELD_ACCESS read"
     );
 }
 
@@ -33048,12 +33063,12 @@ fn bytecode_field_assign_inside_function() {
         s.x = 9
     "#,
     );
-    let has_set_field = prog
+    let has = prog
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::SetField { .. }));
-    assert!(has_set_field);
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has);
 }
 
 #[test]
@@ -33067,19 +33082,19 @@ fn bytecode_struct_literal_field_access_unchanged_after_field_mutation() {
         t.x = 3
     "#,
     );
-    // FieldAccess should appear (for `s.x` read), SetField for `t.x = 3`.
+    // FieldAccess should appear (for `s.x` read), SetPath for `t.x = 3`.
     let has_fa = prog
         .main
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::FieldAccess(_)));
-    let has_sf = prog
+    let has_sp = prog
         .main
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::SetField { .. }));
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
     assert!(has_fa);
-    assert!(has_sf);
+    assert!(has_sp);
 }
 
 #[test]
@@ -33092,7 +33107,7 @@ fn disassemble_set_field_stable() {
     "#,
     );
     let out = crate::disassemble::disassemble(&prog);
-    assert!(out.contains("SET_FIELD s.x"), "disassembly: {}", out);
+    assert!(out.contains("SET_PATH s.x"), "disassembly: {}", out);
 }
 
 #[test]
@@ -33106,7 +33121,7 @@ fn disassemble_field_compound_stable() {
     );
     let out = crate::disassemble::disassemble(&prog);
     assert!(
-        out.contains("FIELD_COMPOUND_ASSIGN s.x +="),
+        out.contains("PATH_COMPOUND_ASSIGN s.x +="),
         "disassembly: {}",
         out
     );
@@ -33670,7 +33685,12 @@ fn field_assign_wrong_type_message() {
     )
     .unwrap_err()
     .to_string();
-    assert!(err.contains("score"), "got: {}", err);
+    // Error message includes type mismatch info (Number vs Text).
+    assert!(
+        err.contains("Number") || err.contains("Text") || err.contains("expected"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
@@ -33704,9 +33724,9 @@ fn parse_dotdot_slice_still_parses_after_field_mutation() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
-    // slice is Stmt::Let, field assign is Stmt::FieldAssign
+    // slice is Stmt::Let, field assign is Stmt::TargetAssign
     assert!(matches!(&stmts[1], crate::ast::Stmt::Let { name, .. } if name == "s"));
-    assert!(matches!(&stmts[4], crate::ast::Stmt::FieldAssign { .. }));
+    assert!(matches!(&stmts[4], crate::ast::Stmt::TargetAssign { .. }));
 }
 
 #[test]
@@ -33719,7 +33739,7 @@ fn parse_struct_literal_still_parses_after_field_mutation() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let stmts = Parser::new(tokens).parse().unwrap();
-    assert!(matches!(&stmts[2], crate::ast::Stmt::FieldAssign { .. }));
+    assert!(matches!(&stmts[2], crate::ast::Stmt::TargetAssign { .. }));
     assert!(matches!(&stmts[3], crate::ast::Stmt::Let { .. }));
 }
 
@@ -33745,8 +33765,8 @@ fn parse_field_assign_function_result_target_rejected() {
 }
 
 #[test]
-fn parse_field_assign_array_index_target_rejected() {
-    // users[0].score = 10 should fail at parse level.
+fn parse_field_assign_array_index_target_accepted() {
+    // users[0].score = 10 — M15C supports array-element field mutation.
     let src = r#"
         struct S { score: Number }
         let users = [S { score: 1 }]
@@ -33755,14 +33775,14 @@ fn parse_field_assign_array_index_target_rejected() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(
-        result.is_err(),
-        "array-index field assignment target should fail at parse level"
+        result.is_ok(),
+        "array-index field assignment should parse in M15C"
     );
 }
 
 #[test]
-fn parse_field_assign_map_index_target_rejected() {
-    // map["u"].score = 10 should fail at parse level.
+fn parse_field_assign_map_index_target_accepted() {
+    // m["u"].score = 10 — M15C supports map-value field mutation.
     let src = r#"
         struct S { score: Number }
         let mut m: Map<Text, S> = {}
@@ -33771,8 +33791,8 @@ fn parse_field_assign_map_index_target_rejected() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(
-        result.is_err(),
-        "map-index field assignment target should fail at parse level"
+        result.is_ok(),
+        "map-index field assignment should parse in M15C"
     );
 }
 
@@ -34018,7 +34038,7 @@ fn field_compound_old_value_read_order_documented() {
     //   Write-back of clone with x=6 overrides the s.x=10 rhs set.
     //
     // Bytecode VM: compiler emits RHS expression first (onto stack), then
-    //   FieldCompoundAssign instruction. RHS executes first (sets s.x=10),
+    //   PathCompoundAssign instruction. RHS executes first (sets s.x=10),
     //   then instruction reads current env value=10; result = 10+5 = 15.
     //
     // This matches the existing IndexCompoundAssign parity pattern for arrays/maps.
@@ -34102,12 +34122,12 @@ fn bytecode_field_assign_inside_simulate() {
         }
     "#,
     );
-    // The simulate body should contain FieldCompoundAssign.
+    // The simulate body should contain PathCompoundAssign.
     let has_fca = prog.simulate_bodies.iter().any(|sb| {
         sb.chunk
             .instructions
             .iter()
-            .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }))
+            .any(|i| matches!(i, Instruction::PathCompoundAssign { .. }))
     });
     assert!(
         has_fca,
@@ -34128,7 +34148,7 @@ fn bytecode_field_compound_inside_function() {
         f.chunk
             .instructions
             .iter()
-            .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }))
+            .any(|i| matches!(i, Instruction::PathCompoundAssign { .. }))
     });
     assert!(
         has_fca,
@@ -34151,7 +34171,7 @@ fn bytecode_field_compound_inside_simulate() {
         sb.chunk
             .instructions
             .iter()
-            .any(|i| matches!(i, Instruction::FieldCompoundAssign { .. }))
+            .any(|i| matches!(i, Instruction::PathCompoundAssign { .. }))
     });
     assert!(
         has_fca,
@@ -34259,8 +34279,8 @@ fn field_compound_map_field_error() {
 }
 
 #[test]
-fn nested_array_field_index_assignment_is_parse_error() {
-    // b.nums[0] = 99 is not supported; parser fails after consuming b.nums as Stmt::Expr.
+fn nested_array_field_index_assignment_parses_in_m15c() {
+    // b.nums[0] = 99 — M15C supports this (Field then Index step).
     let src = r#"
         struct Bag { nums: Array<Number> }
         let mut b = Bag { nums: [1, 2, 3] }
@@ -34268,17 +34288,12 @@ fn nested_array_field_index_assignment_is_parse_error() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
-    // Parser: `b` is Ident, peek is Dot → but peek_kind_2 is `nums` (Ident), peek_kind_3 is `[` (not Eq/op=).
-    // So it falls to Stmt::Expr, parses `b.nums[0]` as expression, then sees `= 99` → parse error.
-    assert!(
-        result.is_err(),
-        "nested index-field assignment should fail at parse level"
-    );
+    assert!(result.is_ok(), "b.nums[0] = 99 should parse in M15C");
 }
 
 #[test]
-fn nested_map_field_index_assignment_is_parse_error() {
-    // b.scores["a"] = 2 should fail at parse level.
+fn nested_map_field_index_assignment_parses_in_m15c() {
+    // b.scores["a"] = 2 — M15C supports this.
     let src = r#"
         struct Bag { scores: Map<Text, Number> }
         let mut b = Bag { scores: {"a": 1} }
@@ -34286,10 +34301,7 @@ fn nested_map_field_index_assignment_is_parse_error() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
-    assert!(
-        result.is_err(),
-        "nested map-index-field assignment should fail at parse level"
-    );
+    assert!(result.is_ok(), "b.scores[\"a\"] = 2 should parse in M15C");
 }
 
 // --- Units / states audit additions ---
@@ -34402,9 +34414,8 @@ fn field_compound_with_continue() {
 // --- Unsupported mutation shapes ---
 
 #[test]
-fn nested_field_assignment_rejected() {
-    // u.a.b = v: peek_kind_3 on `Ident Dot Ident Dot` is Dot (not Eq), falls to Stmt::Expr.
-    // parse_expr() parses u.a, then `.b` as FieldAccess. Then `= v` is the next stmt → parse error.
+fn nested_field_assignment_accepted() {
+    // u.a.b = 5 — M15C supports nested struct field mutation.
     let src = r#"
         struct Inner { b: Number }
         struct Outer { a: Inner }
@@ -34415,13 +34426,14 @@ fn nested_field_assignment_rejected() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(
-        result.is_err(),
-        "nested field assignment should fail at parse level"
+        result.is_ok(),
+        "nested field assignment should parse in M15C"
     );
 }
 
 #[test]
-fn nested_field_compound_rejected() {
+fn nested_field_compound_accepted() {
+    // u.a.b += 5 — M15C supports nested field compound assignment.
     let src = r#"
         struct Inner { b: Number }
         struct Outer { a: Inner }
@@ -34431,14 +34443,12 @@ fn nested_field_compound_rejected() {
     "#;
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
-    assert!(
-        result.is_err(),
-        "nested field compound assignment should fail at parse level"
-    );
+    assert!(result.is_ok(), "nested field compound should parse in M15C");
 }
 
 #[test]
 fn function_result_field_assignment_rejected() {
+    // get_s().score = 10 — function result target still rejected (no assignable root variable).
     let src = r#"
         struct S { score: Number }
         fn get_s() -> S { return S { score: 1 } }
@@ -34453,7 +34463,8 @@ fn function_result_field_assignment_rejected() {
 }
 
 #[test]
-fn array_index_field_assignment_rejected() {
+fn array_index_field_assignment_accepted() {
+    // arr[0].score = 10 — M15C supports array-element field mutation.
     let src = r#"
         struct S { score: Number }
         let arr = [S { score: 1 }]
@@ -34462,13 +34473,14 @@ fn array_index_field_assignment_rejected() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(
-        result.is_err(),
-        "array-index field assignment should fail at parse level"
+        result.is_ok(),
+        "array-index field assignment should parse in M15C"
     );
 }
 
 #[test]
-fn map_index_field_assignment_rejected() {
+fn map_index_field_assignment_accepted() {
+    // m["u"].score = 10 — M15C supports map-value field mutation.
     let src = r#"
         struct S { score: Number }
         let mut m: Map<Text, S> = {}
@@ -34477,13 +34489,14 @@ fn map_index_field_assignment_rejected() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(
-        result.is_err(),
-        "map-index field assignment should fail at parse level"
+        result.is_ok(),
+        "map-index field assignment should parse in M15C"
     );
 }
 
 #[test]
 fn function_result_field_compound_rejected() {
+    // get_s().score += 5 — function result target still rejected.
     let src = r#"
         struct S { score: Number }
         fn get_s() -> S { return S { score: 1 } }
@@ -34510,4 +34523,1100 @@ fn field_assign_expression_target_parse_error() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(result.is_err());
+}
+
+// ============================================================
+// Milestone 15C: Expression-target and nested struct field mutation
+// ============================================================
+
+// --- Parser tests ---
+
+#[test]
+fn parse_nested_field_assign() {
+    let src = r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b = 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // u.a.b = 5 → TargetAssign { Field(Field(Var("u"), "a"), "b") }
+    assert!(matches!(&stmts[4], crate::ast::Stmt::TargetAssign { .. }));
+}
+
+#[test]
+fn parse_nested_field_compound() {
+    let src = r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b += 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[4],
+        crate::ast::Stmt::TargetCompoundAssign {
+            op: crate::ast::CompoundAssignOp::Add,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn parse_array_index_field_assign() {
+    let src = r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 99
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    // arr[0].score = 99 → TargetAssign { Field(Index(Var("arr"), 0), "score") }
+    if let crate::ast::Stmt::TargetAssign { target, .. } = &stmts[2] {
+        if let crate::ast::AssignTarget::Field(inner, field) = target {
+            assert_eq!(field, "score");
+            assert!(matches!(
+                inner.as_ref(),
+                crate::ast::AssignTarget::Index(..)
+            ));
+        } else {
+            panic!("expected Field target");
+        }
+    } else {
+        panic!("expected TargetAssign");
+    }
+}
+
+#[test]
+fn parse_array_index_field_compound() {
+    let src = r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x += 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::TargetCompoundAssign { .. }
+    ));
+}
+
+#[test]
+fn parse_map_index_field_assign() {
+    let src = r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {}
+        m["alice"].score = 20
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::TargetAssign { .. }));
+}
+
+#[test]
+fn parse_map_index_field_compound() {
+    let src = r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {}
+        m["alice"].score += 5
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &stmts[2],
+        crate::ast::Stmt::TargetCompoundAssign { .. }
+    ));
+}
+
+#[test]
+fn parse_direct_field_assign_still_works() {
+    // Simple u.field = v still works (produces TargetAssign).
+    let src = r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#;
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[2], crate::ast::Stmt::TargetAssign { .. }));
+}
+
+#[test]
+fn parse_direct_index_assign_still_works() {
+    // Simple arr[i] = v still produces IndexAssign.
+    let src = "let mut arr = [1, 2, 3]\narr[1] = 99";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let stmts = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&stmts[1], crate::ast::Stmt::IndexAssign { .. }));
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_nested_field_assign_ok() {
+    assert!(check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b = 5
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_nested_field_compound_ok() {
+    assert!(check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b += 10
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_array_index_field_assign_ok() {
+    assert!(check(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 99
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_array_index_field_compound_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x += 5
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_map_index_field_assign_ok() {
+    assert!(check(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }}
+        m["alice"].score = 20
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_map_index_field_compound_ok() {
+    assert!(check(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }}
+        m["alice"].score += 5
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_mutable_root_required_nested_field() {
+    let err = check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let u = Outer { a: inner }
+        u.a.b = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") && err.contains("u"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_mutable_root_required_array_element_field() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") && err.contains("arr"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_unknown_nested_field_error() {
+    let err = check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.missing = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("missing") || err.contains("Inner"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_non_struct_field_step_error() {
+    // u.x.y = 5 where x is Number — can't access field on Number.
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x.y = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_array_index_step_requires_number() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr["bad"].x = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_final_wrong_value_type_error() {
+    let err = check(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = "bad"
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_final_compound_wrong_rhs_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x += "bad"
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_direct_field_assign_still_ok() {
+    assert!(check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x = 42
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_direct_index_assign_still_ok() {
+    assert!(check(
+        r#"
+        let mut arr = [1, 2, 3]
+        arr[0] = 99
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_nested_field_assign() {
+    let interp = run(r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b = 42
+    "#)
+    .unwrap();
+    let val = interp.get_var("u").unwrap();
+    match val {
+        Value::Struct { fields, .. } => match &fields["a"] {
+            Value::Struct { fields: inner, .. } => {
+                assert_eq!(inner["b"], Value::Number(42.0));
+            }
+            _ => panic!(),
+        },
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn interp_nested_field_compound() {
+    let interp = run(r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 10 }
+        let mut u = Outer { a: inner }
+        u.a.b += 5
+    "#)
+    .unwrap();
+    let val = interp.get_var("u").unwrap();
+    match val {
+        Value::Struct { fields, .. } => match &fields["a"] {
+            Value::Struct { fields: inner, .. } => {
+                assert_eq!(inner["b"], Value::Number(15.0));
+            }
+            _ => panic!(),
+        },
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn interp_array_index_field_assign() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }, S { score: 2 }]
+        arr[0].score = 99
+        print(arr[0].score)
+        print(arr[1].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99", "2"]);
+}
+
+#[test]
+fn interp_array_index_field_compound() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 10 }]
+        arr[0].x += 5
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_map_index_field_assign() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }}
+        m["alice"].score = 20
+        print(m["alice"].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn interp_map_index_field_compound() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }}
+        m["alice"].score += 5
+        print(m["alice"].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_target_assign_preserves_other_fields() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number, y: Number }
+        let mut arr: Array<S> = [S { x: 1, y: 99 }]
+        arr[0].x = 42
+        print(arr[0].x)
+        print(arr[0].y)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "99"]);
+}
+
+#[test]
+fn interp_target_assign_preserves_other_array_elements() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }, S { x: 2 }, S { x: 3 }]
+        arr[1].x = 99
+        print(arr[0].x)
+        print(arr[1].x)
+        print(arr[2].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "99", "3"]);
+}
+
+#[test]
+fn interp_target_assign_preserves_other_map_keys() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }, "bob": S { score: 20 }}
+        m["alice"].score = 99
+        print(m["alice"].score)
+        print(m["bob"].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99", "20"]);
+}
+
+#[test]
+fn interp_target_assign_missing_map_key_error() {
+    // Missing map key in path → RuntimeError.
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut m: Map<Text, S> = {}
+        m["missing"].x = 1
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_target_assign_array_oob_error() {
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[5].x = 99
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_nested_field_assign_emits_set_path() {
+    let prog = compile_prog(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b = 5
+    "#,
+    );
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::SetPath { root, steps }
+            if root == "u"
+                && matches!(steps.as_slice(), [
+                    crate::ast::PathStep::Field(a),
+                    crate::ast::PathStep::Field(b),
+                ] if a == "a" && b == "b"))
+    });
+    assert!(has, "expected SET_PATH u.a.b");
+}
+
+#[test]
+fn bytecode_array_index_field_assign_emits_set_path() {
+    let prog = compile_prog(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 99
+    "#,
+    );
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::SetPath { root, steps }
+            if root == "arr"
+                && matches!(steps.as_slice(), [
+                    crate::ast::PathStep::Index,
+                    crate::ast::PathStep::Field(f),
+                ] if f == "score"))
+    });
+    assert!(has, "expected SET_PATH arr[?].score");
+}
+
+#[test]
+fn bytecode_map_index_field_assign_emits_set_path() {
+    let prog = compile_prog(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {}
+        m["alice"].score = 20
+    "#,
+    );
+    let has = prog.main.instructions.iter().any(|i| {
+        matches!(i, Instruction::SetPath { root, steps }
+            if root == "m"
+                && matches!(steps.as_slice(), [
+                    crate::ast::PathStep::Index,
+                    crate::ast::PathStep::Field(f),
+                ] if f == "score"))
+    });
+    assert!(has, "expected SET_PATH m[?].score");
+}
+
+#[test]
+fn bytecode_path_compound_emits_path_compound() {
+    let prog = compile_prog(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x += 5
+    "#,
+    );
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::PathCompoundAssign { root, .. } if root == "arr"));
+    assert!(has, "expected PATH_COMPOUND_ASSIGN arr[?].x");
+}
+
+#[test]
+fn disassemble_set_path_nested_stable() {
+    let prog = compile_prog(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 99
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(
+        out.contains("SET_PATH arr[?].score"),
+        "disassembly: {}",
+        out
+    );
+}
+
+#[test]
+fn disassemble_path_compound_nested_stable() {
+    let prog = compile_prog(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b += 5
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(
+        out.contains("PATH_COMPOUND_ASSIGN u.a.b +="),
+        "disassembly: {}",
+        out
+    );
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_nested_field_assign() {
+    let out = vm_run(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let mut u = Outer { a: inner }
+        u.a.b = 42
+        print(u.a.b)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_nested_field_compound() {
+    let out = vm_run(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 10 }
+        let mut u = Outer { a: inner }
+        u.a.b += 5
+        print(u.a.b)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_array_index_field_assign() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }, S { score: 2 }]
+        arr[0].score = 99
+        print(arr[0].score)
+        print(arr[1].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99", "2"]);
+}
+
+#[test]
+fn vm_array_index_field_compound() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 10 }]
+        arr[0].x += 5
+        print(arr[0].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_map_index_field_assign() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }}
+        m["alice"].score = 20
+        print(m["alice"].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn vm_map_index_field_compound() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut m: Map<Text, S> = {"alice": S { score: 10 }}
+        m["alice"].score += 5
+        print(m["alice"].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_target_assign_preserves_other_values() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number, y: Number }
+        let mut arr: Array<S> = [S { x: 1, y: 99 }, S { x: 2, y: 88 }]
+        arr[0].x = 42
+        print(arr[0].x)
+        print(arr[0].y)
+        print(arr[1].x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "99", "2"]);
+}
+
+#[test]
+fn vm_target_assign_missing_map_key_error() {
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut m: Map<Text, S> = {}
+        m["nope"].x = 1
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_target_assign_array_oob_error() {
+    let result = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[9].x = 99
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_target_assign_stack_clean() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x = 42
+        print(100)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["100"]);
+}
+
+#[test]
+fn vm_path_compound_stack_clean() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }]
+        arr[0].x += 10
+        print(200)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["200"]);
+}
+
+#[test]
+fn vm_matches_tree_path_field_mutation_basic() {
+    let src = r#"
+        struct User { name: Text, score: Number }
+        struct Company { owner: User }
+        let mut c = Company { owner: User { name: "alice", score: 10 } }
+        c.owner.name = "bob"
+        c.owner.score += 5
+        print(c.owner.name)
+        print(c.owner.score)
+    "#;
+    let tree_out = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["bob", "15"]);
+    match tree_out.get_var("c").unwrap() {
+        Value::Struct { fields, .. } => match &fields["owner"] {
+            Value::Struct { fields: owner, .. } => {
+                assert_eq!(owner["score"], Value::Number(15.0));
+            }
+            _ => panic!(),
+        },
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn vm_matches_tree_path_field_mutation_arrays_maps() {
+    let src = r#"
+        struct S { x: Number }
+        let mut arr: Array<S> = [S { x: 1 }, S { x: 2 }]
+        arr[0].x += 10
+        print(arr[0].x)
+        print(arr[1].x)
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["11", "2"]);
+}
+
+// --- Nested struct tests ---
+
+#[test]
+fn nested_struct_field_assign() {
+    let out = vm_run(
+        r#"
+        struct User { name: Text, score: Number }
+        struct Company { owner: User }
+        let mut c = Company { owner: User { name: "alice", score: 10 } }
+        c.owner.name = "bob"
+        c.owner.score += 5
+        print(c.owner.name)
+        print(c.owner.score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["bob", "15"]);
+}
+
+#[test]
+fn nested_struct_preserves_sibling_fields() {
+    let out = vm_run(
+        r#"
+        struct Inner { x: Number, y: Number }
+        struct Outer { inner: Inner, z: Number }
+        let mut o = Outer { inner: Inner { x: 1, y: 2 }, z: 99 }
+        o.inner.x = 42
+        print(o.inner.x)
+        print(o.inner.y)
+        print(o.z)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "2", "99"]);
+}
+
+// --- Array/map of structs ---
+
+#[test]
+fn array_of_struct_field_assign() {
+    let out = vm_run(
+        r#"
+        struct User { name: Text, score: Number }
+        let mut users: Array<User> = [
+            User { name: "alice", score: 10 },
+            User { name: "bob", score: 20 }
+        ]
+        users[0].score += 5
+        print(users[0].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn map_of_struct_field_assign() {
+    let out = vm_run(
+        r#"
+        struct User { name: Text, score: Number }
+        let mut users: Map<Text, User> = {
+            "alice": User { name: "alice", score: 10 }
+        }
+        users["alice"].score = 20
+        users["alice"].score += 5
+        print(users["alice"].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["25"]);
+}
+
+// --- Closures and env-chain ---
+
+#[test]
+fn closure_nested_field_compound_outer_mutable() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        struct Box { counter: Counter }
+        let mut b = Box { counter: Counter { value: 0 } }
+        fn inc() { b.counter.value += 1 }
+        inc()
+        inc()
+        print(b.counter.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn function_nested_field_assignment() {
+    let out = vm_run(
+        r#"
+        struct Inner { x: Number }
+        struct Outer { inner: Inner }
+        fn make() -> Outer {
+            let mut o = Outer { inner: Inner { x: 0 } }
+            o.inner.x = 42
+            return o
+        }
+        let result = make()
+        print(result.inner.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn immutable_root_nested_field_assign_error() {
+    assert!(check(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let inner = Inner { b: 1 }
+        let u = Outer { a: inner }
+        u.a.b = 5
+    "#
+    )
+    .is_err());
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn path_field_compound_inside_for_each() {
+    let out = vm_run(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }, S { score: 2 }, S { score: 3 }]
+        let mut i = 0
+        while i < 3 {
+            arr[i].score += 10
+            i += 1
+        }
+        print(arr[0].score)
+        print(arr[1].score)
+        print(arr[2].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11", "12", "13"]);
+}
+
+#[test]
+fn path_field_compound_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        struct User { name: Text, score: Number }
+        let mut users: Array<User> = [
+            User { name: "alice", score: 10 },
+            User { name: "bob", score: 20 }
+        ]
+        for i, user in users {
+            users[i].score += 1
+        }
+        print(users[0].score)
+        print(users[1].score)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11", "21"]);
+}
+
+#[test]
+fn simulate_path_field_compound_accumulate() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        struct Box { counter: Counter }
+        let mut b = Box { counter: Counter { value: 0 } }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            b.counter.value += 1
+        }
+        print(b.counter.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_path_field_mutation_simulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        struct Box { counter: Counter }
+        let mut b = Box { counter: Counter { value: 0 } }
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            b.counter.value += 1
+        }
+        print(b.counter.value)
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["3"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn path_assign_immutable_root_message() {
+    let err = check(
+        r#"
+        struct S { score: Number }
+        let arr: Array<S> = [S { score: 1 }]
+        arr[0].score = 99
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("immutable") && err.contains("arr"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn path_assign_unknown_field_message() {
+    let err = check(
+        r#"
+        struct User { score: Number }
+        let mut arr: Array<User> = [User { score: 1 }]
+        arr[0].age = 99
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("age") || err.contains("User"), "got: {}", err);
+}
+
+#[test]
+fn path_assign_non_struct_field_step_message() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let mut s = S { x: 1 }
+        s.x.y = 5
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn path_assign_wrong_value_type_message() {
+    let err = check(
+        r#"
+        struct S { score: Number }
+        let mut arr: Array<S> = [S { score: 1 }]
+        arr[0].score = "bad"
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
 }

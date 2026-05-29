@@ -1,0 +1,23 @@
+// Runnable demonstration of expression-target field mutation.
+
+struct User {
+  name: Text
+  score: Number
+}
+
+let mut users: Array<User> = [
+  User { name: "alice", score: 10 }
+]
+
+users[0].score += 1
+print(users[0].score)
+
+// Uncomment to test immutable root:
+// let frozen: Array<User> = [User { name: "a", score: 1 }]
+// frozen[0].score = 2
+
+// Uncomment to test missing field:
+// users[0].age = 20
+
+// Uncomment to test wrong type:
+// users[0].score = "high"

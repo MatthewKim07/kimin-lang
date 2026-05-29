@@ -1,0 +1,13 @@
+struct User {
+  name: Text
+  score: Number
+}
+
+let mut users: Map<Text, User> = {
+  "alice": User { name: "alice", score: 10 }
+}
+
+users["alice"].score = 20
+users["alice"].score += 5
+
+print(users["alice"].score)
