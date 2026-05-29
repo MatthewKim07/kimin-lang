@@ -202,6 +202,17 @@ pub enum Instruction {
         op: crate::ast::CompoundAssignOp,
     },
 
+    /// Call a method on a struct receiver.
+    ///
+    /// Stack before: [..., receiver, arg1, ..., argN]
+    /// Pops N explicit args (reverses to source order) then pops receiver.
+    /// Dispatches by receiver's struct name + method name.
+    /// Pushes return value; matching CALL semantics.
+    CallMethod {
+        method: String,
+        arg_count: usize,
+    },
+
     /// Placeholder for language features not yet lowered (dynamic calls, closures).
     Unsupported(String),
 }
@@ -248,14 +259,27 @@ pub struct SimulateChunk {
     pub chunk: Chunk,
 }
 
+/// Bytecode for a single struct method.
+#[derive(Debug, Clone)]
+pub struct MethodChunk {
+    pub struct_name: String,
+    pub method_name: String,
+    /// Parameter names in source order; first is always `"self"`.
+    pub params: Vec<String>,
+    pub arity: usize,
+    pub chunk: Chunk,
+}
+
 /// The compiled output for a whole Kimin program.
 /// `main` is the top-level chunk; `functions` holds each named function's bytecode
-/// in source order; `simulate_bodies` holds each simulate body chunk in source order.
+/// in source order; `simulate_bodies` holds each simulate body chunk in source order;
+/// `methods` holds each struct method chunk indexed by (struct_name, method_name).
 #[derive(Debug, Clone)]
 pub struct BytecodeProgram {
     pub main: Chunk,
     pub functions: Vec<FunctionChunk>,
     pub simulate_bodies: Vec<SimulateChunk>,
+    pub methods: Vec<MethodChunk>,
 }
 
 impl BytecodeProgram {
@@ -263,11 +287,13 @@ impl BytecodeProgram {
         main: Chunk,
         functions: Vec<FunctionChunk>,
         simulate_bodies: Vec<SimulateChunk>,
+        methods: Vec<MethodChunk>,
     ) -> Self {
         BytecodeProgram {
             main,
             functions,
             simulate_bodies,
+            methods,
         }
     }
 }

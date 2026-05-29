@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::ast::{AssignTarget, BinaryOp, CompoundAssignOp, Expr, Param, PathStep, Stmt, UnaryOp};
 use crate::bytecode::{
-    BytecodeProgram, Chunk, Constant, FunctionChunk, Instruction, SimulateChunk,
+    BytecodeProgram, Chunk, Constant, FunctionChunk, Instruction, MethodChunk, SimulateChunk,
 };
 use crate::error::CompileError;
 
@@ -34,6 +34,8 @@ pub struct BytecodeCompiler {
     functions: Vec<FunctionChunk>,
     /// Simulate body chunks collected during compilation, in source order.
     simulate_bodies: Vec<SimulateChunk>,
+    /// Method chunks collected during compilation, keyed by (struct_name, method_name).
+    methods: Vec<MethodChunk>,
     /// Stack of enclosing while-loop contexts, used to patch break/continue jumps.
     loop_stack: Vec<LoopContext>,
 }
@@ -47,6 +49,7 @@ impl BytecodeCompiler {
             locals_stack: Vec::new(),
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
+            methods: Vec::new(),
             loop_stack: Vec::new(),
         }
     }
@@ -66,12 +69,11 @@ impl BytecodeCompiler {
             locals_stack: vec![param_scope],
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
+            methods: Vec::new(),
             loop_stack: Vec::new(),
         }
     }
 
-    /// Creates a compiler seeded for a simulate body. `"time"` is pre-loaded as
-    /// the innermost local scope so it resolves to LoadLocal inside the body.
     fn new_for_simulate(globals: HashSet<String>, state_types: HashSet<String>) -> Self {
         let time_scope: HashSet<String> = ["time".to_string()].into_iter().collect();
         BytecodeCompiler {
@@ -81,6 +83,7 @@ impl BytecodeCompiler {
             locals_stack: vec![time_scope],
             functions: Vec::new(),
             simulate_bodies: Vec::new(),
+            methods: Vec::new(),
             loop_stack: Vec::new(),
         }
     }
@@ -95,6 +98,7 @@ impl BytecodeCompiler {
             self.chunk,
             self.functions,
             self.simulate_bodies,
+            self.methods,
         ))
     }
 
@@ -103,7 +107,15 @@ impl BytecodeCompiler {
     fn compile_function_body(
         mut self,
         stmts: &[Stmt],
-    ) -> Result<(Chunk, Vec<FunctionChunk>, Vec<SimulateChunk>), CompileError> {
+    ) -> Result<
+        (
+            Chunk,
+            Vec<FunctionChunk>,
+            Vec<SimulateChunk>,
+            Vec<MethodChunk>,
+        ),
+        CompileError,
+    > {
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
@@ -117,18 +129,35 @@ impl BytecodeCompiler {
             self.chunk.emit(Instruction::Nil);
             self.chunk.emit(Instruction::Return);
         }
-        Ok((self.chunk, self.functions, self.simulate_bodies))
+        Ok((
+            self.chunk,
+            self.functions,
+            self.simulate_bodies,
+            self.methods,
+        ))
     }
 
-    /// Compiles a simulate body. No HALT or RETURN appended.
     fn compile_simulate_body(
         mut self,
         stmts: &[Stmt],
-    ) -> Result<(Chunk, Vec<FunctionChunk>, Vec<SimulateChunk>), CompileError> {
+    ) -> Result<
+        (
+            Chunk,
+            Vec<FunctionChunk>,
+            Vec<SimulateChunk>,
+            Vec<MethodChunk>,
+        ),
+        CompileError,
+    > {
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
-        Ok((self.chunk, self.functions, self.simulate_bodies))
+        Ok((
+            self.chunk,
+            self.functions,
+            self.simulate_bodies,
+            self.methods,
+        ))
     }
 
     /// Returns true if `name` resolves to a local variable in any active block scope.
@@ -307,12 +336,12 @@ impl BytecodeCompiler {
                     self.state_types.clone(),
                     params,
                 );
-                let (fn_chunk, nested_fns, nested_sims) =
+                let (fn_chunk, nested_fns, nested_sims, nested_methods) =
                     fn_compiler.compile_function_body(body)?;
 
-                // Collect any function/simulate chunks emitted within the body.
                 self.functions.extend(nested_fns);
                 self.simulate_bodies.extend(nested_sims);
+                self.methods.extend(nested_methods);
 
                 self.functions.push(FunctionChunk {
                     name: name.clone(),
@@ -351,6 +380,38 @@ impl BytecodeCompiler {
 
             Stmt::StructDecl { .. } => {
                 // Struct declarations are purely static — no bytecode needed.
+            }
+
+            Stmt::ImplBlock {
+                struct_name,
+                methods: method_stmts,
+                ..
+            } => {
+                // Compile each method body into a MethodChunk; no runtime code emitted.
+                for method_stmt in method_stmts {
+                    if let Stmt::FnDecl {
+                        name, params, body, ..
+                    } = method_stmt
+                    {
+                        let method_compiler = BytecodeCompiler::new_for_function(
+                            self.globals.clone(),
+                            self.state_types.clone(),
+                            params,
+                        );
+                        let (chunk, nested_fns, nested_sims, nested_methods) =
+                            method_compiler.compile_function_body(body)?;
+                        self.functions.extend(nested_fns);
+                        self.simulate_bodies.extend(nested_sims);
+                        self.methods.extend(nested_methods);
+                        self.methods.push(MethodChunk {
+                            struct_name: struct_name.clone(),
+                            method_name: name.clone(),
+                            params: params.iter().map(|p| p.name.clone()).collect(),
+                            arity: params.len(),
+                            chunk,
+                        });
+                    }
+                }
             }
 
             Stmt::Transition {
@@ -833,12 +894,12 @@ impl BytecodeCompiler {
                     self.globals.clone(),
                     self.state_types.clone(),
                 );
-                let (body_chunk, nested_fns, nested_sims) =
+                let (body_chunk, nested_fns, nested_sims, nested_methods) =
                     body_compiler.compile_simulate_body(body)?;
 
-                // Nested functions and simulate bodies from inside the body come first.
                 self.functions.extend(nested_fns);
                 self.simulate_bodies.extend(nested_sims);
+                self.methods.extend(nested_methods);
 
                 // This simulate body's index is its position after adding nested bodies.
                 let body_idx = self.simulate_bodies.len();
@@ -1089,6 +1150,23 @@ impl BytecodeCompiler {
             Expr::FieldAccess { object, field, .. } => {
                 self.compile_expr(object)?;
                 self.chunk.emit(Instruction::FieldAccess(field.clone()));
+            }
+
+            Expr::MethodCall {
+                object,
+                method,
+                args,
+                ..
+            } => {
+                // Stack before CallMethod: [..., receiver, arg1, ..., argN]
+                self.compile_expr(object)?;
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.chunk.emit(Instruction::CallMethod {
+                    method: method.clone(),
+                    arg_count: args.len(),
+                });
             }
         }
         Ok(())

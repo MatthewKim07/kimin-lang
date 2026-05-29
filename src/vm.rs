@@ -25,19 +25,27 @@ struct RuntimeStateMachine {
 /// `kimin run`. This VM is reachable via `kimin vm <file>`.
 pub struct Vm {
     program: BytecodeProgram,
-    /// Root environment holding top-level (global) variables and functions.
     global_env: EnvRef,
-    /// State machine metadata registered by DefineState instructions.
     states: HashMap<String, RuntimeStateMachine>,
+    /// Method registry: struct_name → method_name → index into program.methods.
+    method_registry: HashMap<String, HashMap<String, usize>>,
     output: Vec<String>,
 }
 
 impl Vm {
     pub fn new(program: BytecodeProgram) -> Self {
+        let mut method_registry: HashMap<String, HashMap<String, usize>> = HashMap::new();
+        for (idx, mc) in program.methods.iter().enumerate() {
+            method_registry
+                .entry(mc.struct_name.clone())
+                .or_default()
+                .insert(mc.method_name.clone(), idx);
+        }
         Vm {
             program,
             global_env: Env::new_global(),
             states: HashMap::new(),
+            method_registry,
             output: Vec::new(),
         }
     }
@@ -1233,6 +1241,57 @@ impl Vm {
                     if !current_env.borrow_mut().assign_existing(&root, updated) {
                         return Err(runtime_err(&format!("undefined variable '{}'", root)));
                     }
+                }
+
+                Instruction::CallMethod { method, arg_count } => {
+                    // Stack: [..., receiver, arg1, ..., argN]
+                    let mut args_rev: Vec<Value> = (0..arg_count)
+                        .map(|_| pop(stack))
+                        .collect::<Result<_, _>>()?;
+                    args_rev.reverse(); // restore source order
+                    let receiver = pop(stack)?;
+
+                    let struct_name = match &receiver {
+                        Value::Struct { name, .. } => name.clone(),
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "cannot call method '{}' on {}",
+                                method,
+                                other.type_name()
+                            )));
+                        }
+                    };
+
+                    let method_idx = self
+                        .method_registry
+                        .get(&struct_name)
+                        .and_then(|m| m.get(&method))
+                        .copied()
+                        .ok_or_else(|| {
+                            runtime_err(&format!(
+                                "struct '{}' has no method '{}'",
+                                struct_name, method
+                            ))
+                        })?;
+
+                    // Clone chunk data before recursive execute_chunk to avoid borrow conflict.
+                    let mc_chunk = self.program.methods[method_idx].chunk.clone();
+                    let mc_params = self.program.methods[method_idx].params.clone();
+
+                    // Build method env as child of global env.
+                    let method_env = Env::new_child(Rc::clone(&self.global_env));
+                    {
+                        let mut env_borrow = method_env.borrow_mut();
+                        // params[0] is "self"
+                        env_borrow.define("self".to_string(), receiver);
+                        for (param, val) in mc_params.iter().skip(1).zip(args_rev.iter()) {
+                            env_borrow.define(param.clone(), val.clone());
+                        }
+                    }
+
+                    let mut method_stack: Vec<Value> = Vec::new();
+                    let ret = self.execute_chunk(&mc_chunk, &mut method_stack, method_env, true)?;
+                    stack.push(ret.unwrap_or(Value::Nil));
                 }
 
                 Instruction::Unsupported(feature) => {

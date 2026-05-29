@@ -21,10 +21,21 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
     for sc in &program.simulate_bodies {
         out.push('\n');
         let mut section = disassemble_chunk(&sc.chunk, &format!("simulate {}", sc.name));
-        // Inject "params: time" to show the injected time variable.
         let params_line = "params: time\n";
         if let Some(nl) = section.find('\n') {
             section.insert_str(nl + 1, params_line);
+        }
+        out.push_str(&section);
+    }
+    for mc in &program.methods {
+        out.push('\n');
+        let header = format!("method {}::{}/{}", mc.struct_name, mc.method_name, mc.arity);
+        let mut section = disassemble_chunk(&mc.chunk, &header);
+        if !mc.params.is_empty() {
+            let params_line = format!("params: {}\n", mc.params.join(", "));
+            if let Some(nl) = section.find('\n') {
+                section.insert_str(nl + 1, &params_line);
+            }
         }
         out.push_str(&section);
     }
@@ -186,6 +197,9 @@ fn fmt_instruction(instr: &Instruction) -> String {
                 CompoundAssignOp::Divide => "/=",
             };
             format!("PATH_COMPOUND_ASSIGN {} {}", path, op_str)
+        }
+        Instruction::CallMethod { method, arg_count } => {
+            format!("CALL_METHOD {} {}", method, arg_count)
         }
         Instruction::Unsupported(what) => format!("UNSUPPORTED({})", what),
     }
