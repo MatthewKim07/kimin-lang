@@ -71,6 +71,15 @@ pub enum Expr {
         field: String,
         span: Span,
     },
+    /// A method call on a struct receiver: `expr.method(arg1, arg2, ...)`.
+    /// Receiver is evaluated; receiver type must be a struct; method looked up by struct name.
+    /// Receiver value is passed as the implicit first argument (`self`).
+    MethodCall {
+        object: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -305,6 +314,13 @@ pub enum Stmt {
     StructDecl {
         name: String,
         fields: Vec<(String, TypeAnnotation)>,
+        span: Span,
+    },
+    /// An impl block declaring methods for a named struct.
+    /// Each method is a `Stmt::FnDecl` where the first parameter is `self` (by value).
+    ImplBlock {
+        struct_name: String,
+        methods: Vec<Stmt>,
         span: Span,
     },
     /// Path-based field mutation: `target.field = expr`.

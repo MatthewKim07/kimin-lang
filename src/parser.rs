@@ -2,6 +2,7 @@ use crate::ast::{
     AssignTarget, BinaryOp, CompoundAssignOp, Expr, Param, StateTransition, StateVariant, Stmt,
     TypeAnnotation, UnaryOp,
 };
+// Note: MethodCall and ImplBlock are used via Expr:: and Stmt:: below.
 use crate::error::ParseError;
 use crate::token::{Span, Token, TokenKind};
 
@@ -88,6 +89,8 @@ impl Parser {
             self.parse_if()
         } else if matches!(self.current_kind(), TokenKind::LBrace) {
             self.parse_block()
+        } else if matches!(self.current_kind(), TokenKind::Impl) {
+            self.parse_impl_block()
         } else if matches!(self.current_kind(), TokenKind::Ident(_)) {
             self.parse_target_assign_or_expr()
         } else {
@@ -185,6 +188,97 @@ impl Parser {
         self.expect_kind(TokenKind::RBrace, "expected '}' after struct fields")?;
 
         Ok(Stmt::StructDecl { name, fields, span })
+    }
+
+    fn parse_impl_block(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `impl`
+
+        let struct_name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected struct name after 'impl'")),
+        };
+        self.advance(); // consume struct name
+
+        self.expect_kind(
+            TokenKind::LBrace,
+            "expected '{' after struct name in impl block",
+        )?;
+
+        let mut methods: Vec<Stmt> = Vec::new();
+        while !matches!(self.current_kind(), TokenKind::RBrace) && !self.is_at_end() {
+            if !matches!(self.current_kind(), TokenKind::Fn) {
+                return Err(self.error("impl block may only contain method declarations (fn ...)"));
+            }
+            methods.push(self.parse_method_decl(&struct_name)?);
+        }
+        if methods.is_empty() {
+            return Err(self.error("impl block must contain at least one method"));
+        }
+        self.expect_kind(TokenKind::RBrace, "expected '}' after impl block")?;
+
+        Ok(Stmt::ImplBlock {
+            struct_name,
+            methods,
+            span,
+        })
+    }
+
+    fn parse_method_decl(&mut self, struct_name: &str) -> Result<Stmt, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `fn`
+
+        let name = match self.current_kind() {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(self.error("expected method name after 'fn'")),
+        };
+        self.advance(); // consume method name
+
+        self.expect_kind(TokenKind::LParen, "expected '(' after method name")?;
+        let params = self.parse_method_params(struct_name)?;
+        self.expect_kind(TokenKind::RParen, "expected ')' after method parameters")?;
+
+        let return_type = if matches!(self.current_kind(), TokenKind::Arrow) {
+            self.advance(); // consume `->`
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+
+        let body = self.parse_fn_body()?;
+
+        Ok(Stmt::FnDecl {
+            name,
+            params,
+            return_type,
+            body,
+            span,
+        })
+    }
+
+    /// Parse method parameters: first param must be bare `self`; rest use normal typed syntax.
+    /// `self` gets a `Named(struct_name)` annotation so the typechecker can resolve it.
+    fn parse_method_params(&mut self, struct_name: &str) -> Result<Vec<Param>, ParseError> {
+        // First param must be `self` without a type annotation.
+        if !matches!(self.current_kind(), TokenKind::Ident(s) if s == "self") {
+            return Err(self.error("method must have 'self' as first parameter"));
+        }
+        let self_span = self.current_span();
+        self.advance(); // consume `self`
+
+        let mut params = vec![Param {
+            name: "self".to_string(),
+            ty: TypeAnnotation::Named(struct_name.to_string()),
+            span: self_span,
+        }];
+
+        // Additional typed params.
+        while matches!(self.current_kind(), TokenKind::Comma) {
+            self.advance(); // consume `,`
+            params.push(self.parse_typed_param()?);
+        }
+
+        Ok(params)
     }
 
     fn parse_transition_stmt(&mut self) -> Result<Stmt, ParseError> {
@@ -858,20 +952,35 @@ impl Parser {
                     span,
                 };
             } else if matches!(self.current_kind(), TokenKind::Dot) {
-                // Chained field access: `expr.field` where expr is NOT a plain identifier.
-                // Plain `ident.field` is handled in parse_primary as StateVariant.
+                // Chained `.ident` or `.method(args)` on any expression.
+                // Plain `ident.ident` on a simple variable is handled in parse_primary.
                 let span = self.current_span();
                 self.advance(); // consume `.`
-                let field = match self.current_kind() {
+                let ident = match self.current_kind() {
                     TokenKind::Ident(n) => n.clone(),
-                    _ => return Err(self.error("expected field name after '.'")),
+                    _ => return Err(self.error("expected field or method name after '.'")),
                 };
-                self.advance(); // consume field name
-                expr = Expr::FieldAccess {
-                    object: Box::new(expr),
-                    field,
-                    span,
-                };
+                self.advance(); // consume field/method name
+
+                if matches!(self.current_kind(), TokenKind::LParen) {
+                    // Method call: expr.method(args)
+                    self.advance(); // consume `(`
+                    let args = self.parse_args()?;
+                    self.expect_kind(TokenKind::RParen, "expected ')' after method arguments")?;
+                    expr = Expr::MethodCall {
+                        object: Box::new(expr),
+                        method: ident,
+                        args,
+                        span,
+                    };
+                } else {
+                    // Field access: expr.field
+                    expr = Expr::FieldAccess {
+                        object: Box::new(expr),
+                        field: ident,
+                        span,
+                    };
+                }
             } else if matches!(self.current_kind(), TokenKind::LBrace)
                 && matches!(&expr, Expr::Variable { .. })
                 && matches!(self.peek_kind(), TokenKind::Ident(_))
@@ -991,8 +1100,29 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
-                // Check for state variant access: StateName.variant
-                if matches!(self.current_kind(), TokenKind::Dot) {
+                // `name.ident(` → method call on simple variable.
+                // `name.ident`  → state variant (existing; typechecker resolves Struct vs State).
+                if matches!(self.current_kind(), TokenKind::Dot)
+                    && matches!(self.peek_kind(), TokenKind::Ident(_))
+                    && matches!(self.peek_kind_2(), TokenKind::LParen)
+                {
+                    let method_span = self.current_span();
+                    self.advance(); // consume `.`
+                    let method = match self.current_kind() {
+                        TokenKind::Ident(m) => m.clone(),
+                        _ => unreachable!(),
+                    };
+                    self.advance(); // consume method name
+                    self.advance(); // consume `(`
+                    let args = self.parse_args()?;
+                    self.expect_kind(TokenKind::RParen, "expected ')' after method arguments")?;
+                    Ok(Expr::MethodCall {
+                        object: Box::new(Expr::Variable { name, span }),
+                        method,
+                        args,
+                        span: method_span,
+                    })
+                } else if matches!(self.current_kind(), TokenKind::Dot) {
                     self.advance(); // consume `.`
                     let variant_name = match self.current_kind() {
                         TokenKind::Ident(v) => v.clone(),

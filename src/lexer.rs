@@ -221,6 +221,7 @@ impl Lexer {
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "struct" => TokenKind::Struct,
+            "impl" => TokenKind::Impl,
             _ => TokenKind::Ident(s),
         }
     }

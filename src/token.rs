@@ -25,6 +25,7 @@ pub enum TokenKind {
     Break,
     Continue,
     Struct,
+    Impl,
 
     // Arithmetic operators
     Plus,
