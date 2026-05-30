@@ -1555,6 +1555,30 @@ impl Interpreter {
                         let val = self.eval_expr(&args[0])?;
                         return Ok(Value::Str(format!("{}", val)));
                     }
+
+                    // `to_number` builtin: to_number(text) -> Number
+                    if name == "to_number" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("to_number() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let val = self.eval_expr(&args[0])?;
+                        let text = match val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "to_number() expects Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let n = crate::value::parse_number_from_text(&text)
+                            .map_err(|e| RuntimeError { msg: e })?;
+                        return Ok(Value::Number(n));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;

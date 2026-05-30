@@ -2520,6 +2520,26 @@ impl TypeChecker {
                         self.check_expr(&args[0], *span)?;
                         return Ok(Type::Text);
                     }
+
+                    // `to_number` builtin: to_number(text) -> Number
+                    if name == "to_number" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("to_number() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        if !arg_ty.is_unknown() && arg_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("to_number() expects Text, got {}", arg_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;

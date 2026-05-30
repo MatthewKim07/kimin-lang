@@ -143,3 +143,23 @@ impl fmt::Display for Value {
         }
     }
 }
+
+/// Parse a Text value into a finite f64.
+///
+/// - Trims leading/trailing whitespace.
+/// - Rejects empty strings.
+/// - Rejects non-numeric strings.
+/// - Rejects non-finite results (NaN, ±Infinity).
+pub fn parse_number_from_text(s: &str) -> Result<f64, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err("cannot convert '' to Number (empty string)".to_string());
+    }
+    let n: f64 = trimmed
+        .parse()
+        .map_err(|_| format!("cannot convert '{}' to Number", trimmed))?;
+    if !n.is_finite() {
+        return Err(format!("cannot convert '{}' to Number", trimmed));
+    }
+    Ok(n)
+}
