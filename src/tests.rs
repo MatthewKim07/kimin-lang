@@ -41686,3 +41686,232 @@ fn type_to_string_used_in_join() {
     )
     .is_ok());
 }
+
+// --- Formatting additions ---
+
+#[test]
+fn format_nil_if_supported() {
+    // Nil is returned by functions with no return — format as "nil".
+    let out = vm_run(
+        r#"
+        fn no_return() { }
+        let v = no_return()
+        print(to_string(v))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["nil"]);
+}
+
+#[test]
+fn format_unit_matches_print() {
+    // Unit values at runtime are just Numbers; display matches print.
+    let out = vm_run(
+        r#"
+        let d: meters = 5
+        let s = to_string(d)
+        print(d)
+        print(s)
+    "#,
+    )
+    .unwrap();
+    // Both should print the same thing.
+    assert_eq!(out[0], out[1]);
+    assert_eq!(out, vec!["5", "5"]);
+}
+
+#[test]
+fn format_state_matches_print_if_supported() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let s = to_string(d)
+        print(d)
+        print(s)
+    "#,
+    )
+    .unwrap();
+    // Both should produce the same output.
+    assert_eq!(out[0], out[1]);
+    assert_eq!(out, vec!["Door.closed", "Door.closed"]);
+}
+
+// --- Interpreter additions ---
+
+#[test]
+fn interp_to_string_inside_function() {
+    let interp = run(r#"
+        fn stringify(n: Number) -> Text { return to_string(n) }
+        let s = stringify(42)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("s"), Some(Value::Str("42".into())));
+}
+
+#[test]
+fn interp_to_string_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn describe(self) -> Text { return to_string(self.value) }
+        }
+        let c = Counter { value: 5 }
+        print(c.describe())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_to_string_inside_closure() {
+    // Closure captures outer value and uses to_string.
+    let out = vm_run(
+        r#"
+        let prefix = "val:"
+        fn make_describer(n: Number) -> Text {
+            return prefix + to_string(n)
+        }
+        print(make_describer(42))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["val:42"]);
+}
+
+#[test]
+fn interp_to_string_inside_simulate() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 2
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+            print(to_string(c.value))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+// --- Bytecode additions ---
+
+#[test]
+fn bytecode_to_string_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn describe(self) -> Text { return to_string(self.value) } }
+    "#,
+    );
+    let has = prog.methods.iter().any(|mc| {
+        mc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToString))
+    });
+    assert!(has, "method chunk should contain TO_STRING");
+}
+
+#[test]
+fn bytecode_to_string_inside_loop() {
+    let prog = compile_prog(
+        r#"
+        for i in range(0, 3) {
+            print(to_string(i))
+        }
+    "#,
+    );
+    // Inside for-range, the body is compiled into the main chunk.
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString));
+    assert!(has, "loop body should contain TO_STRING");
+}
+
+#[test]
+fn bytecode_existing_builtins_unchanged_after_to_string() {
+    // len() still emits LEN, not affected by to_string addition.
+    let prog = compile_prog("let arr = [1, 2, 3]\nlet n = len(arr)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Len)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_to_string() {
+    // Method calls still emit CALL_METHOD, not affected by to_string.
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+        let c = Counter { value: 5 }
+        let v = c.get()
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. })));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_to_string() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut arr: Array<Counter> = [Counter { value: 1 }]
+        arr[0].value = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+}
+
+// --- VM additions ---
+
+#[test]
+fn vm_to_string_nested_array() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number }
+        let arr = [Pt { x: 1 }, Pt { x: 2 }]
+        print(to_string(arr))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["[Pt { x: 1 }, Pt { x: 2 }]"]);
+}
+
+#[test]
+fn vm_matches_tree_to_string_methods() {
+    let src = r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 5 }
+        print(to_string(c))
+        print(to_string(c.inc()))
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["Counter { value: 5 }", "Counter { value: 6 }"]);
+    let _ = tree;
+}
