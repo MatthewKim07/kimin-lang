@@ -1081,6 +1081,40 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::ToBool);
                         return Ok(());
                     }
+                    // abs / floor / ceil / round: compile arg, emit instruction
+                    if name == "abs" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Abs);
+                        return Ok(());
+                    }
+                    if name == "floor" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Floor);
+                        return Ok(());
+                    }
+                    if name == "ceil" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Ceil);
+                        return Ok(());
+                    }
+                    if name == "round" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Round);
+                        return Ok(());
+                    }
+                    // min / max: compile a then b, emit instruction
+                    if name == "min" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::Min);
+                        return Ok(());
+                    }
+                    if name == "max" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::Max);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

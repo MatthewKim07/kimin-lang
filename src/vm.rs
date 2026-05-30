@@ -1047,6 +1047,83 @@ impl Vm {
                     stack.push(Value::Bool(b));
                 }
 
+                Instruction::Abs => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "abs() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    stack.push(Value::Number(n.abs()));
+                }
+
+                Instruction::Floor => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "floor() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    stack.push(Value::Number(n.floor()));
+                }
+
+                Instruction::Ceil => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "ceil() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    stack.push(Value::Number(n.ceil()));
+                }
+
+                Instruction::Round => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "round() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    stack.push(Value::Number(n.round()));
+                }
+
+                Instruction::Min => {
+                    // Stack: [..., a, b] — b on top.
+                    let b = pop(stack)?;
+                    let a = pop(stack)?;
+                    let (an, bn) = match (a, b) {
+                        (Value::Number(x), Value::Number(y)) => (x, y),
+                        _ => return Err(runtime_err("min() requires two Number arguments")),
+                    };
+                    stack.push(Value::Number(an.min(bn)));
+                }
+
+                Instruction::Max => {
+                    let b = pop(stack)?;
+                    let a = pop(stack)?;
+                    let (an, bn) = match (a, b) {
+                        (Value::Number(x), Value::Number(y)) => (x, y),
+                        _ => return Err(runtime_err("max() requires two Number arguments")),
+                    };
+                    stack.push(Value::Number(an.max(bn)));
+                }
+
                 Instruction::Split => {
                     let delim_val = pop(stack)?;
                     let text_val = pop(stack)?;

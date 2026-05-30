@@ -150,6 +150,20 @@ pub enum Instruction {
     /// Trims whitespace, accepts exactly "true" or "false", rejects everything else.
     ToBool,
 
+    // --- Numeric utility builtins ---
+    /// Absolute value. Stack: [..., n] → |n|.
+    Abs,
+    /// Floor (round toward −∞). Stack: [..., n] → floor(n).
+    Floor,
+    /// Ceiling (round toward +∞). Stack: [..., n] → ceil(n).
+    Ceil,
+    /// Round half away from zero. Stack: [..., n] → round(n).
+    Round,
+    /// Minimum of two Numbers. Stack: [..., a, b] → min(a, b).
+    Min,
+    /// Maximum of two Numbers. Stack: [..., a, b] → max(a, b).
+    Max,
+
     /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
     /// Empty delimiter splits into individual characters.
     Split,
