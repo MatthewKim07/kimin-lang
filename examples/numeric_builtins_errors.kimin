@@ -1,0 +1,9 @@
+// Keep runnable by default.
+
+print(abs(-5))
+
+// Uncomment to test wrong type:
+// print(abs("bad"))
+
+// Uncomment to test wrong arity:
+// print(min(1))

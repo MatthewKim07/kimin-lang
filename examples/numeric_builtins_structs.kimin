@@ -1,0 +1,15 @@
+struct Point {
+  x: Number
+  y: Number
+}
+
+impl Point {
+  fn max_coord(self) -> Number {
+    return max(self.x, self.y)
+  }
+}
+
+let p = Point { x: -3, y: 4 }
+
+print(abs(p.x))
+print(p.max_coord())

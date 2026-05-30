@@ -17975,6 +17975,12 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::ToString
             | crate::bytecode::Instruction::ToNumber
             | crate::bytecode::Instruction::ToBool
+            | crate::bytecode::Instruction::Abs
+            | crate::bytecode::Instruction::Floor
+            | crate::bytecode::Instruction::Ceil
+            | crate::bytecode::Instruction::Round
+            | crate::bytecode::Instruction::Min
+            | crate::bytecode::Instruction::Max
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -44418,4 +44424,1026 @@ fn string_builtins_still_ok_after_to_bool() {
     )
     .unwrap();
     assert_eq!(out, vec!["hello world", "11", "true"]);
+}
+
+// ============================================================
+// Milestone 18A: Numeric utility builtins (abs, floor, ceil, round, min, max)
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_abs_number_ok() {
+    assert!(check("let n = abs(-5)").is_ok());
+}
+
+#[test]
+fn type_floor_number_ok() {
+    assert!(check("let n = floor(3.7)").is_ok());
+}
+
+#[test]
+fn type_ceil_number_ok() {
+    assert!(check("let n = ceil(3.2)").is_ok());
+}
+
+#[test]
+fn type_round_number_ok() {
+    assert!(check("let n = round(3.5)").is_ok());
+}
+
+#[test]
+fn type_min_numbers_ok() {
+    assert!(check("let n = min(3, 7)").is_ok());
+}
+
+#[test]
+fn type_max_numbers_ok() {
+    assert!(check("let n = max(3, 7)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_result_is_number() {
+    assert!(check("let n: Number = abs(-5) + floor(3.7)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_used_in_arithmetic() {
+    assert!(check("let n = abs(-3) + max(2, 4)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_used_as_array_index() {
+    assert!(check("let arr = [1, 2, 3]\nlet v = arr[abs(-1)]").is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_used_in_range_bound() {
+    assert!(check(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, abs(-5)) {
+            total += 1
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_assign_to_number_ok() {
+    assert!(check("let mut n: Number = 0\nn = floor(3.7)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { n: Number }
+        let s = S { n: abs(-5) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_array_value_ok() {
+    assert!(check("let arr: Array<Number> = [abs(-1), floor(2.5), ceil(0.1)]").is_ok());
+}
+
+#[test]
+fn type_numeric_builtin_map_value_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"a\": abs(-5)}").is_ok());
+}
+
+#[test]
+fn type_abs_wrong_arity_zero_error() {
+    let err = check("let n = abs()").unwrap_err().to_string();
+    assert!(
+        err.contains("abs") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_abs_wrong_arity_two_error() {
+    let err = check("let n = abs(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("abs") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_min_wrong_arity_one_error() {
+    let err = check("let n = min(1)").unwrap_err().to_string();
+    assert!(
+        err.contains("min") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_min_wrong_arity_three_error() {
+    let err = check("let n = min(1, 2, 3)").unwrap_err().to_string();
+    assert!(
+        err.contains("min") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_abs_text_arg_error() {
+    let err = check("let n = abs(\"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("abs") || err.contains("Number") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_abs_bool_arg_error() {
+    let err = check("let n = abs(true)").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_abs_array_arg_error() {
+    let err = check("let n = abs([1, 2])").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_abs_map_arg_error() {
+    let err = check("let n = abs({\"a\": 1})").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_abs_struct_arg_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 5 }
+        let n = abs(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_abs_unit_arg_error() {
+    // Unit types are distinct from Number — abs should reject them.
+    let err = check("let d: meters = 5\nlet n = abs(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "abs(unit) should fail: {}", err);
+}
+
+#[test]
+fn type_min_second_arg_wrong_type_error() {
+    let err = check("let n = min(1, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("min") || err.contains("Number") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_string_to_number_to_bool_still_ok_after_numeric_builtins() {
+    assert!(check(
+        r#"
+        let s = to_string(42)
+        let n = to_number("42")
+        let b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_abs_positive() {
+    let out = vm_run("print(abs(5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_abs_negative() {
+    let out = vm_run("print(abs(-5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_abs_zero() {
+    let out = vm_run("print(abs(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_floor_positive_decimal() {
+    let out = vm_run("print(floor(3.7))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_floor_negative_decimal() {
+    let out = vm_run("print(floor(-3.2))").unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+#[test]
+fn interp_ceil_positive_decimal() {
+    let out = vm_run("print(ceil(3.2))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn interp_ceil_negative_decimal() {
+    let out = vm_run("print(ceil(-3.7))").unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn interp_round_half_positive() {
+    let out = vm_run("print(round(3.5))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn interp_round_half_negative() {
+    let out = vm_run("print(round(-3.5))").unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+#[test]
+fn interp_round_below_half() {
+    let out = vm_run("print(round(3.49))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_round_above_half() {
+    let out = vm_run("print(round(3.51))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn interp_min_basic() {
+    let out = vm_run("print(min(3, 7))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_min_negative() {
+    let out = vm_run("print(min(-3, 7))").unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn interp_max_basic() {
+    let out = vm_run("print(max(3, 7))").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_max_negative() {
+    let out = vm_run("print(max(-3, -7))").unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn interp_numeric_builtin_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_num() -> Number {
+            calls += 1
+            return -5
+        }
+        let n = abs(get_num())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "1"]);
+}
+
+#[test]
+fn interp_min_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        let mut order = 0
+        fn first() -> Number { order += 1 return 3 }
+        fn second() -> Number { order += 1 return 7 }
+        let n = min(first(), second())
+        print(n)
+        print(order)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "2"]);
+}
+
+#[test]
+fn interp_numeric_builtin_result_arithmetic() {
+    let out = vm_run("print(abs(-3) + max(2, 4))").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn interp_numeric_builtin_inside_function() {
+    let interp = run(r#"
+        fn magnitude(x: Number, y: Number) -> Number { return max(abs(x), abs(y)) }
+        let n = magnitude(-3, 4)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(4.0)));
+}
+
+#[test]
+fn interp_numeric_builtin_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        impl Point { fn abs_x(self) -> Number { return abs(self.x) } }
+        let p = Point { x: -3, y: 4 }
+        print(p.abs_x())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_numeric_builtin_inside_closure() {
+    let out = vm_run(
+        r#"
+        let threshold: Number = 5
+        fn over_threshold(n: Number) -> Bool {
+            return abs(n) > threshold
+        }
+        print(over_threshold(-7))
+        print(over_threshold(3))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn interp_numeric_builtin_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = -3
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            x = abs(x)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Round behavior audit ---
+
+#[test]
+fn round_half_positive_away_from_zero() {
+    let out = vm_run("print(round(3.5))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn round_half_negative_away_from_zero() {
+    let out = vm_run("print(round(-3.5))").unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+#[test]
+fn round_below_half_positive() {
+    let out = vm_run("print(round(3.49))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn round_above_half_positive() {
+    let out = vm_run("print(round(3.51))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn round_below_half_negative() {
+    let out = vm_run("print(round(-3.49))").unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn round_above_half_negative() {
+    let out = vm_run("print(round(-3.51))").unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_abs_emits_instruction() {
+    let prog = compile_prog("let n = abs(-5)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+}
+
+#[test]
+fn bytecode_floor_emits_instruction() {
+    let prog = compile_prog("let n = floor(3.7)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Floor)));
+}
+
+#[test]
+fn bytecode_ceil_emits_instruction() {
+    let prog = compile_prog("let n = ceil(3.2)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ceil)));
+}
+
+#[test]
+fn bytecode_round_emits_instruction() {
+    let prog = compile_prog("let n = round(3.5)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Round)));
+}
+
+#[test]
+fn bytecode_min_emits_instruction() {
+    let prog = compile_prog("let n = min(3, 7)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Min)));
+}
+
+#[test]
+fn bytecode_max_emits_instruction() {
+    let prog = compile_prog("let n = max(3, 7)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Max)));
+}
+
+#[test]
+fn bytecode_numeric_builtin_no_call_instruction() {
+    let prog = compile_prog("let n = abs(-5)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_numeric_builtin_compiles_arg_once() {
+    let prog = compile_prog("print(abs(-5))");
+    let abs_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Abs))
+        .count();
+    assert_eq!(abs_count, 1);
+}
+
+#[test]
+fn bytecode_min_max_compile_args_left_to_right() {
+    // min(a, b): a compiled before b, then MIN instruction.
+    let prog = compile_prog("let n = min(3, 7)");
+    let min_pos = prog
+        .main
+        .instructions
+        .iter()
+        .position(|i| matches!(i, Instruction::Min))
+        .unwrap();
+    assert!(min_pos >= 2, "MIN should appear after both args");
+}
+
+#[test]
+fn bytecode_numeric_builtin_inside_function() {
+    let prog = compile_prog("fn f(x: Number) -> Number { return abs(x) }");
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Abs))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_numeric_builtin_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Point { x: Number }
+        impl Point { fn abs_x(self) -> Number { return abs(self.x) } }
+    "#,
+    );
+    let has = prog.methods.iter().any(|mc| {
+        mc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Abs))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_numeric_builtin_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = -3
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt { x = abs(x) }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Abs))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_string_to_number_to_bool_unchanged_after_numeric_builtins() {
+    let prog = compile_prog("let s = to_string(42)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+}
+
+#[test]
+fn disassemble_abs_floor_ceil_round_min_max_stable() {
+    let prog = compile_prog(
+        r#"
+        print(abs(-5))
+        print(floor(3.7))
+        print(ceil(3.2))
+        print(round(3.5))
+        print(min(3, 7))
+        print(max(3, 7))
+    "#,
+    );
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("ABS"), "disassembly: {}", out);
+    assert!(out.contains("FLOOR"), "disassembly: {}", out);
+    assert!(out.contains("CEIL"), "disassembly: {}", out);
+    assert!(out.contains("ROUND"), "disassembly: {}", out);
+    assert!(out.contains("MIN"), "disassembly: {}", out);
+    assert!(out.contains("MAX"), "disassembly: {}", out);
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_abs_positive() {
+    let out = vm_run("print(abs(5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_abs_negative() {
+    let out = vm_run("print(abs(-5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_floor_positive_decimal() {
+    let out = vm_run("print(floor(3.7))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_floor_negative_decimal() {
+    let out = vm_run("print(floor(-3.2))").unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+#[test]
+fn vm_ceil_positive_decimal() {
+    let out = vm_run("print(ceil(3.2))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn vm_ceil_negative_decimal() {
+    let out = vm_run("print(ceil(-3.7))").unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn vm_round_half_positive() {
+    let out = vm_run("print(round(3.5))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn vm_round_half_negative() {
+    let out = vm_run("print(round(-3.5))").unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+#[test]
+fn vm_min_basic() {
+    let out = vm_run("print(min(3, 7))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_max_basic() {
+    let out = vm_run("print(max(3, 7))").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn vm_numeric_builtin_stack_clean() {
+    let out = vm_run("abs(-5)\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_min_max_stack_clean() {
+    let out = vm_run("min(3, 7)\nmax(3, 7)\nprint(42)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_matches_tree_numeric_basic() {
+    let src = r#"
+        print(abs(-5))
+        print(floor(3.7))
+        print(ceil(3.2))
+        print(round(3.5))
+        print(min(3, 7))
+        print(max(3, 7))
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["5", "3", "4", "4", "3", "7"]);
+    let _ = tree;
+}
+
+#[test]
+fn vm_matches_tree_numeric_functions_methods_simulate() {
+    let src = r#"
+        fn f(x: Number) -> Number { return abs(x) }
+        print(f(-3))
+        print(max(2, 4))
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3", "4"]);
+}
+
+// --- to_number/to_string interaction ---
+
+#[test]
+fn numeric_builtin_with_to_number_input() {
+    let out = vm_run(
+        r#"
+        let n = to_number("3.7")
+        print(floor(n))
+        print(to_string(abs(-5)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "5"]);
+}
+
+#[test]
+fn to_string_numeric_builtin_result() {
+    let out = vm_run("let s = to_string(abs(-5))\nprint(s)").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn to_number_to_string_regression_after_numeric_builtins() {
+    let out = vm_run(
+        r#"
+        let n = to_number("42")
+        let s = to_string(n)
+        print(s)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn to_bool_regression_after_numeric_builtins() {
+    let out = vm_run("print(to_bool(\"true\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+// --- Arrays/maps/structs ---
+
+#[test]
+fn numeric_builtin_array_value() {
+    let out = vm_run(
+        r#"
+        let nums = [-3, 7, 2]
+        print(abs(nums[0]))
+        print(max(nums[1], nums[2]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "7"]);
+}
+
+#[test]
+fn numeric_builtin_map_value() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Number> = {"a": -5, "b": 10}
+        print(abs(m["a"]))
+        print(min(m["a"], m["b"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "-5"]);
+}
+
+#[test]
+fn numeric_builtin_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        let p = Point { x: -3, y: 4 }
+        print(abs(p.x))
+        print(max(p.x, p.y))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "4"]);
+}
+
+#[test]
+fn numeric_builtin_method_returns_number() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        impl Point { fn max_coord(self) -> Number { return max(self.x, self.y) } }
+        let p = Point { x: -3, y: 4 }
+        print(p.max_coord())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn numeric_builtin_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        let mut arr: Array<Point> = [Point { x: -3, y: 4 }]
+        arr[0].x = -7
+        print(abs(arr[0].x))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_numeric_builtins() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(abs(arr[0].value))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn numeric_builtin_inside_while() {
+    let out = vm_run(
+        r#"
+        let nums = [-1, -2, 3]
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += abs(nums[i])
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn numeric_builtin_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, abs(-5)) {
+            total += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn numeric_builtin_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [-1, -2, 3]
+        let mut total: Number = 0
+        for n in nums {
+            total += abs(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn numeric_builtin_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [-1, -2, 3]
+        let mut total: Number = 0
+        for i, n in nums {
+            total += abs(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn numeric_builtin_inside_function() {
+    let interp = run(r#"
+        fn magnitude(x: Number, y: Number) -> Number { return max(abs(x), abs(y)) }
+        let n = magnitude(-3, 4)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(4.0)));
+}
+
+#[test]
+fn numeric_builtin_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number, y: Number }
+        impl Vec2 { fn len_approx(self) -> Number { return max(abs(self.x), abs(self.y)) } }
+        let v = Vec2 { x: -3, y: 4 }
+        print(v.len_approx())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn numeric_builtin_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = -3
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            x = abs(x)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_numeric_loops_simulate() {
+    let src = r#"
+        let nums = [-1, -2, 3]
+        let mut total: Number = 0
+        for n in nums {
+            total += abs(n)
+        }
+        print(total)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["6"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn abs_wrong_arity_zero_message() {
+    let err = check("let n = abs()").unwrap_err().to_string();
+    assert!(
+        err.contains("abs") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn abs_wrong_arity_two_message() {
+    let err = check("let n = abs(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("abs") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn min_wrong_arity_one_message() {
+    let err = check("let n = min(1)").unwrap_err().to_string();
+    assert!(
+        err.contains("min") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn min_wrong_arity_three_message() {
+    let err = check("let n = min(1, 2, 3)").unwrap_err().to_string();
+    assert!(
+        err.contains("min") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn abs_wrong_type_message() {
+    let err = check("let n = abs(\"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("abs") || err.contains("Number") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn min_second_arg_wrong_type_message() {
+    let err = check("let n = min(1, \"bad\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
 }
