@@ -43150,3 +43150,154 @@ fn vm_to_number_whitespace_trimmed() {
     let out = vm_run(r#"print(to_number("  42  "))"#).unwrap();
     assert_eq!(out, vec!["42"]);
 }
+
+// --- to_string interaction additions ---
+
+#[test]
+fn to_number_to_string_negative_number_round_trip() {
+    let out = vm_run(
+        r#"
+        let n = -5
+        let s = to_string(n)
+        let m = to_number(s)
+        print(m + 1)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-4"]);
+}
+
+// --- Strings interaction additions ---
+
+#[test]
+fn to_number_trimmed_split_parts_sum() {
+    // Parts after split may have whitespace if source has spaces around commas.
+    let out = vm_run(
+        r#"
+        let parts = split("10, 20, 30", ",")
+        let mut total: Number = 0
+        for part in parts {
+            total += to_number(trim(part))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn to_number_after_string_slice() {
+    // Slice a numeric prefix from a string and parse it.
+    let out = vm_run(
+        r#"
+        let s = "42px"
+        let prefix = s[0..2]
+        print(to_number(prefix))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn to_number_after_string_index_numeric() {
+    // Single-char index of a digit character.
+    let out = vm_run(
+        r#"
+        let s = "5abc"
+        let c = s[0]
+        print(to_number(c))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn to_number_after_string_index_non_numeric_error() {
+    // Single-char index of a non-digit character.
+    let result = vm_run(
+        r#"
+        let s = "abc"
+        let c = s[0]
+        to_number(c)
+    "#,
+    );
+    assert!(result.is_err());
+}
+
+// --- Arrays/maps/structs additions ---
+
+#[test]
+fn to_number_mut_self_text_field() {
+    let out = vm_run(
+        r#"
+        struct Input { value: Text }
+        impl Input {
+          fn number(mut self) -> Number {
+            return to_number(self.value)
+          }
+        }
+        let i = Input { value: "42" }
+        print(i.number())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn to_number_with_path_mutated_text_field() {
+    let out = vm_run(
+        r#"
+        struct Input { value: Text }
+        let mut arr: Array<Input> = [Input { value: "10" }]
+        arr[0].value = "99"
+        print(to_number(arr[0].value))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_to_number() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0].value = to_number("5")
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Error messages additions ---
+
+#[test]
+fn to_number_empty_string_message() {
+    let err = vm_run(r#"to_number("")"#).unwrap_err().to_string();
+    // Message includes context about empty string.
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+// --- VM loops/simulate additions ---
+
+#[test]
+fn to_number_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Calc { value: Text }
+        impl Calc { fn compute(self) -> Number { return to_number(self.value) + 1 } }
+        let c = Calc { value: "41" }
+        print(c.compute())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
