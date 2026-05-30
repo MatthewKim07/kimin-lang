@@ -41641,3 +41641,48 @@ fn to_string_wrong_arity_two_message() {
         err
     );
 }
+
+// ============================================================
+// M17A Audit: additional coverage
+// ============================================================
+
+// --- Typechecker additions ---
+
+#[test]
+fn type_to_string_empty_map_ok() {
+    assert!(check("let m: Map<Text, Number> = {}\nlet s = to_string(m)").is_ok());
+}
+
+#[test]
+fn type_to_string_function_value_if_supported() {
+    // to_string accepts any type including functions (gradual typing / Unknown).
+    assert!(check(
+        r#"
+        fn helper(n: Number) -> Number { return n + 1 }
+        let s = to_string(helper)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_string_used_in_array_text() {
+    // Result of to_string can be used in an Array<Text> context.
+    assert!(check(
+        r#"
+        let arr: Array<Text> = [to_string(1), to_string(2), to_string(3)]
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_string_used_in_join() {
+    assert!(check(
+        r#"
+        let parts: Array<Text> = [to_string(1), to_string(2)]
+        let s = join(parts, ",")
+    "#
+    )
+    .is_ok());
+}
