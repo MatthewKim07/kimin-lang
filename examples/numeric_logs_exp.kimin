@@ -1,0 +1,5 @@
+print(ln(1))
+print(log2(8))
+print(log10(1000))
+print(exp(0))
+print(round(exp(1)))

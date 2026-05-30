@@ -17983,6 +17983,10 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Max
             | crate::bytecode::Instruction::Sqrt
             | crate::bytecode::Instruction::Pow
+            | crate::bytecode::Instruction::Ln
+            | crate::bytecode::Instruction::Log2
+            | crate::bytecode::Instruction::Log10
+            | crate::bytecode::Instruction::Exp
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -46998,4 +47002,1245 @@ fn sqrt_pow_mut_self_number_field() {
     )
     .unwrap();
     assert_eq!(out, vec!["9", "3"]);
+}
+
+// ============================================================
+// Milestone 18C: ln, log2, log10, exp builtins
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_ln_number_ok() {
+    assert!(check("let n = ln(1)").is_ok());
+}
+
+#[test]
+fn type_log2_number_ok() {
+    assert!(check("let n = log2(8)").is_ok());
+}
+
+#[test]
+fn type_log10_number_ok() {
+    assert!(check("let n = log10(1000)").is_ok());
+}
+
+#[test]
+fn type_exp_number_ok() {
+    assert!(check("let n = exp(0)").is_ok());
+}
+
+#[test]
+fn type_ln_result_is_number() {
+    assert!(check("let n: Number = ln(1)").is_ok());
+}
+
+#[test]
+fn type_exp_result_is_number() {
+    assert!(check("let n: Number = exp(0)").is_ok());
+}
+
+#[test]
+fn type_ln_used_in_arithmetic() {
+    assert!(check("let n = ln(1) + log2(8)").is_ok());
+}
+
+#[test]
+fn type_exp_used_in_arithmetic() {
+    assert!(check("let n = exp(0) + exp(1)").is_ok());
+}
+
+#[test]
+fn type_log2_used_as_array_index() {
+    assert!(check("let arr = [1, 2, 3, 4, 5, 6, 7, 8]\nlet v = arr[log2(8)]").is_ok());
+}
+
+#[test]
+fn type_log10_used_in_range_bound() {
+    assert!(check(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, log10(1000)) {
+            total += 1
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_ln_assign_to_number_ok() {
+    assert!(check("let mut n: Number = 0\nn = ln(1)").is_ok());
+}
+
+#[test]
+fn type_exp_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { n: Number }
+        let s = S { n: exp(0) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_exp_array_value_ok() {
+    assert!(check("let arr: Array<Number> = [exp(0), exp(1)]").is_ok());
+}
+
+#[test]
+fn type_exp_map_value_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"a\": exp(0)}").is_ok());
+}
+
+#[test]
+fn type_ln_wrong_arity_zero_error() {
+    let err = check("let n = ln()").unwrap_err().to_string();
+    assert!(
+        err.contains("ln") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_ln_wrong_arity_two_error() {
+    let err = check("let n = ln(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("ln") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_log2_wrong_arity_zero_error() {
+    let err = check("let n = log2()").unwrap_err().to_string();
+    assert!(
+        err.contains("log2") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_log10_wrong_arity_two_error() {
+    let err = check("let n = log10(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("log10") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_exp_wrong_arity_two_error() {
+    let err = check("let n = exp(0, 1)").unwrap_err().to_string();
+    assert!(
+        err.contains("exp") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_ln_text_arg_error() {
+    let err = check("let n = ln(\"1\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_ln_bool_arg_error() {
+    let err = check("let n = ln(true)").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_ln_array_arg_error() {
+    let err = check("let n = ln([1])").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_ln_map_arg_error() {
+    let err = check("let n = ln({\"a\": 1})").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_ln_struct_arg_error() {
+    let err = check(
+        r#"
+        struct S { n: Number }
+        let s = S { n: 1 }
+        let x = ln(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_ln_unit_arg_error() {
+    let err = check("let d: meters = 5\nlet n = ln(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "ln(unit) should fail: {}", err);
+}
+
+#[test]
+fn type_ln_state_arg_error() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = ln(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "ln(state) should fail: {}", err);
+}
+
+#[test]
+fn type_numeric_builtins_still_ok_after_logs_exp() {
+    assert!(check("let n = abs(-5) + sqrt(9) + pow(2, 3) + floor(3.7)").is_ok());
+}
+
+#[test]
+fn type_conversion_builtins_still_ok_after_logs_exp() {
+    assert!(check(
+        r#"
+        let s = to_string(42)
+        let n = to_number("42")
+        let b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_ln_one() {
+    let out = vm_run("print(ln(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_ln_e_approx() {
+    // ln(e) ≈ 1. Use round to avoid float string comparison.
+    let out = vm_run("print(round(ln(exp(1))))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_ln_zero_error() {
+    assert!(vm_run("ln(0)").is_err());
+}
+
+#[test]
+fn interp_ln_negative_error() {
+    assert!(vm_run("ln(-1)").is_err());
+}
+
+#[test]
+fn interp_log2_one() {
+    let out = vm_run("print(log2(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_log2_eight() {
+    let out = vm_run("print(log2(8))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_log2_zero_error() {
+    assert!(vm_run("log2(0)").is_err());
+}
+
+#[test]
+fn interp_log10_one() {
+    let out = vm_run("print(log10(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_log10_thousand() {
+    let out = vm_run("print(log10(1000))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_log10_negative_error() {
+    assert!(vm_run("log10(-1)").is_err());
+}
+
+#[test]
+fn interp_exp_zero() {
+    let out = vm_run("print(exp(0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_exp_one() {
+    let out = vm_run("print(exp(1))").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn interp_exp_negative_one() {
+    let out = vm_run("print(exp(-1))").unwrap();
+    assert_eq!(out, vec!["0.36787944117144233"]);
+}
+
+#[test]
+fn interp_exp_infinite_result_error() {
+    assert!(vm_run("exp(1000)").is_err());
+}
+
+#[test]
+fn interp_ln_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_num() -> Number { calls += 1 return 1 }
+        let n = ln(get_num())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn interp_exp_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_zero() -> Number { calls += 1 return 0 }
+        let n = exp(get_zero())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "1"]);
+}
+
+#[test]
+fn interp_log_result_arithmetic() {
+    let out = vm_run("print(log2(8) + log10(1000))").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_exp_result_arithmetic() {
+    let out = vm_run("print(exp(0) + exp(0))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_ln_inside_function() {
+    let interp = run(r#"
+        fn log_of(n: Number) -> Number { return ln(n) }
+        let n = log_of(1)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(0.0)));
+}
+
+#[test]
+fn interp_log2_inside_method() {
+    let out = vm_run(
+        r#"
+        struct S { n: Number }
+        impl S { fn log2_n(self) -> Number { return log2(self.n) } }
+        let s = S { n: 8 }
+        print(s.log2_n())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_log10_inside_closure() {
+    let out = vm_run(
+        r#"
+        let scale: Number = 1000
+        fn scaled_log(n: Number) -> Number {
+            return log10(n * scale)
+        }
+        print(scaled_log(1))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_exp_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            x += exp(0)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- ln/log/exp edge behavior ---
+
+#[test]
+fn ln_one_zero() {
+    let out = vm_run("print(ln(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn ln_exp_one_round_trip() {
+    let out = vm_run("print(round(ln(exp(1))))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn ln_zero_error() {
+    assert!(vm_run("ln(0)").is_err());
+}
+
+#[test]
+fn ln_negative_error() {
+    assert!(vm_run("ln(-1)").is_err());
+}
+
+#[test]
+fn log2_one_zero() {
+    let out = vm_run("print(log2(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn log2_eight_three() {
+    let out = vm_run("print(log2(8))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn log2_zero_error() {
+    assert!(vm_run("log2(0)").is_err());
+}
+
+#[test]
+fn log10_one_zero() {
+    let out = vm_run("print(log10(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn log10_thousand_three() {
+    let out = vm_run("print(log10(1000))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn log10_negative_error() {
+    assert!(vm_run("log10(-1)").is_err());
+}
+
+#[test]
+fn exp_zero_one() {
+    let out = vm_run("print(exp(0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn exp_one_e() {
+    let out = vm_run("print(exp(1))").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn exp_negative_one() {
+    let out = vm_run("print(exp(-1))").unwrap();
+    assert_eq!(out, vec!["0.36787944117144233"]);
+}
+
+#[test]
+fn exp_infinite_result_error() {
+    assert!(vm_run("exp(1000)").is_err());
+}
+
+// --- Approximate comparisons ---
+
+#[test]
+fn exp_one_rounds_to_three() {
+    let out = vm_run("print(round(exp(1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn ln_exp_one_rounds_to_one() {
+    let out = vm_run("print(round(ln(exp(1))))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_ln_emits_instruction() {
+    let prog = compile_prog("let n = ln(1)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+}
+
+#[test]
+fn bytecode_log2_emits_instruction() {
+    let prog = compile_prog("let n = log2(8)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Log2)));
+}
+
+#[test]
+fn bytecode_log10_emits_instruction() {
+    let prog = compile_prog("let n = log10(1000)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Log10)));
+}
+
+#[test]
+fn bytecode_exp_emits_instruction() {
+    let prog = compile_prog("let n = exp(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Exp)));
+}
+
+#[test]
+fn bytecode_logs_exp_no_call_instruction() {
+    let prog = compile_prog("let a = ln(1)\nlet b = log2(8)\nlet c = exp(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_ln_compiles_arg_once() {
+    let prog = compile_prog("print(ln(1))");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Ln))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_exp_compiles_arg_once() {
+    let prog = compile_prog("print(exp(0))");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Exp))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_ln_inside_function() {
+    let prog = compile_prog("fn f(x: Number) -> Number { return ln(x) }");
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Ln))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_log2_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct S { n: Number }
+        impl S { fn log2_n(self) -> Number { return log2(self.n) } }
+    "#,
+    );
+    let has = prog.methods.iter().any(|mc| {
+        mc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Log2))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_log10_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let dur: seconds = 1
+        let dt: seconds = 1
+        let mut x: Number = 0
+        simulate dur step dt { x += log10(1000) }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Log10))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_sqrt_pow_unchanged_after_logs_exp() {
+    let prog = compile_prog("let n = sqrt(9)\nlet m = pow(2, 3)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pow)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_logs_exp() {
+    let prog = compile_prog("let n = abs(-5)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_logs_exp() {
+    let prog = compile_prog("let s = to_string(42)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+}
+
+#[test]
+fn disassemble_ln_log2_log10_exp_stable() {
+    let prog = compile_prog("print(ln(1))\nprint(log2(8))\nprint(log10(1000))\nprint(exp(0))");
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("LN"), "disassembly: {}", out);
+    assert!(out.contains("LOG2"), "disassembly: {}", out);
+    assert!(out.contains("LOG10"), "disassembly: {}", out);
+    assert!(out.contains("EXP"), "disassembly: {}", out);
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_ln_one() {
+    let out = vm_run("print(ln(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_ln_e_approx() {
+    let out = vm_run("print(round(ln(exp(1))))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_ln_zero_error() {
+    assert!(vm_run("ln(0)").is_err());
+}
+
+#[test]
+fn vm_ln_negative_error() {
+    assert!(vm_run("ln(-1)").is_err());
+}
+
+#[test]
+fn vm_log2_eight() {
+    let out = vm_run("print(log2(8))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_log10_thousand() {
+    let out = vm_run("print(log10(1000))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_exp_zero() {
+    let out = vm_run("print(exp(0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_exp_one() {
+    let out = vm_run("print(exp(1))").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn vm_exp_infinite_result_error() {
+    assert!(vm_run("exp(1000)").is_err());
+}
+
+#[test]
+fn vm_ln_stack_clean() {
+    let out = vm_run("ln(1)\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_exp_stack_clean() {
+    let out = vm_run("exp(0)\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_matches_tree_logs_exp_basic() {
+    let src = r#"
+        print(ln(1))
+        print(log2(8))
+        print(log10(1000))
+        print(exp(0))
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["0", "3", "3", "1"]);
+    let _ = tree;
+}
+
+#[test]
+fn vm_matches_tree_logs_exp_errors() {
+    let src = "ln(0)";
+    assert!(run(src).is_err());
+    assert!(vm_run(src).is_err());
+}
+
+#[test]
+fn vm_matches_tree_logs_exp_functions_methods_simulate() {
+    let src = r#"
+        fn log_sum() -> Number { return log2(8) + log10(1000) }
+        print(log_sum())
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["6"]);
+}
+
+#[test]
+fn vm_logs_exp_runtime_wrong_type_error_if_unchecked() {
+    let err = check("let n = ln(\"1\")").unwrap_err().to_string();
+    assert!(
+        !err.is_empty(),
+        "typechecker should reject ln(Text): {}",
+        err
+    );
+}
+
+// --- Interaction with existing builtins ---
+
+#[test]
+fn exp_result_with_round() {
+    let out = vm_run("print(round(exp(1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn log_result_with_min_max() {
+    let out = vm_run("print(max(log2(8), log10(1000)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn ln_result_with_abs() {
+    let out = vm_run("print(abs(ln(1)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn sqrt_pow_still_ok_after_logs_exp() {
+    let out = vm_run("print(sqrt(9))\nprint(pow(2, 3))").unwrap();
+    assert_eq!(out, vec!["3", "8"]);
+}
+
+#[test]
+fn floor_ceil_round_abs_min_max_still_ok_after_logs_exp() {
+    let out = vm_run(
+        r#"
+        print(floor(3.7))
+        print(ceil(3.2))
+        print(abs(-5))
+        print(round(3.5))
+        print(min(3, 7))
+        print(max(3, 7))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "4", "5", "4", "3", "7"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn log2_with_to_number_input() {
+    let out = vm_run("let n = to_number(\"8\")\nprint(log2(n))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn log10_with_to_number_input() {
+    let out = vm_run("let n = to_number(\"1000\")\nprint(log10(n))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn exp_with_to_number_input() {
+    let out = vm_run("let n = to_number(\"0\")\nprint(exp(n))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn to_string_exp_result() {
+    let out = vm_run("let s = to_string(exp(0))\nprint(s)").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn to_string_log_result() {
+    let out = vm_run("let s = to_string(log2(8))\nprint(s)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn to_bool_to_number_to_string_regression_after_logs_exp() {
+    let out = vm_run(
+        r#"
+        print(to_bool("true"))
+        print(to_number("42"))
+        print(to_string(99))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "42", "99"]);
+}
+
+// --- Arrays/maps/structs ---
+
+#[test]
+fn logs_exp_array_value() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 8, 1000]
+        print(ln(nums[0]))
+        print(log2(nums[1]))
+        print(log10(nums[2]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "3", "3"]);
+}
+
+#[test]
+fn logs_exp_map_value() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Number> = {"a": 8, "b": 1000}
+        print(log2(m["a"]))
+        print(log10(m["b"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn logs_exp_struct_field() {
+    let out = vm_run(
+        r#"
+        struct S { n: Number }
+        let s = S { n: 1 }
+        print(ln(s.n))
+        print(exp(s.n))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "2.718281828459045"]);
+}
+
+#[test]
+fn logs_exp_method_returns_number() {
+    let out = vm_run(
+        r#"
+        struct Growth { rate: Number }
+        impl Growth { fn factor(self) -> Number { return exp(self.rate) } }
+        let g = Growth { rate: 0 }
+        print(g.factor())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn logs_exp_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct S { n: Number }
+        let mut arr: Array<S> = [S { n: 1 }]
+        arr[0].n = 8
+        print(log2(arr[0].n))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_logs_exp() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(ln(arr[0].value))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn logs_exp_inside_while() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 8, 1000]
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            if i == 0 { total += ln(nums[i]) }
+            if i == 1 { total += log2(nums[i]) }
+            if i == 2 { total += log10(nums[i]) }
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn logs_exp_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, log2(8)) {
+            total += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn logs_exp_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 10, 100]
+        let mut total: Number = 0
+        for n in nums {
+            total += log10(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn logs_exp_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 10, 100]
+        let mut total: Number = 0
+        for i, n in nums {
+            total += log10(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn logs_exp_inside_function() {
+    let interp = run(r#"
+        fn double_log(n: Number) -> Number { return log2(n) + log2(n) }
+        let n = double_log(8)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(6.0)));
+}
+
+#[test]
+fn logs_exp_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Growth { rate: Number }
+        impl Growth { fn factor(self) -> Number { return exp(self.rate) } }
+        let g = Growth { rate: 0 }
+        print(g.factor())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn logs_exp_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt { x += exp(0) }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_logs_exp_loops_simulate() {
+    let src = r#"
+        let nums = [1, 10, 100]
+        let mut total: Number = 0
+        for n in nums { total += log10(n) }
+        print(total)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3"]);
+}
+
+// --- Unit and state audit ---
+
+#[test]
+fn ln_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 5\nlet n = ln(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "ln(unit) should fail: {}", err);
+}
+
+#[test]
+fn exp_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 5\nlet n = exp(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "exp(unit) should fail: {}", err);
+}
+
+#[test]
+fn ln_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = ln(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "ln(state) should fail: {}", err);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_logs_exp() {
+    assert!(check(
+        r#"
+        let a: meters = 3
+        let b: meters = 4
+        let c = a + b
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_logs_exp() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+        print(ln(1))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open", "0"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn ln_wrong_arity_zero_message() {
+    let err = check("let n = ln()").unwrap_err().to_string();
+    assert!(
+        err.contains("ln") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn ln_wrong_arity_two_message() {
+    let err = check("let n = ln(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("ln") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn log2_wrong_arity_zero_message() {
+    let err = check("let n = log2()").unwrap_err().to_string();
+    assert!(
+        err.contains("log2") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn log10_wrong_arity_two_message() {
+    let err = check("let n = log10(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("log10") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn exp_wrong_arity_two_message() {
+    let err = check("let n = exp(0, 1)").unwrap_err().to_string();
+    assert!(
+        err.contains("exp") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn ln_wrong_type_message() {
+    let err = check("let n = ln(\"1\")").unwrap_err().to_string();
+    assert!(
+        err.contains("ln") || err.contains("Number") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn ln_domain_runtime_message() {
+    let err = vm_run("ln(0)").unwrap_err().to_string();
+    assert!(
+        err.contains("positive") || err.contains("ln"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn log2_domain_runtime_message() {
+    let err = vm_run("log2(0)").unwrap_err().to_string();
+    assert!(
+        err.contains("positive") || err.contains("log2"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn log10_domain_runtime_message() {
+    let err = vm_run("log10(-1)").unwrap_err().to_string();
+    assert!(
+        err.contains("positive") || err.contains("log10"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn exp_non_finite_runtime_message() {
+    let err = vm_run("exp(1000)").unwrap_err().to_string();
+    assert!(
+        err.contains("finite") || err.contains("exp"),
+        "got: {}",
+        err
+    );
 }

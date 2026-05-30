@@ -1,0 +1,8 @@
+let nums = [1, 10, 100]
+let mut total: Number = 0
+
+for n in nums {
+  total += log10(n)
+}
+
+print(total)

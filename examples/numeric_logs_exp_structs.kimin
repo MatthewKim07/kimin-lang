@@ -1,0 +1,13 @@
+struct Growth {
+  rate: Number
+}
+
+impl Growth {
+  fn factor(self) -> Number {
+    return exp(self.rate)
+  }
+}
+
+let g = Growth { rate: 0 }
+
+print(g.factor())

@@ -1,0 +1,16 @@
+// Keep runnable by default.
+
+print(ln(1))
+print(exp(0))
+
+// Uncomment to test ln domain error:
+// print(ln(0))
+
+// Uncomment to test log2 domain error:
+// print(log2(-1))
+
+// Uncomment to test exp non-finite:
+// print(exp(1000))
+
+// Uncomment to test wrong type:
+// print(ln("bad"))
