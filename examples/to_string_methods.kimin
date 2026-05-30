@@ -1,0 +1,15 @@
+struct Counter {
+  value: Number
+}
+
+impl Counter {
+  fn inc(mut self) -> Counter {
+    self.value += 1
+    return self
+  }
+}
+
+let c = Counter { value: 5 }
+
+print(to_string(c))
+print(to_string(c.inc()))

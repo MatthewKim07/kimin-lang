@@ -1,0 +1,11 @@
+struct User {
+  name: Text
+  score: Number
+}
+
+let users = [
+  User { name: "alice", score: 10 },
+  User { name: "bob", score: 20 }
+]
+
+print(to_string(users))

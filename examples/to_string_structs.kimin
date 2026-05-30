@@ -1,0 +1,7 @@
+struct Counter {
+  value: Number
+}
+
+let c = Counter { value: 5 }
+
+print(to_string(c))

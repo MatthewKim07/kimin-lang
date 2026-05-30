@@ -1,0 +1,9 @@
+// Keep runnable by default.
+
+print(to_string(42))
+
+// Uncomment to test wrong arity:
+// print(to_string())
+
+// Uncomment to test too many args:
+// print(to_string(1, 2))

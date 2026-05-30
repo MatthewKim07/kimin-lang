@@ -1,0 +1,13 @@
+struct Counter {
+  value: Number
+}
+
+let mut c = Counter { value: 0 }
+
+let duration: seconds = 2
+let dt: seconds = 1
+
+simulate duration step dt {
+  c.value += 1
+  print(to_string(c))
+}

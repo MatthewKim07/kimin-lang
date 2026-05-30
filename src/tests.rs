@@ -17972,6 +17972,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::SetPath { .. }
             | crate::bytecode::Instruction::PathCompoundAssign { .. }
             | crate::bytecode::Instruction::CallMethod { .. }
+            | crate::bytecode::Instruction::ToString
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -40840,4 +40841,803 @@ fn mut_self_typed_self_message() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let result = Parser::new(tokens).parse();
     assert!(result.is_err(), "typed mut self should fail at parse level");
+}
+
+// ============================================================
+// Milestone 17A: to_string(value) -> Text builtin
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_to_string_number_ok() {
+    assert!(check("let n = 42\nlet s = to_string(n)").is_ok());
+}
+
+#[test]
+fn type_to_string_text_ok() {
+    assert!(check("let t = \"hello\"\nlet s = to_string(t)").is_ok());
+}
+
+#[test]
+fn type_to_string_bool_ok() {
+    assert!(check("let b = true\nlet s = to_string(b)").is_ok());
+}
+
+#[test]
+fn type_to_string_array_ok() {
+    assert!(check("let arr = [1, 2, 3]\nlet s = to_string(arr)").is_ok());
+}
+
+#[test]
+fn type_to_string_empty_array_ok_with_annotation() {
+    assert!(check("let arr: Array<Number> = []\nlet s = to_string(arr)").is_ok());
+}
+
+#[test]
+fn type_to_string_map_ok() {
+    assert!(check(
+        r#"
+        let m = {"a": 1}
+        let s = to_string(m)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_string_struct_ok() {
+    assert!(check(
+        r#"
+        struct Counter { value: Number }
+        let c = Counter { value: 5 }
+        let s = to_string(c)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_string_unit_ok() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let s = to_string(d)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_string_state_ok() {
+    assert!(check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let s = to_string(d)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_string_wrong_arity_zero_error() {
+    let err = check("let s = to_string()").unwrap_err().to_string();
+    assert!(
+        err.contains("to_string") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_string_wrong_arity_two_error() {
+    let err = check("let s = to_string(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("to_string") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_string_result_is_text() {
+    // Result of to_string can be concatenated with another Text.
+    assert!(check(r#"let s = to_string(42) + " items""#).is_ok());
+}
+
+#[test]
+fn type_to_string_used_with_string_builtin() {
+    assert!(check(r#"let s = to_upper(to_string(42))"#).is_ok());
+}
+
+// --- Format helper / formatting tests ---
+
+#[test]
+fn format_number_matches_print() {
+    let out = vm_run("print(to_string(42))").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn format_text_identity() {
+    let out = vm_run(r#"print(to_string("hello"))"#).unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn format_bool_true_false() {
+    let out = vm_run("print(to_string(true))\nprint(to_string(false))").unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn format_array_recursive() {
+    let out = vm_run("print(to_string([1, 2, 3]))").unwrap();
+    assert_eq!(out, vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn format_map_sorted_order() {
+    // Maps format in BTreeMap (alphabetical key) order.
+    let out = vm_run(r#"print(to_string({"b": 2, "a": 1}))"#).unwrap();
+    assert_eq!(out, vec!["{a: 1, b: 2}"]);
+}
+
+#[test]
+fn format_struct_deterministic_order() {
+    let out = vm_run(
+        r#"
+        struct User { name: Text, score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(to_string(u))
+    "#,
+    )
+    .unwrap();
+    // Fields in BTreeMap (alphabetical) order: name before score.
+    assert_eq!(out, vec!["User { name: alice, score: 10 }"]);
+}
+
+#[test]
+fn format_nested_struct_array_map() {
+    let out = vm_run(
+        r#"
+        struct User { score: Number }
+        let users = [User { score: 1 }, User { score: 2 }]
+        print(to_string(users))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["[User { score: 1 }, User { score: 2 }]"]);
+}
+
+#[test]
+fn format_empty_array() {
+    let out = vm_run("let arr: Array<Number> = []\nprint(to_string(arr))").unwrap();
+    assert_eq!(out, vec!["[]"]);
+}
+
+#[test]
+fn format_empty_map() {
+    let out = vm_run("let m: Map<Text, Number> = {}\nprint(to_string(m))").unwrap();
+    assert_eq!(out, vec!["{}"]);
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_to_string_number() {
+    let out = vm_run("print(to_string(42))").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_to_string_text() {
+    let out = vm_run(r#"print(to_string("hello"))"#).unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn interp_to_string_bool() {
+    let out = vm_run("print(to_string(true))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn interp_to_string_array() {
+    let out = vm_run("print(to_string([1, 2, 3]))").unwrap();
+    assert_eq!(out, vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn interp_to_string_nested_array() {
+    let out = vm_run(
+        r#"
+        struct S { x: Number }
+        let arr = [S { x: 1 }, S { x: 2 }]
+        print(to_string(arr))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["[S { x: 1 }, S { x: 2 }]"]);
+}
+
+#[test]
+fn interp_to_string_map_sorted() {
+    let out = vm_run(r#"print(to_string({"b": 2, "a": 1}))"#).unwrap();
+    assert_eq!(out, vec!["{a: 1, b: 2}"]);
+}
+
+#[test]
+fn interp_to_string_struct() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let c = Counter { value: 5 }
+        print(to_string(c))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 5 }"]);
+}
+
+#[test]
+fn interp_to_string_nested_struct() {
+    let out = vm_run(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let o = Outer { a: Inner { b: 7 } }
+        print(to_string(o))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Outer { a: Inner { b: 7 } }"]);
+}
+
+#[test]
+fn interp_to_string_unit() {
+    let out = vm_run(
+        r#"
+        let d: meters = 5
+        print(to_string(d))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_to_string_state() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        print(to_string(d))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn interp_to_string_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn make_val() -> Number {
+            calls += 1
+            return 42
+        }
+        let s = to_string(make_val())
+        print(s)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "1"]);
+}
+
+#[test]
+fn interp_to_string_result_can_be_joined() {
+    let out = vm_run(
+        r#"
+        let parts: Array<Text> = [to_string(1), to_string(2), to_string(3)]
+        print(join(parts, ","))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1,2,3"]);
+}
+
+#[test]
+fn interp_to_string_result_can_be_concatenated() {
+    let out = vm_run(
+        r#"
+        let s = "value: " + to_string(42)
+        print(s)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["value: 42"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_to_string_emits_instruction() {
+    let prog = compile_prog("let n = 42\nlet s = to_string(n)");
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString));
+    assert!(has, "expected TO_STRING instruction");
+}
+
+#[test]
+fn bytecode_to_string_compiles_arg_once() {
+    let prog = compile_prog("print(to_string(42))");
+    let to_string_count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::ToString))
+        .count();
+    assert_eq!(to_string_count, 1);
+}
+
+#[test]
+fn bytecode_to_string_no_call_instruction() {
+    let prog = compile_prog("let s = to_string(42)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    let has_to_string = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString));
+    assert!(has_to_string);
+    assert!(!has_call, "to_string should not emit a CALL instruction");
+}
+
+#[test]
+fn bytecode_to_string_inside_function() {
+    let prog = compile_prog(
+        r#"
+        fn stringify(n: Number) -> Text { return to_string(n) }
+    "#,
+    );
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToString))
+    });
+    assert!(has, "function body should contain TO_STRING");
+}
+
+#[test]
+fn bytecode_to_string_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+            print(to_string(c))
+        }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToString))
+    });
+    assert!(has, "simulate body should contain TO_STRING");
+}
+
+#[test]
+fn disassemble_to_string_stable() {
+    let prog = compile_prog("print(to_string(42))");
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("TO_STRING"), "disassembly: {}", out);
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_to_string_number() {
+    let out = vm_run("print(to_string(42))").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_to_string_text() {
+    let out = vm_run(r#"print(to_string("hello"))"#).unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn vm_to_string_bool() {
+    let out = vm_run("print(to_string(false))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn vm_to_string_array() {
+    let out = vm_run("print(to_string([10, 20]))").unwrap();
+    assert_eq!(out, vec!["[10, 20]"]);
+}
+
+#[test]
+fn vm_to_string_map_sorted() {
+    let out = vm_run(r#"print(to_string({"z": 3, "a": 1}))"#).unwrap();
+    assert_eq!(out, vec!["{a: 1, z: 3}"]);
+}
+
+#[test]
+fn vm_to_string_struct() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let c = Counter { value: 5 }
+        print(to_string(c))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 5 }"]);
+}
+
+#[test]
+fn vm_to_string_nested_struct() {
+    let out = vm_run(
+        r#"
+        struct Inner { b: Number }
+        struct Outer { a: Inner }
+        let o = Outer { a: Inner { b: 7 } }
+        print(to_string(o))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Outer { a: Inner { b: 7 } }"]);
+}
+
+#[test]
+fn vm_to_string_unit() {
+    let out = vm_run("let d: meters = 3\nprint(to_string(d))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_to_string_state() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        print(to_string(d))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn vm_to_string_stack_clean() {
+    let out = vm_run("to_string(42)\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_matches_tree_to_string_basic() {
+    let src = r#"
+        print(to_string(42))
+        print(to_string("hello"))
+        print(to_string(true))
+    "#;
+    let tree_interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["42", "hello", "true"]);
+    let _ = tree_interp;
+}
+
+#[test]
+fn vm_matches_tree_to_string_collections() {
+    let src = r#"
+        print(to_string([1, 2, 3]))
+        print(to_string({"b": 2, "a": 1}))
+    "#;
+    assert_eq!(vm_run(src).unwrap(), vec!["[1, 2, 3]", "{a: 1, b: 2}"]);
+}
+
+#[test]
+fn vm_matches_tree_to_string_structs() {
+    let src = r#"
+        struct Counter { value: Number }
+        let c = Counter { value: 5 }
+        print(to_string(c))
+    "#;
+    let tree_interp = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["Counter { value: 5 }"]);
+    let _ = tree_interp;
+}
+
+#[test]
+fn vm_matches_tree_to_string_simulate() {
+    let src = r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 2
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+            print(to_string(c))
+        }
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["Counter { value: 1 }", "Counter { value: 2 }"]);
+}
+
+// --- Struct/method interaction ---
+
+#[test]
+fn to_string_struct_basic() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let c = Counter { value: 5 }
+        print(to_string(c))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 5 }"]);
+}
+
+#[test]
+fn to_string_struct_after_field_mutation() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 5 }
+        c.value = 10
+        print(to_string(c))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 10 }"]);
+}
+
+#[test]
+fn to_string_struct_after_path_mutation() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut arr: Array<Counter> = [Counter { value: 1 }]
+        arr[0].value = 99
+        print(to_string(arr[0]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 99 }"]);
+}
+
+#[test]
+fn to_string_struct_after_method_call() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 5 }
+        print(to_string(c.inc()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 6 }"]);
+}
+
+#[test]
+fn to_string_in_method_body() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter {
+          fn describe(self) -> Text { return to_string(self) }
+        }
+        let c = Counter { value: 5 }
+        print(c.describe())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 5 }"]);
+}
+
+#[test]
+fn to_string_mut_self_result() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 5 }
+        let c2 = c.inc()
+        print(to_string(c))
+        print(to_string(c2))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 5 }", "Counter { value: 6 }"]);
+}
+
+// --- Array/map interaction ---
+
+#[test]
+fn to_string_array_numbers() {
+    let out = vm_run("print(to_string([1, 2, 3]))").unwrap();
+    assert_eq!(out, vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn to_string_array_text() {
+    let out = vm_run(r#"print(to_string(["alice", "bob"]))"#).unwrap();
+    assert_eq!(out, vec!["[alice, bob]"]);
+}
+
+#[test]
+fn to_string_array_structs() {
+    let out = vm_run(
+        r#"
+        struct User { score: Number }
+        let arr = [User { score: 10 }, User { score: 20 }]
+        print(to_string(arr))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["[User { score: 10 }, User { score: 20 }]"]);
+}
+
+#[test]
+fn to_string_map_numbers_sorted() {
+    let out = vm_run(r#"print(to_string({"b": 2, "a": 1, "c": 3}))"#).unwrap();
+    assert_eq!(out, vec!["{a: 1, b: 2, c: 3}"]);
+}
+
+#[test]
+fn to_string_map_struct_values_sorted() {
+    let out = vm_run(
+        r#"
+        struct User { score: Number }
+        let m: Map<Text, User> = {"bob": User { score: 20 }, "alice": User { score: 10 }}
+        print(to_string(m))
+    "#,
+    )
+    .unwrap();
+    // Keys sorted: alice before bob.
+    assert_eq!(
+        out,
+        vec!["{alice: User { score: 10 }, bob: User { score: 20 }}"]
+    );
+}
+
+#[test]
+fn to_string_empty_array() {
+    let out = vm_run("let arr: Array<Number> = []\nprint(to_string(arr))").unwrap();
+    assert_eq!(out, vec!["[]"]);
+}
+
+#[test]
+fn to_string_empty_map() {
+    let out = vm_run("let m: Map<Text, Number> = {}\nprint(to_string(m))").unwrap();
+    assert_eq!(out, vec!["{}"]);
+}
+
+// --- Loop/simulate/function interaction ---
+
+#[test]
+fn to_string_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut i = 0
+        while i < 2 {
+            print(to_string(i))
+            i += 1
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn to_string_inside_for_range() {
+    let out = vm_run(
+        r#"
+        for i in range(0, 3) {
+            print(to_string(i))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1", "2"]);
+}
+
+#[test]
+fn to_string_inside_for_each() {
+    let out = vm_run(
+        r#"
+        for n in [10, 20] {
+            print(to_string(n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10", "20"]);
+}
+
+#[test]
+fn to_string_inside_function() {
+    let out = vm_run(
+        r#"
+        fn stringify(n: Number) -> Text { return to_string(n) }
+        print(stringify(42))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn to_string_inside_simulate() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        let mut c = Counter { value: 0 }
+        let dur: seconds = 2
+        let dt: seconds = 1
+        simulate dur step dt {
+            c.value += 1
+            print(to_string(c.value))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_to_string_loops_simulate() {
+    let src = r#"
+        for i in range(0, 3) {
+            print(to_string(i))
+        }
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["0", "1", "2"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn to_string_wrong_arity_zero_message() {
+    let err = check("let s = to_string()").unwrap_err().to_string();
+    assert!(
+        err.contains("to_string") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_string_wrong_arity_two_message() {
+    let err = check("let s = to_string(1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("to_string") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
 }

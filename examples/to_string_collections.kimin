@@ -1,0 +1,5 @@
+let nums = [1, 2, 3]
+let m = {"b": 2, "a": 1}
+
+print(to_string(nums))
+print(to_string(m))
