@@ -1,0 +1,15 @@
+struct Input {
+  flag: Text
+}
+
+impl Input {
+  fn enabled(self) -> Bool {
+    return to_bool(self.flag)
+  }
+}
+
+let input = Input { flag: "true" }
+
+if input.enabled() {
+  print(1)
+}

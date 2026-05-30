@@ -1,0 +1,9 @@
+if to_bool("true") {
+  print(1)
+}
+
+if to_bool("false") {
+  print(2)
+} else {
+  print(3)
+}

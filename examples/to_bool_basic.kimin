@@ -1,0 +1,4 @@
+print(to_bool("true"))
+print(to_bool("false"))
+print(to_bool(" true "))
+print(to_bool(" false "))

@@ -17974,6 +17974,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::CallMethod { .. }
             | crate::bytecode::Instruction::ToString
             | crate::bytecode::Instruction::ToNumber
+            | crate::bytecode::Instruction::ToBool
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -43300,4 +43301,1081 @@ fn to_number_inside_method() {
     )
     .unwrap();
     assert_eq!(out, vec!["42"]);
+}
+
+// ============================================================
+// Milestone 17C: to_bool(text) -> Bool builtin
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_to_bool_text_ok() {
+    assert!(check("let s: Text = \"true\"\nlet b = to_bool(s)").is_ok());
+}
+
+#[test]
+fn type_to_bool_result_is_bool() {
+    assert!(check("let b: Bool = to_bool(\"true\")").is_ok());
+}
+
+#[test]
+fn type_to_bool_used_in_if_condition() {
+    assert!(check(
+        r#"
+        let s: Text = "true"
+        if to_bool(s) { print(1) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_bool_used_in_while_condition() {
+    assert!(check(
+        r#"
+        let s: Text = "false"
+        while to_bool(s) { print(1) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_bool_assign_to_bool_ok() {
+    assert!(check(
+        r#"
+        let mut b: Bool = false
+        b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_bool_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { active: Bool }
+        let t: Text = "true"
+        let s = S { active: to_bool(t) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_bool_array_value_ok() {
+    assert!(check(
+        r#"
+        let t: Text = "true"
+        let arr: Array<Bool> = [to_bool(t)]
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_bool_map_value_ok() {
+    assert!(check(
+        r#"
+        let t: Text = "false"
+        let m: Map<Text, Bool> = {"key": to_bool(t)}
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_bool_wrong_arity_zero_error() {
+    let err = check("let b = to_bool()").unwrap_err().to_string();
+    assert!(
+        err.contains("to_bool") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_bool_wrong_arity_two_error() {
+    let err = check("let b = to_bool(\"true\", \"false\")")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("to_bool") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_bool_number_arg_error() {
+    let err = check("let b = to_bool(1)").unwrap_err().to_string();
+    assert!(!err.is_empty(), "to_bool(Number) should fail: {}", err);
+}
+
+#[test]
+fn type_to_bool_bool_arg_error() {
+    let err = check("let b = to_bool(true)").unwrap_err().to_string();
+    assert!(!err.is_empty(), "to_bool(Bool) should fail: {}", err);
+}
+
+#[test]
+fn type_to_bool_array_arg_error() {
+    let err = check("let b = to_bool([\"true\"])")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_to_bool_struct_arg_error() {
+    let err = check(
+        r#"
+        struct S { flag: Text }
+        let s = S { flag: "true" }
+        let b = to_bool(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_to_bool_unit_arg_error() {
+    let err = check(
+        r#"
+        let d: meters = 5
+        let b = to_bool(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "to_bool(unit) should fail: {}", err);
+}
+
+#[test]
+fn type_to_bool_state_arg_error() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let b = to_bool(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "to_bool(state) should fail: {}", err);
+}
+
+#[test]
+fn type_to_number_still_ok_after_to_bool() {
+    assert!(check("let n = to_number(\"42\")").is_ok());
+}
+
+#[test]
+fn type_to_string_still_ok_after_to_bool() {
+    assert!(check("let s = to_string(42)").is_ok());
+}
+
+// --- Shared parse helper tests ---
+
+#[test]
+fn parse_bool_helper_true() {
+    assert_eq!(crate::value::parse_bool_from_text("true").unwrap(), true);
+}
+
+#[test]
+fn parse_bool_helper_false() {
+    assert_eq!(crate::value::parse_bool_from_text("false").unwrap(), false);
+}
+
+#[test]
+fn parse_bool_helper_whitespace_trim() {
+    assert_eq!(
+        crate::value::parse_bool_from_text("  true  ").unwrap(),
+        true
+    );
+    assert_eq!(
+        crate::value::parse_bool_from_text("\tfalse\n").unwrap(),
+        false
+    );
+}
+
+#[test]
+fn parse_bool_helper_empty_error() {
+    assert!(crate::value::parse_bool_from_text("").is_err());
+    assert!(crate::value::parse_bool_from_text("   ").is_err());
+}
+
+#[test]
+fn parse_bool_helper_true_capital_error() {
+    assert!(crate::value::parse_bool_from_text("True").is_err());
+    assert!(crate::value::parse_bool_from_text("TRUE").is_err());
+}
+
+#[test]
+fn parse_bool_helper_false_upper_error() {
+    assert!(crate::value::parse_bool_from_text("False").is_err());
+    assert!(crate::value::parse_bool_from_text("FALSE").is_err());
+}
+
+#[test]
+fn parse_bool_helper_one_error() {
+    assert!(crate::value::parse_bool_from_text("1").is_err());
+}
+
+#[test]
+fn parse_bool_helper_zero_error() {
+    assert!(crate::value::parse_bool_from_text("0").is_err());
+}
+
+#[test]
+fn parse_bool_helper_yes_error() {
+    assert!(crate::value::parse_bool_from_text("yes").is_err());
+}
+
+#[test]
+fn parse_bool_helper_no_error() {
+    assert!(crate::value::parse_bool_from_text("no").is_err());
+}
+
+#[test]
+fn parse_bool_helper_mixed_suffix_error() {
+    assert!(crate::value::parse_bool_from_text("trueabc").is_err());
+    assert!(crate::value::parse_bool_from_text("falseabc").is_err());
+}
+
+#[test]
+fn parse_bool_helper_mixed_prefix_error() {
+    assert!(crate::value::parse_bool_from_text("abctrue").is_err());
+    assert!(crate::value::parse_bool_from_text("abcfalse").is_err());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_to_bool_true() {
+    let out = vm_run("print(to_bool(\"true\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn interp_to_bool_false() {
+    let out = vm_run("print(to_bool(\"false\"))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn interp_to_bool_true_whitespace_trimmed() {
+    let out = vm_run("print(to_bool(\"  true  \"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn interp_to_bool_false_whitespace_trimmed() {
+    let out = vm_run("print(to_bool(\" false \"))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn interp_to_bool_empty_string_error() {
+    assert!(vm_run("to_bool(\"\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_true_capital_error() {
+    assert!(vm_run("to_bool(\"True\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_false_upper_error() {
+    assert!(vm_run("to_bool(\"FALSE\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_one_error() {
+    assert!(vm_run("to_bool(\"1\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_zero_error() {
+    assert!(vm_run("to_bool(\"0\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_yes_error() {
+    assert!(vm_run("to_bool(\"yes\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_no_error() {
+    assert!(vm_run("to_bool(\"no\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_mixed_suffix_error() {
+    assert!(vm_run("to_bool(\"trueabc\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_mixed_prefix_error() {
+    assert!(vm_run("to_bool(\"abctrue\")").is_err());
+}
+
+#[test]
+fn interp_to_bool_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_text() -> Text {
+            calls += 1
+            return "true"
+        }
+        let b = to_bool(get_text())
+        print(b)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "1"]);
+}
+
+#[test]
+fn interp_to_bool_result_in_if() {
+    let out = vm_run(
+        r#"
+        if to_bool("true") { print(1) } else { print(0) }
+        if to_bool("false") { print(1) } else { print(0) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "0"]);
+}
+
+#[test]
+fn interp_to_bool_result_in_while() {
+    let out = vm_run(
+        r#"
+        let flags: Array<Text> = ["true", "true", "false"]
+        let mut i = 0
+        let mut count = 0
+        while i < 3 {
+            if to_bool(flags[i]) { count += 1 }
+            i += 1
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_to_bool_inside_function() {
+    let interp = run(r#"
+        fn parse_flag(s: Text) -> Bool { return to_bool(s) }
+        let b = parse_flag("true")
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn interp_to_bool_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Input { flag: Text }
+        impl Input { fn enabled(self) -> Bool { return to_bool(self.flag) } }
+        let i = Input { flag: "true" }
+        print(i.enabled())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn interp_to_bool_inside_closure() {
+    let out = vm_run(
+        r#"
+        let default_flag: Text = "false"
+        fn check(s: Text) -> Bool {
+            if to_bool(s) { return true }
+            return to_bool(default_flag)
+        }
+        print(check("true"))
+        print(check("false"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn interp_to_bool_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let active = "true"
+        let mut total: Number = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            if to_bool(active) { total += 1 }
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_to_bool_emits_instruction() {
+    let prog = compile_prog("let b = to_bool(\"true\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToBool)));
+}
+
+#[test]
+fn bytecode_to_bool_compiles_arg_once() {
+    let prog = compile_prog("print(to_bool(\"true\"))");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::ToBool))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_to_bool_no_call_instruction() {
+    let prog = compile_prog("let b = to_bool(\"true\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToBool)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_to_bool_inside_function() {
+    let prog = compile_prog("fn check(s: Text) -> Bool { return to_bool(s) }");
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToBool))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_bool_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Input { flag: Text }
+        impl Input { fn enabled(self) -> Bool { return to_bool(self.flag) } }
+    "#,
+    );
+    let has = prog.methods.iter().any(|mc| {
+        mc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToBool))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_bool_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let s = "true"
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt {
+            print(to_bool(s))
+        }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToBool))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_bool_inside_loop() {
+    let prog = compile_prog(
+        r#"
+        for s in ["true", "false"] {
+            print(to_bool(s))
+        }
+    "#,
+    );
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToBool));
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_number_unchanged_after_to_bool() {
+    let prog = compile_prog("let n = to_number(\"42\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToNumber)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToBool)));
+}
+
+#[test]
+fn bytecode_to_string_unchanged_after_to_bool() {
+    let prog = compile_prog("let s = to_string(42)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToBool)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_to_bool() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+        let c = Counter { value: 5 }
+        let v = c.get()
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. })));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_to_bool() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut arr: Array<Counter> = [Counter { value: 1 }]
+        arr[0].value = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+}
+
+#[test]
+fn disassemble_to_bool_stable() {
+    let prog = compile_prog("print(to_bool(\"true\"))");
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("TO_BOOL"), "disassembly: {}", out);
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_to_bool_true() {
+    let out = vm_run("print(to_bool(\"true\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_to_bool_false() {
+    let out = vm_run("print(to_bool(\"false\"))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn vm_to_bool_whitespace_trimmed() {
+    let out = vm_run("print(to_bool(\"  true  \"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn vm_to_bool_empty_string_error() {
+    assert!(vm_run("to_bool(\"\")").is_err());
+}
+
+#[test]
+fn vm_to_bool_true_capital_error() {
+    assert!(vm_run("to_bool(\"True\")").is_err());
+}
+
+#[test]
+fn vm_to_bool_one_error() {
+    assert!(vm_run("to_bool(\"1\")").is_err());
+}
+
+#[test]
+fn vm_to_bool_yes_error() {
+    assert!(vm_run("to_bool(\"yes\")").is_err());
+}
+
+#[test]
+fn vm_to_bool_stack_clean() {
+    let out = vm_run("to_bool(\"true\")\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_matches_tree_to_bool_basic() {
+    let src = r#"
+        print(to_bool("true"))
+        print(to_bool("false"))
+        print(to_bool("  true  "))
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["true", "false", "true"]);
+    let _ = tree;
+}
+
+#[test]
+fn vm_matches_tree_to_bool_errors() {
+    let src = "to_bool(\"True\")";
+    let tree_result = run(src);
+    let vm_result = vm_run(src);
+    assert!(tree_result.is_err());
+    assert!(vm_result.is_err());
+}
+
+#[test]
+fn vm_matches_tree_to_bool_functions_methods_simulate() {
+    let src = r#"
+        fn flag_check(s: Text) -> Bool { return to_bool(s) }
+        print(flag_check("true"))
+        print(flag_check("false"))
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["true", "false"]);
+}
+
+// --- to_string interaction ---
+
+#[test]
+fn to_bool_to_string_true_round_trip() {
+    let out = vm_run("print(to_bool(to_string(true)))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn to_bool_to_string_false_round_trip() {
+    let out = vm_run("print(to_bool(to_string(false)))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn to_bool_to_string_text_true() {
+    let out = vm_run("let s: Text = \"true\"\nprint(to_bool(to_string(s)))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn to_bool_to_string_text_false() {
+    let out = vm_run("let s: Text = \"false\"\nprint(to_bool(to_string(s)))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn to_bool_to_string_number_error() {
+    assert!(vm_run("to_bool(to_string(42))").is_err());
+}
+
+#[test]
+fn to_bool_to_string_array_error() {
+    assert!(vm_run("to_bool(to_string([1, 2]))").is_err());
+}
+
+#[test]
+fn to_string_existing_behavior_unchanged_after_to_bool() {
+    let out = vm_run("print(to_string(true))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+// --- to_number interaction ---
+
+#[test]
+fn to_bool_one_not_truthy() {
+    assert!(vm_run("to_bool(\"1\")").is_err());
+}
+
+#[test]
+fn to_bool_zero_not_falsey() {
+    assert!(vm_run("to_bool(\"0\")").is_err());
+}
+
+#[test]
+fn to_number_true_still_error() {
+    assert!(vm_run("to_number(\"true\")").is_err());
+}
+
+#[test]
+fn to_number_existing_behavior_unchanged_after_to_bool() {
+    let out = vm_run("print(to_number(\"42\"))").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Strings interaction ---
+
+#[test]
+fn to_bool_split_parts_count_true() {
+    let out = vm_run(
+        r#"
+        let parts = split("true,false,true", ",")
+        let mut count: Number = 0
+        for part in parts {
+            if to_bool(part) { count += 1 }
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn to_bool_after_trim_builtin() {
+    let out = vm_run("print(to_bool(trim(\"  true  \")))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn to_bool_after_string_slice_true() {
+    let out = vm_run("let s = \"trueabc\"\nprint(to_bool(s[0..4]))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn to_bool_after_string_slice_false() {
+    let out = vm_run("let s = \"falseabc\"\nprint(to_bool(s[0..5]))").unwrap();
+    assert_eq!(out, vec!["false"]);
+}
+
+#[test]
+fn to_bool_after_string_index_error() {
+    // Single char is not "true" or "false".
+    assert!(vm_run("let s = \"true\"\nto_bool(s[0])").is_err());
+}
+
+// --- Arrays/maps/structs ---
+
+#[test]
+fn to_bool_array_of_text() {
+    let out = vm_run(
+        r#"
+        let flags: Array<Text> = ["true", "false", "true"]
+        let mut count: Number = 0
+        for flag in flags {
+            if to_bool(flag) { count += 1 }
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn to_bool_map_text_value() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Text> = {"a": "true", "b": "false"}
+        if to_bool(m["a"]) { print(1) }
+        if to_bool(m["b"]) { print(2) } else { print(3) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "3"]);
+}
+
+#[test]
+fn to_bool_struct_text_field() {
+    let out = vm_run(
+        r#"
+        struct Input { flag: Text }
+        let input = Input { flag: "true" }
+        if to_bool(input.flag) { print(1) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn to_bool_method_returns_text() {
+    let out = vm_run(
+        r#"
+        struct Input { flag: Text }
+        impl Input { fn enabled(self) -> Bool { return to_bool(self.flag) } }
+        let i = Input { flag: "true" }
+        if i.enabled() { print(1) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn to_bool_mut_self_text_field() {
+    let out = vm_run(
+        r#"
+        struct Input { flag: Text }
+        impl Input {
+          fn toggle(mut self) -> Input {
+            if to_bool(self.flag) {
+                self.flag = "false"
+            } else {
+                self.flag = "true"
+            }
+            return self
+          }
+        }
+        let i = Input { flag: "true" }
+        let i2 = i.toggle()
+        print(to_bool(i.flag))
+        print(to_bool(i2.flag))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "false"]);
+}
+
+#[test]
+fn to_bool_with_path_mutated_text_field() {
+    let out = vm_run(
+        r#"
+        struct Input { flag: Text }
+        let mut arr: Array<Input> = [Input { flag: "false" }]
+        arr[0].flag = "true"
+        if to_bool(arr[0].flag) { print(1) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_to_bool() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn to_bool_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut i = 0
+        let flags: Array<Text> = ["true", "true", "false"]
+        let mut count: Number = 0
+        while i < 3 {
+            if to_bool(flags[i]) { count += 1 }
+            i += 1
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn to_bool_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let flags: Array<Text> = ["true", "false", "true"]
+        let mut count: Number = 0
+        for i in range(0, 3) {
+            if to_bool(flags[i]) { count += 1 }
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn to_bool_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let mut count: Number = 0
+        for s in ["true", "false", "true"] {
+            if to_bool(s) { count += 1 }
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn to_bool_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let mut count: Number = 0
+        for i, s in ["true", "false", "true"] {
+            if to_bool(s) { count += i + 1 }
+        }
+        print(count)
+    "#,
+    )
+    .unwrap();
+    // i=0 (true): count += 1; i=1 (false): skip; i=2 (true): count += 3 → total=4
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn to_bool_inside_function() {
+    let interp = run(r#"
+        fn check(s: Text) -> Bool { return to_bool(s) }
+        let b = check("true")
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("b"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn to_bool_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Calc { flag: Text }
+        impl Calc { fn active(self) -> Bool { return to_bool(self.flag) } }
+        let c = Calc { flag: "false" }
+        if c.active() { print(1) } else { print(0) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn to_bool_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let active = "true"
+        let mut total: Number = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            if to_bool(active) { total += 1 }
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_to_bool_loops_simulate() {
+    let src = r#"
+        let flags = split("true,false,true", ",")
+        let mut count: Number = 0
+        for f in flags {
+            if to_bool(f) { count += 1 }
+        }
+        print(count)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["2"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn to_bool_wrong_arity_zero_message() {
+    let err = check("let b = to_bool()").unwrap_err().to_string();
+    assert!(
+        err.contains("to_bool") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_bool_wrong_arity_two_message() {
+    let err = check("let b = to_bool(\"true\", \"false\")")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("to_bool") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_bool_wrong_type_message() {
+    let err = check("let b = to_bool(true)").unwrap_err().to_string();
+    assert!(
+        err.contains("to_bool") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_bool_invalid_string_message() {
+    let err = vm_run("to_bool(\"yes\")").unwrap_err().to_string();
+    assert!(err.contains("yes"), "got: {}", err);
+}
+
+#[test]
+fn to_bool_empty_string_message() {
+    let err = vm_run("to_bool(\"\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn to_bool_case_sensitive_message() {
+    let err = vm_run("to_bool(\"True\")").unwrap_err().to_string();
+    assert!(err.contains("True"), "got: {}", err);
 }

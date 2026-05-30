@@ -1,0 +1,15 @@
+// Keep runnable by default.
+
+print(to_bool("true"))
+
+// Uncomment to test case-sensitive error:
+// print(to_bool("True"))
+
+// Uncomment to test no numeric truthiness:
+// print(to_bool("1"))
+
+// Uncomment to test wrong type:
+// print(to_bool(true))
+
+// Uncomment to test wrong arity:
+// print(to_bool())

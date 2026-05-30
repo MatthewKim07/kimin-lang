@@ -1,0 +1,10 @@
+let parts = split("true,false,true", ",")
+let mut count: Number = 0
+
+for part in parts {
+  if to_bool(part) {
+    count += 1
+  }
+}
+
+print(count)

@@ -1,0 +1,13 @@
+let active = "true"
+let mut total: Number = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  if to_bool(active) {
+    total += 1
+  }
+}
+
+print(total)
