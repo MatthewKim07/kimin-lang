@@ -2560,6 +2560,62 @@ impl TypeChecker {
                         }
                         return Ok(Type::Bool);
                     }
+
+                    // abs / floor / ceil / round: Number -> Number
+                    if matches!(name.as_str(), "abs" | "floor" | "ceil" | "round") {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("{}() expects 1 argument, got {}", name, args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        if !arg_ty.is_unknown() && arg_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("{}() expects Number, got {}", name, arg_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
+                    // min / max: Number, Number -> Number
+                    if name == "min" || name == "max" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("{}() expects 2 arguments, got {}", name, args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t0 = self.check_expr(&args[0], *span)?;
+                        if !t0.is_unknown() && t0 != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "{}() first argument expects Number, got {}",
+                                    name,
+                                    t0.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t1 = self.check_expr(&args[1], *span)?;
+                        if !t1.is_unknown() && t1 != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "{}() second argument expects Number, got {}",
+                                    name,
+                                    t1.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;

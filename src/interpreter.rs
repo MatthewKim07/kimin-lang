@@ -1603,6 +1603,65 @@ impl Interpreter {
                             .map_err(|e| RuntimeError { msg: e })?;
                         return Ok(Value::Bool(b));
                     }
+
+                    // abs / floor / ceil / round: Number -> Number
+                    if matches!(name.as_str(), "abs" | "floor" | "ceil" | "round")
+                        && args.len() == 1
+                    {
+                        let val = self.eval_expr(&args[0])?;
+                        let n = match val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "{}() expects Number, got {}",
+                                        name,
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let result = match name.as_str() {
+                            "abs" => n.abs(),
+                            "floor" => n.floor(),
+                            "ceil" => n.ceil(),
+                            "round" => n.round(),
+                            _ => unreachable!(),
+                        };
+                        return Ok(Value::Number(result));
+                    }
+
+                    // min / max: Number, Number -> Number
+                    if (name == "min" || name == "max") && args.len() == 2 {
+                        let v0 = self.eval_expr(&args[0])?;
+                        let v1 = self.eval_expr(&args[1])?;
+                        let a = match v0 {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "{}() first argument expects Number, got {}",
+                                        name,
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let b = match v1 {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "{}() second argument expects Number, got {}",
+                                        name,
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let result = if name == "min" { a.min(b) } else { a.max(b) };
+                        return Ok(Value::Number(result));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
