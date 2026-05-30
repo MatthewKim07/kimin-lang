@@ -175,6 +175,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Trim => "TRIM".to_string(),
         Instruction::ToString => "TO_STRING".to_string(),
         Instruction::ToNumber => "TO_NUMBER".to_string(),
+        Instruction::ToBool => "TO_BOOL".to_string(),
         Instruction::Split => "SPLIT".to_string(),
         Instruction::Join => "JOIN".to_string(),
         Instruction::HasKey => "HAS_KEY".to_string(),

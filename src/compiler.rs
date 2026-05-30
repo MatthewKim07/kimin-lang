@@ -1076,6 +1076,11 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::ToNumber);
                         return Ok(());
                     }
+                    if name == "to_bool" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::ToBool);
+                        return Ok(());
+                    }
                 }
                 // Compile callee first (pushes function value onto stack),
                 // then arguments left-to-right, then emit stack-based Call.

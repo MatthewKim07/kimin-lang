@@ -146,6 +146,10 @@ pub enum Instruction {
     /// Trims whitespace, rejects empty/non-numeric/non-finite strings with RuntimeError.
     ToNumber,
 
+    /// Parse a Text value into a Bool. Stack: [..., text] → Bool.
+    /// Trims whitespace, accepts exactly "true" or "false", rejects everything else.
+    ToBool,
+
     /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
     /// Empty delimiter splits into individual characters.
     Split,

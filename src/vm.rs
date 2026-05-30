@@ -1031,6 +1031,22 @@ impl Vm {
                     stack.push(Value::Number(n));
                 }
 
+                Instruction::ToBool => {
+                    let val = pop(stack)?;
+                    let text = match val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "to_bool() expects Text, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let b =
+                        crate::value::parse_bool_from_text(&text).map_err(|e| runtime_err(&e))?;
+                    stack.push(Value::Bool(b));
+                }
+
                 Instruction::Split => {
                     let delim_val = pop(stack)?;
                     let text_val = pop(stack)?;
