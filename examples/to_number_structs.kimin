@@ -1,0 +1,13 @@
+struct Input {
+  value: Text
+}
+
+impl Input {
+  fn number(self) -> Number {
+    return to_number(self.value)
+  }
+}
+
+let input = Input { value: "42" }
+
+print(input.number() + 1)

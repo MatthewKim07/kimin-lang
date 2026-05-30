@@ -1,0 +1,11 @@
+let amount = "2"
+let mut total: Number = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  total += to_number(amount)
+}
+
+print(total)

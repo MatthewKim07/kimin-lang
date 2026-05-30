@@ -17973,6 +17973,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::PathCompoundAssign { .. }
             | crate::bytecode::Instruction::CallMethod { .. }
             | crate::bytecode::Instruction::ToString
+            | crate::bytecode::Instruction::ToNumber
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -42094,4 +42095,737 @@ fn state_machine_still_ok_after_to_string() {
     )
     .unwrap();
     assert_eq!(out, vec!["Door.open", "Door.open"]);
+}
+
+// ============================================================
+// Milestone 17B: to_number(text) -> Number builtin
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_to_number_text_ok() {
+    assert!(check(
+        r#"
+        let s: Text = "42"
+        let n = to_number(s)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_result_is_number() {
+    // Result can be used in arithmetic.
+    assert!(check(r#"let n = to_number("42") + 1"#).is_ok());
+}
+
+#[test]
+fn type_to_number_used_in_arithmetic() {
+    assert!(check(r#"let a = to_number("10") + to_number("20")"#).is_ok());
+}
+
+#[test]
+fn type_to_number_used_as_array_index() {
+    assert!(check(
+        r#"
+        let arr = [1, 2, 3]
+        let idx = to_number("0")
+        let v = arr[idx]
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_assign_to_number_ok() {
+    assert!(check(
+        r#"
+        let mut n: Number = 0
+        n = to_number("5")
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_wrong_arity_zero_error() {
+    let err = check("let n = to_number()").unwrap_err().to_string();
+    assert!(
+        err.contains("to_number") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_number_wrong_arity_two_error() {
+    let err = check(r#"let n = to_number("1", "2")"#)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("to_number") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_number_number_arg_error() {
+    let err = check("let n = to_number(42)").unwrap_err().to_string();
+    assert!(
+        err.contains("to_number") || err.contains("Text") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_number_bool_arg_error() {
+    let err = check("let n = to_number(true)").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_to_number_array_arg_error() {
+    let err = check("let n = to_number([1, 2])").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_to_number_struct_arg_error() {
+    let err = check(
+        r#"
+        struct S { x: Number }
+        let s = S { x: 1 }
+        let n = to_number(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_to_number_integer() {
+    let out = vm_run(r#"print(to_number("42"))"#).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_to_number_negative_integer() {
+    let out = vm_run(r#"print(to_number("-5"))"#).unwrap();
+    assert_eq!(out, vec!["-5"]);
+}
+
+#[test]
+fn interp_to_number_decimal() {
+    let out = vm_run(r#"print(to_number("3.14"))"#).unwrap();
+    assert_eq!(out, vec!["3.14"]);
+}
+
+#[test]
+fn interp_to_number_negative_decimal() {
+    let out = vm_run(r#"print(to_number("-3.14"))"#).unwrap();
+    assert_eq!(out, vec!["-3.14"]);
+}
+
+#[test]
+fn interp_to_number_zero() {
+    let out = vm_run(r#"print(to_number("0"))"#).unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_to_number_whitespace_trimmed() {
+    // Whitespace trimmed for ergonomics.
+    let out = vm_run(r#"print(to_number("  42  "))"#).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_to_number_empty_string_error() {
+    let result = vm_run(r#"to_number("")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_to_number_invalid_string_error() {
+    let result = vm_run(r#"to_number("abc")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_to_number_mixed_suffix_error() {
+    let result = vm_run(r#"to_number("42abc")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_to_number_mixed_prefix_error() {
+    let result = vm_run(r#"to_number("abc42")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_to_number_comma_error() {
+    let result = vm_run(r#"to_number("1,000")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_to_number_nan_error() {
+    let result = vm_run(r#"to_number("NaN")"#);
+    assert!(result.is_err(), "NaN should be rejected");
+}
+
+#[test]
+fn interp_to_number_infinity_error() {
+    let result = vm_run(r#"to_number("inf")"#);
+    assert!(result.is_err(), "inf should be rejected");
+}
+
+#[test]
+fn interp_to_number_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_text() -> Text {
+            calls += 1
+            return "42"
+        }
+        let n = to_number(get_text())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "1"]);
+}
+
+#[test]
+fn interp_to_number_result_arithmetic() {
+    let out = vm_run(
+        r#"
+        let a = to_number("10")
+        let b = to_number("20")
+        print(a + b)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_to_number_emits_instruction() {
+    let prog = compile_prog(r#"let n = to_number("42")"#);
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToNumber)));
+}
+
+#[test]
+fn bytecode_to_number_compiles_arg_once() {
+    let prog = compile_prog(r#"print(to_number("42"))"#);
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::ToNumber))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_to_number_no_call_instruction() {
+    let prog = compile_prog(r#"let n = to_number("42")"#);
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToNumber)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_to_number_inside_function() {
+    let prog = compile_prog(
+        r#"
+        fn parse(s: Text) -> Number { return to_number(s) }
+    "#,
+    );
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToNumber))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_number_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Input { value: Text }
+        impl Input { fn number(self) -> Number { return to_number(self.value) } }
+    "#,
+    );
+    let has = prog.methods.iter().any(|mc| {
+        mc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToNumber))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_number_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let s = "5"
+        let mut total: Number = 0
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt {
+            total += to_number(s)
+        }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ToNumber))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_to_number_inside_loop() {
+    let prog = compile_prog(
+        r#"
+        let mut total: Number = 0
+        for s in ["1", "2", "3"] {
+            total += to_number(s)
+        }
+    "#,
+    );
+    let has = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToNumber));
+    assert!(has);
+}
+
+#[test]
+fn disassemble_to_number_stable() {
+    let prog = compile_prog(r#"print(to_number("42"))"#);
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("TO_NUMBER"), "disassembly: {}", out);
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_to_number_integer() {
+    let out = vm_run(r#"print(to_number("42"))"#).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_to_number_negative_integer() {
+    let out = vm_run(r#"print(to_number("-5"))"#).unwrap();
+    assert_eq!(out, vec!["-5"]);
+}
+
+#[test]
+fn vm_to_number_decimal() {
+    let out = vm_run(r#"print(to_number("3.14"))"#).unwrap();
+    assert_eq!(out, vec!["3.14"]);
+}
+
+#[test]
+fn vm_to_number_negative_decimal() {
+    let out = vm_run(r#"print(to_number("-3.14"))"#).unwrap();
+    assert_eq!(out, vec!["-3.14"]);
+}
+
+#[test]
+fn vm_to_number_invalid_string_error() {
+    let result = vm_run(r#"to_number("bad")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_to_number_empty_string_error() {
+    let result = vm_run(r#"to_number("")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_to_number_nan_error() {
+    let result = vm_run(r#"to_number("NaN")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_to_number_infinity_error() {
+    let result = vm_run(r#"to_number("Infinity")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn vm_to_number_stack_clean() {
+    let out = vm_run("to_number(\"42\")\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_matches_tree_to_number_basic() {
+    let src = r#"
+        print(to_number("42"))
+        print(to_number("-5"))
+        print(to_number("3.14"))
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["42", "-5", "3.14"]);
+    let _ = tree;
+}
+
+#[test]
+fn vm_matches_tree_to_number_errors() {
+    // Both should error on invalid input.
+    let src = r#"to_number("abc")"#;
+    let tree_result = run(src);
+    let vm_result = vm_run(src);
+    assert!(tree_result.is_err());
+    assert!(vm_result.is_err());
+}
+
+#[test]
+fn vm_matches_tree_to_number_functions_methods_simulate() {
+    let src = r#"
+        fn parse(s: Text) -> Number { return to_number(s) }
+        print(parse("10") + parse("20"))
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["30"]);
+}
+
+// --- to_string/to_number interaction ---
+
+#[test]
+fn to_number_to_string_number_round_trip() {
+    let out = vm_run(
+        r#"
+        let n = 42
+        let s = to_string(n)
+        let m = to_number(s)
+        print(m + 1)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["43"]);
+}
+
+#[test]
+fn to_number_to_string_decimal_round_trip() {
+    let out = vm_run(
+        r#"
+        let n = 3.14
+        let s = to_string(n)
+        let m = to_number(s)
+        print(m)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3.14"]);
+}
+
+#[test]
+fn to_number_to_string_text_numeric() {
+    // to_string of a numeric text is the text itself; to_number should parse it.
+    let out = vm_run(
+        r#"
+        let s = "100"
+        let t = to_string(s)
+        let n = to_number(t)
+        print(n + 1)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["101"]);
+}
+
+#[test]
+fn to_number_to_string_bool_error() {
+    let result = vm_run(r#"to_number(to_string(true))"#);
+    assert!(result.is_err(), "to_number('true') should fail");
+}
+
+#[test]
+fn to_number_to_string_array_error() {
+    let result = vm_run(r#"to_number(to_string([1, 2]))"#);
+    assert!(result.is_err(), "to_number('[1, 2]') should fail");
+}
+
+#[test]
+fn to_string_existing_behavior_unchanged_after_to_number() {
+    let out = vm_run(
+        r#"
+        let n = 42
+        let s = to_string(n)
+        print(s)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Strings interaction ---
+
+#[test]
+fn to_number_split_parts_sum() {
+    let out = vm_run(
+        r#"
+        let parts = split("10,20,30", ",")
+        let mut total: Number = 0
+        for part in parts {
+            total += to_number(part)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn to_number_after_trim_builtin() {
+    let out = vm_run(r#"print(to_number(trim("  42  ")))"#).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Arrays/maps/structs ---
+
+#[test]
+fn to_number_array_of_text() {
+    let out = vm_run(
+        r#"
+        let nums_text: Array<Text> = ["1", "2", "3"]
+        let mut nums: Array<Number> = []
+        for s in nums_text {
+            push(nums, to_number(s))
+        }
+        print(nums[0] + nums[1] + nums[2])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn to_number_map_text_value() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Text> = {"a": "10", "b": "20"}
+        print(to_number(m["a"]) + to_number(m["b"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn to_number_struct_text_field() {
+    let out = vm_run(
+        r#"
+        struct Input { value: Text }
+        let input = Input { value: "42" }
+        print(to_number(input.value) + 1)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["43"]);
+}
+
+#[test]
+fn to_number_method_returns_text() {
+    let out = vm_run(
+        r#"
+        struct Input { value: Text }
+        impl Input { fn number(self) -> Number { return to_number(self.value) } }
+        let input = Input { value: "42" }
+        print(input.number() + 1)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["43"]);
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn to_number_inside_while() {
+    let out = vm_run(
+        r#"
+        let nums: Array<Text> = ["1", "2", "3"]
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += to_number(nums[i])
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn to_number_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 3) {
+            total += to_number(to_string(i))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn to_number_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for s in ["10", "20", "30"] {
+            total += to_number(s)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["60"]);
+}
+
+#[test]
+fn to_number_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i, s in ["1", "2", "3"] {
+            total += to_number(s)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn to_number_inside_function() {
+    let interp = run(r#"
+        fn parse(s: Text) -> Number { return to_number(s) }
+        let n = parse("42")
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn to_number_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let amount = "2"
+        let mut total: Number = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            total += to_number(amount)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_matches_tree_to_number_loops_simulate() {
+    let src = r#"
+        let parts = split("10,20,30", ",")
+        let mut total: Number = 0
+        for part in parts {
+            total += to_number(part)
+        }
+        print(total)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["60"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn to_number_wrong_arity_zero_message() {
+    let err = check("let n = to_number()").unwrap_err().to_string();
+    assert!(
+        err.contains("to_number") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_number_wrong_arity_two_message() {
+    let err = check(r#"let n = to_number("1", "2")"#)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("to_number") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_number_wrong_type_message() {
+    let err = check("let n = to_number(42)").unwrap_err().to_string();
+    assert!(
+        err.contains("to_number") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn to_number_invalid_string_message() {
+    let err = vm_run(r#"to_number("abc")"#).unwrap_err().to_string();
+    assert!(err.contains("abc"), "got: {}", err);
+}
+
+#[test]
+fn to_number_non_finite_message() {
+    let err = vm_run(r#"to_number("NaN")"#).unwrap_err().to_string();
+    assert!(err.contains("NaN"), "got: {}", err);
 }

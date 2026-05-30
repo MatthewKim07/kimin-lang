@@ -1,0 +1,6 @@
+let a = to_number("10")
+let b = to_number("20")
+
+print(a + b)
+print(b - a)
+print(a * 2)

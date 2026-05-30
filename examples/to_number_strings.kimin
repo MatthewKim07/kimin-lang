@@ -1,0 +1,8 @@
+let parts = split("10,20,30", ",")
+let mut total: Number = 0
+
+for part in parts {
+  total += to_number(part)
+}
+
+print(total)

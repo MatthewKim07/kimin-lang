@@ -1,0 +1,12 @@
+// Keep runnable by default.
+
+print(to_number("42"))
+
+// Uncomment to test invalid text:
+// print(to_number("abc"))
+
+// Uncomment to test wrong type:
+// print(to_number(42))
+
+// Uncomment to test wrong arity:
+// print(to_number())
