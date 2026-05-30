@@ -144,6 +144,21 @@ impl fmt::Display for Value {
     }
 }
 
+/// Parse a Text value into a Bool.
+///
+/// - Trims leading/trailing whitespace.
+/// - Accepts exactly "true" → true and "false" → false (case-sensitive).
+/// - Rejects all other strings including case variants, numeric strings, and empty.
+pub fn parse_bool_from_text(s: &str) -> Result<bool, String> {
+    let trimmed = s.trim();
+    match trimmed {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        "" => Err("cannot convert '' to Bool (empty string)".to_string()),
+        other => Err(format!("cannot convert '{}' to Bool", other)),
+    }
+}
+
 /// Parse a Text value into a finite f64.
 ///
 /// - Trims leading/trailing whitespace.

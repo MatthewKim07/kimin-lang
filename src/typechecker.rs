@@ -2540,6 +2540,26 @@ impl TypeChecker {
                         }
                         return Ok(Type::Number);
                     }
+
+                    // `to_bool` builtin: to_bool(text) -> Bool
+                    if name == "to_bool" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("to_bool() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        if !arg_ty.is_unknown() && arg_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!("to_bool() expects Text, got {}", arg_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Bool);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;

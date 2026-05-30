@@ -1579,6 +1579,30 @@ impl Interpreter {
                             .map_err(|e| RuntimeError { msg: e })?;
                         return Ok(Value::Number(n));
                     }
+
+                    // `to_bool` builtin: to_bool(text) -> Bool
+                    if name == "to_bool" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("to_bool() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let val = self.eval_expr(&args[0])?;
+                        let text = match val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "to_bool() expects Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let b = crate::value::parse_bool_from_text(&text)
+                            .map_err(|e| RuntimeError { msg: e })?;
+                        return Ok(Value::Bool(b));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
