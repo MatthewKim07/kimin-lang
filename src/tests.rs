@@ -17981,6 +17981,8 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Round
             | crate::bytecode::Instruction::Min
             | crate::bytecode::Instruction::Max
+            | crate::bytecode::Instruction::Sqrt
+            | crate::bytecode::Instruction::Pow
             | crate::bytecode::Instruction::Unsupported(_) => {}
         }
     }
@@ -45672,4 +45674,1171 @@ fn numeric_builtin_mut_self_number_field() {
     )
     .unwrap();
     assert_eq!(out, vec!["-3", "3"]);
+}
+
+// ============================================================
+// Milestone 18B: sqrt(n) and pow(base, exp) builtins
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_sqrt_number_ok() {
+    assert!(check("let n = sqrt(9)").is_ok());
+}
+
+#[test]
+fn type_pow_numbers_ok() {
+    assert!(check("let n = pow(2, 10)").is_ok());
+}
+
+#[test]
+fn type_sqrt_result_is_number() {
+    assert!(check("let n: Number = sqrt(9)").is_ok());
+}
+
+#[test]
+fn type_pow_result_is_number() {
+    assert!(check("let n: Number = pow(2, 10)").is_ok());
+}
+
+#[test]
+fn type_sqrt_used_in_arithmetic() {
+    assert!(check("let n = sqrt(9) + 1").is_ok());
+}
+
+#[test]
+fn type_pow_used_in_arithmetic() {
+    assert!(check("let n = pow(2, 3) + abs(-1)").is_ok());
+}
+
+#[test]
+fn type_sqrt_used_as_array_index() {
+    assert!(check("let arr = [1, 2, 3, 4]\nlet v = arr[sqrt(4)]").is_ok());
+}
+
+#[test]
+fn type_pow_used_in_range_bound() {
+    assert!(check(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, pow(2, 3)) {
+            total += 1
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_sqrt_assign_to_number_ok() {
+    assert!(check("let mut n: Number = 0\nn = sqrt(4)").is_ok());
+}
+
+#[test]
+fn type_pow_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { n: Number }
+        let s = S { n: pow(2, 3) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_pow_array_value_ok() {
+    assert!(check("let arr: Array<Number> = [pow(2, 0), pow(2, 1), pow(2, 2)]").is_ok());
+}
+
+#[test]
+fn type_pow_map_value_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"a\": pow(2, 10)}").is_ok());
+}
+
+#[test]
+fn type_sqrt_wrong_arity_zero_error() {
+    let err = check("let n = sqrt()").unwrap_err().to_string();
+    assert!(
+        err.contains("sqrt") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_sqrt_wrong_arity_two_error() {
+    let err = check("let n = sqrt(4, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("sqrt") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_pow_wrong_arity_one_error() {
+    let err = check("let n = pow(2)").unwrap_err().to_string();
+    assert!(
+        err.contains("pow") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_pow_wrong_arity_three_error() {
+    let err = check("let n = pow(2, 3, 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("pow") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_sqrt_text_arg_error() {
+    let err = check("let n = sqrt(\"9\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_sqrt_bool_arg_error() {
+    let err = check("let n = sqrt(true)").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_sqrt_array_arg_error() {
+    let err = check("let n = sqrt([9])").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_sqrt_map_arg_error() {
+    let err = check("let n = sqrt({\"a\": 9})").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_sqrt_struct_arg_error() {
+    let err = check(
+        r#"
+        struct S { n: Number }
+        let s = S { n: 9 }
+        let x = sqrt(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_sqrt_unit_arg_error() {
+    let err = check("let d: meters = 5\nlet n = sqrt(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "sqrt(unit) should fail: {}", err);
+}
+
+#[test]
+fn type_pow_second_arg_wrong_type_error() {
+    let err = check("let n = pow(2, \"3\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn type_numeric_builtins_still_ok_after_sqrt_pow() {
+    assert!(
+        check("let n = abs(-5) + floor(3.7) + ceil(1.1) + round(2.5) + min(1, 2) + max(3, 4)")
+            .is_ok()
+    );
+}
+
+#[test]
+fn type_conversion_builtins_still_ok_after_sqrt_pow() {
+    assert!(check(
+        r#"
+        let s = to_string(42)
+        let n = to_number("42")
+        let b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_sqrt_perfect_square() {
+    let out = vm_run("print(sqrt(9))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_sqrt_two() {
+    let out = vm_run("print(sqrt(2))").unwrap();
+    assert_eq!(out, vec!["1.4142135623730951"]);
+}
+
+#[test]
+fn interp_sqrt_zero() {
+    let out = vm_run("print(sqrt(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_sqrt_negative_error() {
+    assert!(vm_run("sqrt(-1)").is_err());
+}
+
+#[test]
+fn interp_pow_integer_exponent() {
+    let out = vm_run("print(pow(2, 10))").unwrap();
+    assert_eq!(out, vec!["1024"]);
+}
+
+#[test]
+fn interp_pow_fractional_exponent() {
+    let out = vm_run("print(pow(2, 0.5))").unwrap();
+    assert_eq!(out, vec!["1.4142135623730951"]);
+}
+
+#[test]
+fn interp_pow_zero_exponent() {
+    let out = vm_run("print(pow(5, 0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_pow_negative_exponent() {
+    let out = vm_run("print(pow(2, -1))").unwrap();
+    assert_eq!(out, vec!["0.5"]);
+}
+
+#[test]
+fn interp_pow_zero_base() {
+    let out = vm_run("print(pow(0, 2))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_pow_negative_base_integer_exp() {
+    let out = vm_run("print(pow(-2, 3))").unwrap();
+    assert_eq!(out, vec!["-8"]);
+}
+
+#[test]
+fn interp_pow_negative_base_fractional_exp_error() {
+    // pow(-1, 0.5) → NaN → RuntimeError
+    assert!(vm_run("pow(-1, 0.5)").is_err());
+}
+
+#[test]
+fn interp_pow_infinite_result_error() {
+    // pow(10, 1000) → inf → RuntimeError
+    assert!(vm_run("pow(10, 1000)").is_err());
+}
+
+#[test]
+fn interp_sqrt_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_num() -> Number { calls += 1 return 9 }
+        let n = sqrt(get_num())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "1"]);
+}
+
+#[test]
+fn interp_pow_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        let mut order = 0
+        fn base_fn() -> Number { order += 1 return 2 }
+        fn exp_fn() -> Number { order += 1 return 3 }
+        let n = pow(base_fn(), exp_fn())
+        print(n)
+        print(order)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["8", "2"]);
+}
+
+#[test]
+fn interp_pow_args_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_two() -> Number { calls += 1 return 2 }
+        let n = pow(get_two(), get_two())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4", "2"]);
+}
+
+#[test]
+fn interp_sqrt_result_arithmetic() {
+    let out = vm_run("print(sqrt(4) + sqrt(9))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_pow_result_arithmetic() {
+    let out = vm_run("print(pow(2, 3) + pow(2, 2))").unwrap();
+    assert_eq!(out, vec!["12"]);
+}
+
+#[test]
+fn interp_sqrt_inside_function() {
+    let interp = run(r#"
+        fn hyp(a: Number, b: Number) -> Number {
+            return sqrt(pow(a, 2) + pow(b, 2))
+        }
+        let n = hyp(3, 4)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn interp_pow_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        impl Point {
+          fn distance(self) -> Number {
+            return sqrt(pow(self.x, 2) + pow(self.y, 2))
+          }
+        }
+        let p = Point { x: 3, y: 4 }
+        print(p.distance())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_sqrt_inside_closure() {
+    let out = vm_run(
+        r#"
+        let scale: Number = 4
+        fn apply(n: Number) -> Number {
+            return sqrt(n * scale)
+        }
+        print(apply(1))
+        print(apply(9))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "6"]);
+}
+
+#[test]
+fn interp_pow_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 2
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            x = pow(x, 2)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["256"]);
+}
+
+// --- pow edge behavior ---
+
+#[test]
+fn pow_positive_integer_exp() {
+    let out = vm_run("print(pow(2, 10))").unwrap();
+    assert_eq!(out, vec!["1024"]);
+}
+
+#[test]
+fn pow_fractional_exp() {
+    let out = vm_run("print(pow(2, 0.5))").unwrap();
+    assert_eq!(out, vec!["1.4142135623730951"]);
+}
+
+#[test]
+fn pow_square_root_equivalent() {
+    let out = vm_run("print(pow(4, 0.5))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn pow_zero_exp() {
+    let out = vm_run("print(pow(5, 0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn pow_zero_zero_behavior_documented() {
+    // Rust f64: 0.0f64.powf(0.0) = 1.0 — this is the documented behavior.
+    let out = vm_run("print(pow(0, 0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn pow_negative_exp() {
+    let out = vm_run("print(pow(2, -1))").unwrap();
+    assert_eq!(out, vec!["0.5"]);
+}
+
+#[test]
+fn pow_negative_base_odd_integer_exp() {
+    let out = vm_run("print(pow(-2, 3))").unwrap();
+    assert_eq!(out, vec!["-8"]);
+}
+
+#[test]
+fn pow_negative_base_even_integer_exp() {
+    let out = vm_run("print(pow(-2, 2))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn pow_negative_base_fractional_exp_error() {
+    assert!(vm_run("pow(-1, 0.5)").is_err());
+}
+
+#[test]
+fn pow_infinite_result_error() {
+    assert!(vm_run("pow(10, 1000)").is_err());
+}
+
+// --- sqrt edge behavior ---
+
+#[test]
+fn sqrt_perfect_square() {
+    let out = vm_run("print(sqrt(9))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn sqrt_non_square() {
+    let out = vm_run("print(sqrt(2))").unwrap();
+    assert_eq!(out, vec!["1.4142135623730951"]);
+}
+
+#[test]
+fn sqrt_zero() {
+    let out = vm_run("print(sqrt(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn sqrt_negative_error() {
+    assert!(vm_run("sqrt(-1)").is_err());
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_sqrt_emits_instruction() {
+    let prog = compile_prog("let n = sqrt(9)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+#[test]
+fn bytecode_pow_emits_instruction() {
+    let prog = compile_prog("let n = pow(2, 10)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pow)));
+}
+
+#[test]
+fn bytecode_sqrt_pow_no_call_instruction() {
+    let prog = compile_prog("let a = sqrt(9)\nlet b = pow(2, 3)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pow)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. })));
+}
+
+#[test]
+fn bytecode_sqrt_compiles_arg_once() {
+    let prog = compile_prog("print(sqrt(9))");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Sqrt))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_pow_compiles_args_left_to_right() {
+    // base compiled before exp, then Pow emitted.
+    let prog = compile_prog("let n = pow(2, 3)");
+    let pow_pos = prog
+        .main
+        .instructions
+        .iter()
+        .position(|i| matches!(i, Instruction::Pow))
+        .unwrap();
+    assert!(pow_pos >= 2, "POW should appear after both args");
+}
+
+#[test]
+fn bytecode_sqrt_inside_function() {
+    let prog = compile_prog("fn f(x: Number) -> Number { return sqrt(x) }");
+    let has = prog.functions.iter().any(|f| {
+        f.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Sqrt))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_pow_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Point { x: Number, y: Number }
+        impl Point { fn squared_dist(self) -> Number { return pow(self.x, 2) + pow(self.y, 2) } }
+    "#,
+    );
+    let has = prog.methods.iter().any(|mc| {
+        mc.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Pow))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_sqrt_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let dur: seconds = 1
+        let dt: seconds = 1
+        let mut x: Number = 9
+        simulate dur step dt { x = sqrt(x) }
+    "#,
+    );
+    let has = prog.simulate_bodies.iter().any(|sb| {
+        sb.chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Sqrt))
+    });
+    assert!(has);
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_sqrt_pow() {
+    let prog = compile_prog("let n = abs(-5)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_sqrt_pow() {
+    let prog = compile_prog("let s = to_string(42)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+#[test]
+fn disassemble_sqrt_pow_stable() {
+    let prog = compile_prog("print(sqrt(9))\nprint(pow(2, 3))");
+    let out = crate::disassemble::disassemble(&prog);
+    assert!(out.contains("SQRT"), "disassembly: {}", out);
+    assert!(out.contains("POW"), "disassembly: {}", out);
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_sqrt_perfect_square() {
+    let out = vm_run("print(sqrt(9))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_sqrt_two() {
+    let out = vm_run("print(sqrt(2))").unwrap();
+    assert_eq!(out, vec!["1.4142135623730951"]);
+}
+
+#[test]
+fn vm_sqrt_zero() {
+    let out = vm_run("print(sqrt(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_sqrt_negative_error() {
+    assert!(vm_run("sqrt(-1)").is_err());
+}
+
+#[test]
+fn vm_pow_integer_exponent() {
+    let out = vm_run("print(pow(2, 10))").unwrap();
+    assert_eq!(out, vec!["1024"]);
+}
+
+#[test]
+fn vm_pow_fractional_exponent() {
+    let out = vm_run("print(pow(2, 0.5))").unwrap();
+    assert_eq!(out, vec!["1.4142135623730951"]);
+}
+
+#[test]
+fn vm_pow_zero_exponent() {
+    let out = vm_run("print(pow(5, 0))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_pow_negative_exponent() {
+    let out = vm_run("print(pow(2, -1))").unwrap();
+    assert_eq!(out, vec!["0.5"]);
+}
+
+#[test]
+fn vm_pow_negative_base_fractional_exp_error() {
+    assert!(vm_run("pow(-1, 0.5)").is_err());
+}
+
+#[test]
+fn vm_pow_infinite_result_error() {
+    assert!(vm_run("pow(10, 1000)").is_err());
+}
+
+#[test]
+fn vm_sqrt_stack_clean() {
+    let out = vm_run("sqrt(9)\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_pow_stack_clean() {
+    let out = vm_run("pow(2, 3)\nprint(99)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+#[test]
+fn vm_matches_tree_sqrt_pow_basic() {
+    let src = r#"
+        print(sqrt(9))
+        print(pow(2, 10))
+        print(pow(-2, 3))
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3", "1024", "-8"]);
+    let _ = tree;
+}
+
+#[test]
+fn vm_matches_tree_sqrt_pow_errors() {
+    let src = "sqrt(-1)";
+    assert!(run(src).is_err());
+    assert!(vm_run(src).is_err());
+}
+
+#[test]
+fn vm_matches_tree_sqrt_pow_functions_methods_simulate() {
+    let src = r#"
+        fn hyp(a: Number, b: Number) -> Number {
+            return sqrt(pow(a, 2) + pow(b, 2))
+        }
+        print(hyp(3, 4))
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["5"]);
+}
+
+#[test]
+fn vm_runtime_wrong_type_error_if_unchecked_possible() {
+    // Typechecker catches wrong types; confirming it does reject them.
+    let err = check("let n = sqrt(\"9\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "typechecker should reject: {}", err);
+}
+
+// --- Interaction with existing builtins ---
+
+#[test]
+fn sqrt_result_with_round() {
+    let out = vm_run("print(round(sqrt(2)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn pow_result_with_abs() {
+    let out = vm_run("print(abs(pow(-2, 3)))").unwrap();
+    assert_eq!(out, vec!["8"]);
+}
+
+#[test]
+fn sqrt_pow_with_min_max() {
+    let out = vm_run("print(max(sqrt(9), pow(2, 2)))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn floor_ceil_round_abs_still_ok_after_sqrt_pow() {
+    let out = vm_run(
+        r#"
+        print(floor(3.7))
+        print(ceil(3.2))
+        print(abs(-5))
+        print(round(3.5))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "4", "5", "4"]);
+}
+
+#[test]
+fn min_max_still_ok_after_sqrt_pow() {
+    let out = vm_run("print(min(3, 7))\nprint(max(3, 7))").unwrap();
+    assert_eq!(out, vec!["3", "7"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn sqrt_with_to_number_input() {
+    let out = vm_run("print(sqrt(to_number(\"9\")))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn pow_with_to_number_input() {
+    let out = vm_run("let n = to_number(\"2\")\nprint(pow(n, 3))").unwrap();
+    assert_eq!(out, vec!["8"]);
+}
+
+#[test]
+fn to_string_sqrt_result() {
+    let out = vm_run("let s = to_string(sqrt(9))\nprint(s)").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn to_string_pow_result() {
+    let out = vm_run("let s = to_string(pow(2, 3))\nprint(s)").unwrap();
+    assert_eq!(out, vec!["8"]);
+}
+
+#[test]
+fn to_bool_to_number_to_string_regression_after_sqrt_pow() {
+    let out = vm_run(
+        r#"
+        print(to_bool("true"))
+        print(to_number("42"))
+        print(to_string(99))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "42", "99"]);
+}
+
+// --- Arrays/maps/structs ---
+
+#[test]
+fn sqrt_pow_array_value() {
+    let out = vm_run(
+        r#"
+        let nums = [9, 16]
+        print(sqrt(nums[0]))
+        print(pow(nums[1], 0.5))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "4"]);
+}
+
+#[test]
+fn sqrt_pow_map_value() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Number> = {"a": 9, "b": 2}
+        print(sqrt(m["a"]))
+        print(pow(m["b"], 3))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "8"]);
+}
+
+#[test]
+fn sqrt_pow_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        let p = Point { x: 3, y: 4 }
+        print(sqrt(pow(p.x, 2) + pow(p.y, 2)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn sqrt_pow_method_returns_number() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        impl Point {
+          fn distance(self) -> Number {
+            return sqrt(pow(self.x, 2) + pow(self.y, 2))
+          }
+        }
+        let p = Point { x: 3, y: 4 }
+        print(p.distance())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn sqrt_pow_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number }
+        let mut arr: Array<Point> = [Point { x: 4 }]
+        arr[0].x = 9
+        print(sqrt(arr[0].x))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_sqrt_pow() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(sqrt(arr[0].value))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loops and simulate ---
+
+#[test]
+fn sqrt_pow_inside_while() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 4, 9]
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += sqrt(nums[i])
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn sqrt_pow_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, pow(2, 3)) {
+            total += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["8"]);
+}
+
+#[test]
+fn sqrt_pow_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 4, 9]
+        let mut total: Number = 0
+        for n in nums {
+            total += sqrt(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn sqrt_pow_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 4, 9]
+        let mut total: Number = 0
+        for i, n in nums {
+            total += sqrt(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn sqrt_pow_inside_function() {
+    let interp = run(r#"
+        fn hyp(a: Number, b: Number) -> Number {
+            return sqrt(pow(a, 2) + pow(b, 2))
+        }
+        let n = hyp(3, 4)
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(5.0)));
+}
+
+#[test]
+fn sqrt_pow_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number, y: Number }
+        impl Point {
+          fn distance(self) -> Number {
+            return sqrt(pow(self.x, 2) + pow(self.y, 2))
+          }
+        }
+        let p = Point { x: 5, y: 12 }
+        print(p.distance())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn sqrt_pow_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 2
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            x = pow(x, 2)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["256"]);
+}
+
+#[test]
+fn vm_matches_tree_sqrt_pow_loops_simulate() {
+    let src = r#"
+        let nums = [1, 4, 9]
+        let mut total: Number = 0
+        for n in nums {
+            total += sqrt(n)
+        }
+        print(total)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["6"]);
+}
+
+// --- Unit and state audit ---
+
+#[test]
+fn sqrt_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 5\nlet n = sqrt(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "sqrt(unit) should fail: {}", err);
+}
+
+#[test]
+fn pow_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 5\nlet n = pow(d, 2)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "pow(unit, 2) should fail: {}", err);
+}
+
+#[test]
+fn sqrt_state_arg_error() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = sqrt(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "sqrt(state) should fail: {}", err);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_sqrt_pow() {
+    assert!(check(
+        r#"
+        let a: meters = 3
+        let b: meters = 4
+        let c = a + b
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_sqrt_pow() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+        print(sqrt(9))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open", "3"]);
+}
+
+// --- Error messages ---
+
+#[test]
+fn sqrt_wrong_arity_zero_message() {
+    let err = check("let n = sqrt()").unwrap_err().to_string();
+    assert!(
+        err.contains("sqrt") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn sqrt_wrong_arity_two_message() {
+    let err = check("let n = sqrt(4, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("sqrt") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn pow_wrong_arity_one_message() {
+    let err = check("let n = pow(2)").unwrap_err().to_string();
+    assert!(
+        err.contains("pow") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn pow_wrong_arity_three_message() {
+    let err = check("let n = pow(2, 3, 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("pow") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn sqrt_wrong_type_message() {
+    let err = check("let n = sqrt(\"9\")").unwrap_err().to_string();
+    assert!(
+        err.contains("sqrt") || err.contains("Number") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn pow_second_arg_wrong_type_message() {
+    let err = check("let n = pow(2, \"3\")").unwrap_err().to_string();
+    assert!(!err.is_empty(), "got: {}", err);
+}
+
+#[test]
+fn sqrt_negative_runtime_message() {
+    let err = vm_run("sqrt(-1)").unwrap_err().to_string();
+    assert!(
+        err.contains("negative") || err.contains("sqrt"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn pow_non_finite_runtime_message() {
+    let err = vm_run("pow(10, 1000)").unwrap_err().to_string();
+    assert!(
+        err.contains("finite") || err.contains("pow"),
+        "got: {}",
+        err
+    );
 }

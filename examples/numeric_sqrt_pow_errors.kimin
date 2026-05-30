@@ -1,0 +1,13 @@
+// Keep runnable by default.
+
+print(sqrt(9))
+print(pow(2, 3))
+
+// Uncomment to test negative sqrt:
+// print(sqrt(-1))
+
+// Uncomment to test non-finite pow:
+// print(pow(10, 1000))
+
+// Uncomment to test wrong type:
+// print(sqrt("bad"))

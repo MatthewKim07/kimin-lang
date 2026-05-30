@@ -1,0 +1,4 @@
+print(sqrt(9))
+print(sqrt(2))
+print(pow(2, 10))
+print(pow(2, 0.5))

@@ -1,0 +1,14 @@
+struct Point {
+  x: Number
+  y: Number
+}
+
+impl Point {
+  fn distance(self) -> Number {
+    return sqrt(pow(self.x, 2) + pow(self.y, 2))
+  }
+}
+
+let p = Point { x: 3, y: 4 }
+
+print(p.distance())
