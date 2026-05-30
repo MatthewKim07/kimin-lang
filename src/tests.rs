@@ -43027,3 +43027,126 @@ fn parse_number_helper_dot_decimal_documented() {
     assert!(r2.is_ok(), "'5.' accepted by Rust f64 parse");
     assert_eq!(r2.unwrap(), 5.0);
 }
+
+// --- Interpreter additions ---
+
+#[test]
+fn interp_to_number_unit_string_error() {
+    let result = vm_run(r#"to_number("5 meters")"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn interp_to_number_inside_function() {
+    let interp = run(r#"
+        fn parse(s: Text) -> Number { return to_number(s) }
+        let n = parse("42")
+    "#)
+    .unwrap();
+    assert_eq!(interp.get_var("n"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn interp_to_number_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Input { value: Text }
+        impl Input { fn number(self) -> Number { return to_number(self.value) } }
+        let i = Input { value: "42" }
+        print(i.number())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_to_number_inside_closure() {
+    let out = vm_run(
+        r#"
+        let multiplier: Text = "3"
+        fn apply(n: Number) -> Number {
+            return n * to_number(multiplier)
+        }
+        print(apply(10))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn interp_to_number_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let amount: Text = "2"
+        let mut total: Number = 0
+        let dur: seconds = 3
+        let dt: seconds = 1
+        simulate dur step dt {
+            total += to_number(amount)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- Bytecode additions ---
+
+#[test]
+fn bytecode_to_string_unchanged_after_to_number() {
+    let prog = compile_prog("let s = to_string(42)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToNumber)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_to_number() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+        let c = Counter { value: 5 }
+        let v = c.get()
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. })));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_to_number() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        let mut arr: Array<Counter> = [Counter { value: 1 }]
+        arr[0].value = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+}
+
+// --- VM additions ---
+
+#[test]
+fn vm_to_number_whitespace_trimmed() {
+    let out = vm_run(r#"print(to_number("  42  "))"#).unwrap();
+    assert_eq!(out, vec!["42"]);
+}
