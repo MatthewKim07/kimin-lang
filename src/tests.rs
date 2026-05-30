@@ -41915,3 +41915,183 @@ fn vm_matches_tree_to_string_methods() {
     assert_eq!(vm_out, vec!["Counter { value: 5 }", "Counter { value: 6 }"]);
     let _ = tree;
 }
+
+// --- Struct/method regression ---
+
+#[test]
+fn methods_still_work_after_to_string() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+        let c = Counter { value: 5 }
+        let s = to_string(c)
+        print(s)
+        print(c.get())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 5 }", "5"]);
+}
+
+#[test]
+fn mut_self_still_works_after_to_string() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let c = Counter { value: 0 }
+        let s = to_string(c)
+        let c2 = c.inc()
+        print(s)
+        print(c.value)
+        print(c2.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Counter { value: 0 }", "0", "1"]);
+}
+
+// --- Collections additions ---
+
+#[test]
+fn to_string_map_text_values_sorted() {
+    let out = vm_run(r#"print(to_string({"z": "last", "a": "first"}))"#).unwrap();
+    assert_eq!(out, vec!["{a: first, z: last}"]);
+}
+
+#[test]
+fn to_string_keys_values_remove_regression() {
+    // keys(), values(), remove() unaffected by to_string addition.
+    let out = vm_run(
+        r#"
+        let mut m: Map<Text, Number> = {"b": 2, "a": 1}
+        let k = keys(m)
+        let v = values(m)
+        print(to_string(k))
+        print(to_string(v))
+    "#,
+    )
+    .unwrap();
+    // keys sorted alphabetically: ["a", "b"]
+    assert_eq!(out, vec!["[a, b]", "[1, 2]"]);
+}
+
+// --- Loops additions ---
+
+#[test]
+fn to_string_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        for i, n in [10, 20] {
+            print(to_string(i) + ":" + to_string(n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0:10", "1:20"]);
+}
+
+#[test]
+fn to_string_build_text_array_in_loop() {
+    // Build Array<Text> from numbers using to_string in a for loop.
+    let out = vm_run(
+        r#"
+        let mut parts: Array<Text> = []
+        for n in [1, 2, 3] {
+            push(parts, to_string(n))
+        }
+        print(join(parts, "-"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1-2-3"]);
+}
+
+// --- Units and states additions ---
+
+#[test]
+fn to_string_unit_value() {
+    let out = vm_run(
+        r#"
+        let d: meters = 5
+        print(to_string(d))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn to_string_unit_after_arithmetic() {
+    let out = vm_run(
+        r#"
+        let a: meters = 3
+        let b: meters = 4
+        let c = a + b
+        print(to_string(c))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+#[test]
+fn to_string_state_value_if_supported() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        print(to_string(d))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn to_string_state_inside_simulate_if_supported() {
+    // Using to_string inside simulate with a state field.
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        struct Box { door: Door }
+        let b = Box { door: Door.closed }
+        let dur: seconds = 1
+        let dt: seconds = 1
+        simulate dur step dt {
+            print(to_string(b.door))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.closed"]);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_to_string() {
+    assert!(check(
+        r#"
+        let a: meters = 3
+        let b: meters = 4
+        let c = a + b
+        let s = to_string(c)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_to_string() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(to_string(d))
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open", "Door.open"]);
+}
