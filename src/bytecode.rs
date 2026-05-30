@@ -151,6 +151,14 @@ pub enum Instruction {
     ToBool,
 
     // --- Numeric utility builtins ---
+    /// Natural logarithm. Stack: [..., n] → ln(n). RuntimeError for n ≤ 0 or non-finite.
+    Ln,
+    /// Base-2 logarithm. Stack: [..., n] → log2(n). RuntimeError for n ≤ 0 or non-finite.
+    Log2,
+    /// Base-10 logarithm. Stack: [..., n] → log10(n). RuntimeError for n ≤ 0 or non-finite.
+    Log10,
+    /// Exponential e^n. Stack: [..., n] → exp(n). RuntimeError for non-finite result.
+    Exp,
     /// Square root. Stack: [..., n] → sqrt(n). RuntimeError for negative n.
     Sqrt,
     /// Power. Stack: [..., base, exp] → base^exp. RuntimeError for non-finite result.

@@ -1047,6 +1047,99 @@ impl Vm {
                     stack.push(Value::Bool(b));
                 }
 
+                Instruction::Ln => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "ln() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if n <= 0.0 {
+                        return Err(runtime_err(&format!(
+                            "ln requires positive Number, got {}",
+                            n
+                        )));
+                    }
+                    let r = n.ln();
+                    if !r.is_finite() {
+                        return Err(runtime_err("ln result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Log2 => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "log2() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if n <= 0.0 {
+                        return Err(runtime_err(&format!(
+                            "log2 requires positive Number, got {}",
+                            n
+                        )));
+                    }
+                    let r = n.log2();
+                    if !r.is_finite() {
+                        return Err(runtime_err("log2 result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Log10 => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "log10() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if n <= 0.0 {
+                        return Err(runtime_err(&format!(
+                            "log10 requires positive Number, got {}",
+                            n
+                        )));
+                    }
+                    let r = n.log10();
+                    if !r.is_finite() {
+                        return Err(runtime_err("log10 result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Exp => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "exp() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let r = n.exp();
+                    if !r.is_finite() {
+                        return Err(runtime_err(&format!(
+                            "exp result is not finite (exp({}))",
+                            n
+                        )));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
                 Instruction::Sqrt => {
                     let val = pop(stack)?;
                     let n = match val {

@@ -1081,6 +1081,27 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::ToBool);
                         return Ok(());
                     }
+                    // ln / log2 / log10 / exp: compile arg, emit instruction
+                    if name == "ln" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Ln);
+                        return Ok(());
+                    }
+                    if name == "log2" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Log2);
+                        return Ok(());
+                    }
+                    if name == "log10" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Log10);
+                        return Ok(());
+                    }
+                    if name == "exp" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Exp);
+                        return Ok(());
+                    }
                     // sqrt: compile arg, emit Sqrt
                     if name == "sqrt" && args.len() == 1 {
                         self.compile_expr(&args[0])?;
