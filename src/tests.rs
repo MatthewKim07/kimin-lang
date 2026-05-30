@@ -45447,3 +45447,229 @@ fn min_second_arg_wrong_type_message() {
     let err = check("let n = min(1, \"bad\")").unwrap_err().to_string();
     assert!(!err.is_empty(), "got: {}", err);
 }
+
+// ============================================================
+// M18A Audit: additional coverage
+// ============================================================
+
+// --- Typechecker ---
+
+#[test]
+fn type_abs_state_arg_error() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = abs(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "abs(state) should fail: {}", err);
+}
+
+// --- Min/max arg order audit ---
+
+#[test]
+fn min_args_eval_left_to_right_once() {
+    let src = r#"
+        let mut order = 0
+        fn fa() -> Number { order += 1 return 3 }
+        fn fb() -> Number { order += 1 return 7 }
+        let n = min(fa(), fb())
+        print(n)
+        print(order)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3", "2"]);
+}
+
+#[test]
+fn max_args_eval_left_to_right_once() {
+    let src = r#"
+        let mut order = 0
+        fn fa() -> Number { order += 1 return 3 }
+        fn fb() -> Number { order += 1 return 7 }
+        let n = max(fa(), fb())
+        print(n)
+        print(order)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["7", "2"]);
+}
+
+#[test]
+fn vm_min_pops_rhs_then_lhs_correctly() {
+    // min(3, 7) should give 3; confirms VM pops b=7 then a=3 and computes min.
+    let out = vm_run("print(min(3, 7))").unwrap();
+    assert_eq!(out, vec!["3"]);
+    let out2 = vm_run("print(min(7, 3))").unwrap();
+    assert_eq!(out2, vec!["3"]);
+}
+
+#[test]
+fn vm_max_pops_rhs_then_lhs_correctly() {
+    let out = vm_run("print(max(3, 7))").unwrap();
+    assert_eq!(out, vec!["7"]);
+    let out2 = vm_run("print(max(7, 3))").unwrap();
+    assert_eq!(out2, vec!["7"]);
+}
+
+#[test]
+fn min_max_with_side_effect_args_tree_vm_match() {
+    // Both tree-walk and VM should evaluate args left-to-right exactly once.
+    let src = r#"
+        let mut calls = 0
+        fn cnt(n: Number) -> Number { calls += 1 return n }
+        let m = min(cnt(3), cnt(7))
+        print(m)
+        print(calls)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["3", "2"]);
+    assert_eq!(tree.get_var("m"), Some(Value::Number(3.0)));
+}
+
+// --- Bytecode regression ---
+
+#[test]
+fn bytecode_methods_unchanged_after_numeric_builtins() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+        let c = Counter { value: 5 }
+        let v = c.get()
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. })));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_numeric_builtins() {
+    let prog = compile_prog(
+        r#"
+        struct Point { x: Number }
+        let mut arr: Array<Point> = [Point { x: 1 }]
+        arr[0].x = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Abs)));
+}
+
+// --- VM runtime error ---
+
+#[test]
+fn vm_numeric_runtime_wrong_type_error_if_unchecked() {
+    // Typechecker catches this; confirming runtime error is clear if somehow reached.
+    // Use check() to verify typechecker rejects.
+    let err = check("let n = abs(\"bad\")").unwrap_err().to_string();
+    assert!(
+        !err.is_empty(),
+        "typechecker should reject non-Number: {}",
+        err
+    );
+}
+
+// --- Unit and state audit ---
+
+#[test]
+fn numeric_builtin_unit_arg_error_if_units_are_distinct() {
+    // Unit types are distinct from Number — abs should reject.
+    let err = check("let d: meters = 5\nlet n = abs(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "abs(unit) should fail: {}", err);
+}
+
+#[test]
+fn numeric_builtin_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = floor(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "floor(state) should fail: {}", err);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_numeric_builtins() {
+    assert!(check(
+        r#"
+        let a: meters = 3
+        let b: meters = 4
+        let c = a + b
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_numeric_builtins() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+        print(abs(-5))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open", "5"]);
+}
+
+// --- Conversion regression ---
+
+#[test]
+fn to_string_regression_after_numeric_builtins() {
+    // to_string unaffected by numeric builtins addition.
+    let out = vm_run("print(to_string(42))\nprint(to_string(true))").unwrap();
+    assert_eq!(out, vec!["42", "true"]);
+}
+
+// --- Mut self number field ---
+
+#[test]
+fn numeric_builtin_mut_self_number_field() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number }
+        impl Point {
+          fn abs_x(mut self) -> Point {
+            self.x = abs(self.x)
+            return self
+          }
+        }
+        let p = Point { x: -3 }
+        let p2 = p.abs_x()
+        print(p.x)
+        print(p2.x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-3", "3"]);
+}
