@@ -42829,3 +42829,201 @@ fn to_number_non_finite_message() {
     let err = vm_run(r#"to_number("NaN")"#).unwrap_err().to_string();
     assert!(err.contains("NaN"), "got: {}", err);
 }
+
+// ============================================================
+// M17B Audit: additional coverage
+// ============================================================
+
+// --- Typechecker additions ---
+
+#[test]
+fn type_to_number_used_in_range_bound() {
+    assert!(check(
+        r#"
+        let s: Text = "5"
+        let mut total: Number = 0
+        for i in range(0, to_number(s)) {
+            total += 1
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { n: Number }
+        let t: Text = "42"
+        let s = S { n: to_number(t) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_array_value_ok() {
+    assert!(check(
+        r#"
+        let t: Text = "5"
+        let arr: Array<Number> = [to_number(t)]
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_map_value_ok() {
+    assert!(check(
+        r#"
+        let t: Text = "10"
+        let m: Map<Text, Number> = {"a": to_number(t)}
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_to_number_unit_arg_error() {
+    // Unit values are runtime Numbers; statically they have a unit type — to_number should reject.
+    let err = check(
+        r#"
+        let d: meters = 5
+        let n = to_number(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        !err.is_empty(),
+        "to_number on unit type should fail: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_number_state_arg_error() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = to_number(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "to_number on state should fail: {}", err);
+}
+
+#[test]
+fn type_to_string_still_ok_after_to_number() {
+    assert!(check(
+        r#"
+        let n = to_number("42")
+        let s = to_string(n)
+    "#
+    )
+    .is_ok());
+}
+
+// --- Shared parse helper tests ---
+
+#[test]
+fn parse_number_helper_integer() {
+    assert_eq!(crate::value::parse_number_from_text("42").unwrap(), 42.0);
+}
+
+#[test]
+fn parse_number_helper_negative_integer() {
+    assert_eq!(crate::value::parse_number_from_text("-42").unwrap(), -42.0);
+}
+
+#[test]
+fn parse_number_helper_decimal() {
+    let n = crate::value::parse_number_from_text("3.14").unwrap();
+    assert!((n - 3.14).abs() < 1e-10);
+}
+
+#[test]
+fn parse_number_helper_negative_decimal() {
+    let n = crate::value::parse_number_from_text("-3.14").unwrap();
+    assert!((n + 3.14).abs() < 1e-10);
+}
+
+#[test]
+fn parse_number_helper_whitespace_trim() {
+    assert_eq!(
+        crate::value::parse_number_from_text("  42  ").unwrap(),
+        42.0
+    );
+    assert_eq!(crate::value::parse_number_from_text("\t5\n").unwrap(), 5.0);
+}
+
+#[test]
+fn parse_number_helper_empty_error() {
+    assert!(crate::value::parse_number_from_text("").is_err());
+    assert!(crate::value::parse_number_from_text("   ").is_err());
+}
+
+#[test]
+fn parse_number_helper_invalid_error() {
+    assert!(crate::value::parse_number_from_text("abc").is_err());
+    assert!(crate::value::parse_number_from_text("hello").is_err());
+}
+
+#[test]
+fn parse_number_helper_suffix_error() {
+    assert!(crate::value::parse_number_from_text("42abc").is_err());
+    assert!(crate::value::parse_number_from_text("5m").is_err());
+}
+
+#[test]
+fn parse_number_helper_prefix_error() {
+    assert!(crate::value::parse_number_from_text("abc42").is_err());
+}
+
+#[test]
+fn parse_number_helper_comma_error() {
+    assert!(crate::value::parse_number_from_text("1,000").is_err());
+    assert!(crate::value::parse_number_from_text("1,000.00").is_err());
+}
+
+#[test]
+fn parse_number_helper_unit_string_error() {
+    // Unit strings like "5m" or "5 meters" should fail.
+    assert!(crate::value::parse_number_from_text("5m").is_err());
+    assert!(crate::value::parse_number_from_text("5 meters").is_err());
+}
+
+#[test]
+fn parse_number_helper_nan_error() {
+    assert!(crate::value::parse_number_from_text("NaN").is_err());
+}
+
+#[test]
+fn parse_number_helper_inf_error() {
+    assert!(crate::value::parse_number_from_text("inf").is_err());
+    assert!(crate::value::parse_number_from_text("Infinity").is_err());
+    assert!(crate::value::parse_number_from_text("-inf").is_err());
+    assert!(crate::value::parse_number_from_text("-Infinity").is_err());
+}
+
+#[test]
+fn parse_number_helper_plus_sign_documented() {
+    // Rust f64 parse accepts "+5" as 5.0. This is accepted by to_number.
+    let result = crate::value::parse_number_from_text("+5");
+    assert!(result.is_ok(), "'+5' accepted by Rust f64 parse");
+    assert_eq!(result.unwrap(), 5.0);
+}
+
+#[test]
+fn parse_number_helper_dot_decimal_documented() {
+    // ".5" and "5." are accepted by Rust f64 parse.
+    let r1 = crate::value::parse_number_from_text(".5");
+    let r2 = crate::value::parse_number_from_text("5.");
+    assert!(r1.is_ok(), "'.5' accepted by Rust f64 parse");
+    assert!((r1.unwrap() - 0.5).abs() < 1e-10);
+    assert!(r2.is_ok(), "'5.' accepted by Rust f64 parse");
+    assert_eq!(r2.unwrap(), 5.0);
+}
