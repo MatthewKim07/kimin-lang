@@ -142,6 +142,10 @@ pub enum Instruction {
     /// Uses the same deterministic formatting as `print`.
     ToString,
 
+    /// Parse a Text value into a finite Number. Stack: [..., text] → Number.
+    /// Trims whitespace, rejects empty/non-numeric/non-finite strings with RuntimeError.
+    ToNumber,
+
     /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
     /// Empty delimiter splits into individual characters.
     Split,

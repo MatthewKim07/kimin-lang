@@ -1015,6 +1015,22 @@ impl Vm {
                     stack.push(Value::Str(format!("{}", val)));
                 }
 
+                Instruction::ToNumber => {
+                    let val = pop(stack)?;
+                    let text = match val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "to_number() expects Text, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let n =
+                        crate::value::parse_number_from_text(&text).map_err(|e| runtime_err(&e))?;
+                    stack.push(Value::Number(n));
+                }
+
                 Instruction::Split => {
                     let delim_val = pop(stack)?;
                     let text_val = pop(stack)?;
