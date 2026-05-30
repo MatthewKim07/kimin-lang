@@ -151,6 +151,10 @@ pub enum Instruction {
     ToBool,
 
     // --- Numeric utility builtins ---
+    /// Square root. Stack: [..., n] → sqrt(n). RuntimeError for negative n.
+    Sqrt,
+    /// Power. Stack: [..., base, exp] → base^exp. RuntimeError for non-finite result.
+    Pow,
     /// Absolute value. Stack: [..., n] → |n|.
     Abs,
     /// Floor (round toward −∞). Stack: [..., n] → floor(n).

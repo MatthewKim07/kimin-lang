@@ -176,6 +176,8 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::ToString => "TO_STRING".to_string(),
         Instruction::ToNumber => "TO_NUMBER".to_string(),
         Instruction::ToBool => "TO_BOOL".to_string(),
+        Instruction::Sqrt => "SQRT".to_string(),
+        Instruction::Pow => "POW".to_string(),
         Instruction::Abs => "ABS".to_string(),
         Instruction::Floor => "FLOOR".to_string(),
         Instruction::Ceil => "CEIL".to_string(),

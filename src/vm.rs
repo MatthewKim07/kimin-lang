@@ -1047,6 +1047,62 @@ impl Vm {
                     stack.push(Value::Bool(b));
                 }
 
+                Instruction::Sqrt => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "sqrt() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if n < 0.0 {
+                        return Err(runtime_err(&format!(
+                            "sqrt requires non-negative Number, got {}",
+                            n
+                        )));
+                    }
+                    let result = n.sqrt();
+                    if !result.is_finite() {
+                        return Err(runtime_err("sqrt result is not finite"));
+                    }
+                    stack.push(Value::Number(result));
+                }
+
+                Instruction::Pow => {
+                    // Stack: [..., base, exp] — exp on top.
+                    let exp_val = pop(stack)?;
+                    let base_val = pop(stack)?;
+                    let base = match base_val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "pow() first argument expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let exp = match exp_val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "pow() second argument expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let result = base.powf(exp);
+                    if !result.is_finite() {
+                        return Err(runtime_err(&format!(
+                            "pow result is not finite (pow({}, {}))",
+                            base, exp
+                        )));
+                    }
+                    stack.push(Value::Number(result));
+                }
+
                 Instruction::Abs => {
                     let val = pop(stack)?;
                     let n = match val {

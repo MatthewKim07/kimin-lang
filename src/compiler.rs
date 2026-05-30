@@ -1081,6 +1081,19 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::ToBool);
                         return Ok(());
                     }
+                    // sqrt: compile arg, emit Sqrt
+                    if name == "sqrt" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Sqrt);
+                        return Ok(());
+                    }
+                    // pow: compile base then exp, emit Pow
+                    if name == "pow" && args.len() == 2 {
+                        self.compile_expr(&args[0])?;
+                        self.compile_expr(&args[1])?;
+                        self.chunk.emit(Instruction::Pow);
+                        return Ok(());
+                    }
                     // abs / floor / ceil / round: compile arg, emit instruction
                     if name == "abs" && args.len() == 1 {
                         self.compile_expr(&args[0])?;
