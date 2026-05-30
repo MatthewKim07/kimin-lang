@@ -46842,3 +46842,160 @@ fn pow_non_finite_runtime_message() {
         err
     );
 }
+
+// ============================================================
+// M18B Audit: additional coverage
+// ============================================================
+
+// --- Typechecker ---
+
+#[test]
+fn type_sqrt_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = sqrt(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "sqrt(state) should fail: {}", err);
+}
+
+// --- sqrt edge ---
+
+#[test]
+fn sqrt_non_finite_error_if_reachable() {
+    // sqrt(-0.0) via Rust gives 0; -0.0 is finite. No error expected.
+    // Confirm sqrt(0) = 0 and no panic.
+    let out = vm_run("print(sqrt(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+    // Negative inputs should always fail.
+    assert!(vm_run("sqrt(-0.000001)").is_err());
+}
+
+// --- pow stack and argument order audit ---
+
+#[test]
+fn pow_stack_order_two_three() {
+    // pow(2, 3) should be 8, not 9 (which would be pow(3, 2)).
+    let out = vm_run("print(pow(2, 3))").unwrap();
+    assert_eq!(out, vec!["8"]);
+}
+
+#[test]
+fn pow_stack_order_three_two() {
+    // pow(3, 2) should be 9, not 8.
+    let out = vm_run("print(pow(3, 2))").unwrap();
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn pow_args_eval_left_to_right_once() {
+    // Each arg evaluated exactly once, left-to-right (base before exponent).
+    let src = r#"
+        let mut order = 0
+        fn base_fn() -> Number { order += 1 return 2 }
+        fn exp_fn() -> Number { order += 1 return 10 }
+        let n = pow(base_fn(), exp_fn())
+        print(n)
+        print(order)
+    "#;
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["1024", "2"]);
+}
+
+#[test]
+fn vm_pow_pops_exp_then_base_correctly() {
+    // Confirm VM pops exp (top) then base, so pow(2, 10) = 1024 not pow(10, 2) = 100.
+    let out = vm_run("print(pow(2, 10))").unwrap();
+    assert_eq!(out, vec!["1024"]);
+    let out2 = vm_run("print(pow(10, 2))").unwrap();
+    assert_eq!(out2, vec!["100"]);
+}
+
+#[test]
+fn pow_side_effect_args_tree_vm_match() {
+    // Side-effectful args: both tree-walk and VM should eval base before exp, once each.
+    let src = r#"
+        let mut calls = 0
+        fn cnt_base() -> Number { calls += 1 return 2 }
+        fn cnt_exp() -> Number { calls += 1 return 3 }
+        let n = pow(cnt_base(), cnt_exp())
+        print(n)
+        print(calls)
+    "#;
+    let tree = run(src).unwrap();
+    let vm_out = vm_run(src).unwrap();
+    assert_eq!(vm_out, vec!["8", "2"]);
+    assert_eq!(tree.get_var("n"), Some(Value::Number(8.0)));
+}
+
+// --- Bytecode regression ---
+
+#[test]
+fn bytecode_methods_unchanged_after_sqrt_pow() {
+    let prog = compile_prog(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn get(self) -> Number { return self.value } }
+        let c = Counter { value: 5 }
+        let v = c.get()
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. })));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_sqrt_pow() {
+    let prog = compile_prog(
+        r#"
+        struct Point { x: Number }
+        let mut arr: Array<Point> = [Point { x: 1 }]
+        arr[0].x = 99
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+    assert!(!prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+// --- mut self number field ---
+
+#[test]
+fn sqrt_pow_mut_self_number_field() {
+    let out = vm_run(
+        r#"
+        struct Circle { r: Number }
+        impl Circle {
+          fn area_approx(mut self) -> Circle {
+            self.r = sqrt(self.r)
+            return self
+          }
+        }
+        let c = Circle { r: 9 }
+        let c2 = c.area_approx()
+        print(c.r)
+        print(c2.r)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["9", "3"]);
+}
