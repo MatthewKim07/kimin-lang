@@ -2561,6 +2561,26 @@ impl TypeChecker {
                         return Ok(Type::Bool);
                     }
 
+                    // ln / log2 / log10 / exp: Number -> Number
+                    if matches!(name.as_str(), "ln" | "log2" | "log10" | "exp") {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("{}() expects 1 argument, got {}", name, args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        if !arg_ty.is_unknown() && arg_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("{}() expects Number, got {}", name, arg_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
                     // sqrt: Number -> Number (non-negative required at runtime)
                     if name == "sqrt" {
                         if args.len() != 1 {

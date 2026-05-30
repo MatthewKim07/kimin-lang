@@ -1604,6 +1604,65 @@ impl Interpreter {
                         return Ok(Value::Bool(b));
                     }
 
+                    // ln / log2 / log10 / exp: Number -> Number
+                    if matches!(name.as_str(), "ln" | "log2" | "log10" | "exp") && args.len() == 1 {
+                        let val = self.eval_expr(&args[0])?;
+                        let n = match val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "{}() expects Number, got {}",
+                                        name,
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let result = match name.as_str() {
+                            "ln" => {
+                                if n <= 0.0 {
+                                    return Err(RuntimeError {
+                                        msg: format!("ln requires positive Number, got {}", n),
+                                    });
+                                }
+                                n.ln()
+                            }
+                            "log2" => {
+                                if n <= 0.0 {
+                                    return Err(RuntimeError {
+                                        msg: format!("log2 requires positive Number, got {}", n),
+                                    });
+                                }
+                                n.log2()
+                            }
+                            "log10" => {
+                                if n <= 0.0 {
+                                    return Err(RuntimeError {
+                                        msg: format!("log10 requires positive Number, got {}", n),
+                                    });
+                                }
+                                n.log10()
+                            }
+                            "exp" => {
+                                let r = n.exp();
+                                if !r.is_finite() {
+                                    return Err(RuntimeError {
+                                        msg: format!("exp result is not finite (exp({}))", n),
+                                    });
+                                }
+                                r
+                            }
+                            _ => unreachable!(),
+                        };
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: format!("{} result is not finite", name),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
                     // sqrt: Number -> Number (non-negative)
                     if name == "sqrt" && args.len() == 1 {
                         let val = self.eval_expr(&args[0])?;
