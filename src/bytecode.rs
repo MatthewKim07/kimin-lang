@@ -138,6 +138,10 @@ pub enum Instruction {
     ToLower,
     Trim,
 
+    /// Convert any value to its display string. Stack: [..., value] → Text.
+    /// Uses the same deterministic formatting as `print`.
+    ToString,
+
     /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
     /// Empty delimiter splits into individual characters.
     Split,

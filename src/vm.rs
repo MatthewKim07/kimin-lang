@@ -1010,6 +1010,11 @@ impl Vm {
                     stack.push(Value::Str(s.trim().to_string()));
                 }
 
+                Instruction::ToString => {
+                    let val = pop(stack)?;
+                    stack.push(Value::Str(format!("{}", val)));
+                }
+
                 Instruction::Split => {
                     let delim_val = pop(stack)?;
                     let text_val = pop(stack)?;

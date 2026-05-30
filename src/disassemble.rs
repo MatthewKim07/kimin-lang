@@ -173,6 +173,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::ToUpper => "TO_UPPER".to_string(),
         Instruction::ToLower => "TO_LOWER".to_string(),
         Instruction::Trim => "TRIM".to_string(),
+        Instruction::ToString => "TO_STRING".to_string(),
         Instruction::Split => "SPLIT".to_string(),
         Instruction::Join => "JOIN".to_string(),
         Instruction::HasKey => "HAS_KEY".to_string(),
