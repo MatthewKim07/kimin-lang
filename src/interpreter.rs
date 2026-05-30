@@ -1604,6 +1604,69 @@ impl Interpreter {
                         return Ok(Value::Bool(b));
                     }
 
+                    // sqrt: Number -> Number (non-negative)
+                    if name == "sqrt" && args.len() == 1 {
+                        let val = self.eval_expr(&args[0])?;
+                        let n = match val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "sqrt() expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        if n < 0.0 {
+                            return Err(RuntimeError {
+                                msg: format!("sqrt requires non-negative Number, got {}", n),
+                            });
+                        }
+                        let result = n.sqrt();
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: "sqrt result is not finite".to_string(),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
+                    // pow: Number, Number -> Number
+                    if name == "pow" && args.len() == 2 {
+                        let v0 = self.eval_expr(&args[0])?;
+                        let v1 = self.eval_expr(&args[1])?;
+                        let base = match v0 {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "pow() first argument expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let exp = match v1 {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "pow() second argument expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let result = base.powf(exp);
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: format!("pow result is not finite (pow({}, {}))", base, exp),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
                     // abs / floor / ceil / round: Number -> Number
                     if matches!(name.as_str(), "abs" | "floor" | "ceil" | "round")
                         && args.len() == 1

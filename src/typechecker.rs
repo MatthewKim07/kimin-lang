@@ -2561,6 +2561,60 @@ impl TypeChecker {
                         return Ok(Type::Bool);
                     }
 
+                    // sqrt: Number -> Number (non-negative required at runtime)
+                    if name == "sqrt" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("sqrt() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        if !arg_ty.is_unknown() && arg_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("sqrt() expects Number, got {}", arg_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
+                    // pow: Number, Number -> Number
+                    if name == "pow" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("pow() expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t0 = self.check_expr(&args[0], *span)?;
+                        if !t0.is_unknown() && t0 != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "pow() first argument expects Number, got {}",
+                                    t0.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let t1 = self.check_expr(&args[1], *span)?;
+                        if !t1.is_unknown() && t1 != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "pow() second argument expects Number, got {}",
+                                    t1.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
                     // abs / floor / ceil / round: Number -> Number
                     if matches!(name.as_str(), "abs" | "floor" | "ceil" | "round") {
                         if args.len() != 1 {
