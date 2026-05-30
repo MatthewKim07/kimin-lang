@@ -44379,3 +44379,43 @@ fn to_bool_case_sensitive_message() {
     let err = vm_run("to_bool(\"True\")").unwrap_err().to_string();
     assert!(err.contains("True"), "got: {}", err);
 }
+
+// ============================================================
+// M17C Audit: additional coverage
+// ============================================================
+
+#[test]
+fn type_to_bool_map_arg_error() {
+    let err = check(
+        r#"
+        let m: Map<Text, Text> = {"a": "true"}
+        let b = to_bool(m)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "to_bool(Map) should fail: {}", err);
+}
+
+#[test]
+fn parse_bool_helper_two_words_error() {
+    // "true false" is not exactly "true" or "false".
+    assert!(crate::value::parse_bool_from_text("true false").is_err());
+    assert!(crate::value::parse_bool_from_text("true true").is_err());
+    assert!(crate::value::parse_bool_from_text("false false").is_err());
+}
+
+#[test]
+fn string_builtins_still_ok_after_to_bool() {
+    // Existing string builtins unaffected by to_bool addition.
+    let out = vm_run(
+        r#"
+        let s = "Hello World"
+        print(to_lower(s))
+        print(len(s))
+        print(contains(s, "World"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["hello world", "11", "true"]);
+}
