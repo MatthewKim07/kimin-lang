@@ -2506,6 +2506,20 @@ impl TypeChecker {
                         }
                         return Ok(val_ty);
                     }
+
+                    // `to_string` builtin: to_string(value) -> Text
+                    if name == "to_string" {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("to_string() expects 1 argument, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        // Accept any type — to_string works on all values.
+                        self.check_expr(&args[0], *span)?;
+                        return Ok(Type::Text);
+                    }
                 }
 
                 let callee_ty = self.check_expr(callee, *span)?;

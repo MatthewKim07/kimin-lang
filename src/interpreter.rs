@@ -1544,6 +1544,17 @@ impl Interpreter {
                             .assign_existing(&map_name, Value::Map(map));
                         return Ok(removed);
                     }
+
+                    // `to_string` builtin: to_string(value) -> Text
+                    if name == "to_string" {
+                        if args.len() != 1 {
+                            return Err(RuntimeError {
+                                msg: format!("to_string() expects 1 argument, got {}", args.len()),
+                            });
+                        }
+                        let val = self.eval_expr(&args[0])?;
+                        return Ok(Value::Str(format!("{}", val)));
+                    }
                 }
 
                 let callee_val = self.eval_expr(callee)?;
