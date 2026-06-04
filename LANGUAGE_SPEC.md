@@ -1681,7 +1681,7 @@ print(round(ln(E)))                   // 1
 | `asin(n)` | `Number` | `Number` | [-1, 1] | `n.asin()` in radians; RuntimeError if `n < -1` or `n > 1` |
 | `acos(n)` | `Number` | `Number` | [-1, 1] | `n.acos()` in radians; RuntimeError if `n < -1` or `n > 1` |
 | `atan(n)` | `Number` | `Number` | any finite | `n.atan()` in radians |
-| `atan2(y, x)` | `Number, Number` | `Number` | both finite | `y.atan2(x)` in radians; argument order is `(y, x)` |
+| `atan2(y, x)` | `Number, Number` | `Number` | both finite | `y.atan2(x)` in radians; argument order is `(y, x)`; `atan2(0,0) = 0` (Rust f64) |
 
 **Static type rules:**
 - `asin`/`acos`/`atan`: exactly 1 `Number` arg; returns `Number`
