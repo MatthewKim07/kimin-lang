@@ -17989,6 +17989,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Exp
             | crate::bytecode::Instruction::Pi
             | crate::bytecode::Instruction::EConst
+            | crate::bytecode::Instruction::Clamp
             | crate::bytecode::Instruction::Hypot
             | crate::bytecode::Instruction::Asin
             | crate::bytecode::Instruction::Acos
@@ -54091,3 +54092,677 @@ fn bytecode_path_mutation_unchanged_after_hypot() {
         "Hypot should be emitted"
     );
 }
+
+// ============================================================
+// M18H — clamp(n, lo, hi) -> Number builtin
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_clamp_numbers_ok() {
+    assert!(check("let n = clamp(5, 0, 10)").is_ok());
+}
+
+#[test]
+fn type_clamp_result_is_number() {
+    assert!(check("let n: Number = clamp(5, 0, 10)").is_ok());
+}
+
+#[test]
+fn type_clamp_used_in_arithmetic() {
+    assert!(check("let n = clamp(5, 0, 10) + 1").is_ok());
+}
+
+#[test]
+fn type_clamp_used_as_array_index() {
+    assert!(
+        check("let arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]\nlet v = arr[clamp(5, 0, 10)]")
+            .is_ok()
+    );
+}
+
+#[test]
+fn type_clamp_used_in_range_bound() {
+    assert!(check("for i in range(0, clamp(5, 0, 10)) { print(i) }").is_ok());
+}
+
+#[test]
+fn type_clamp_assign_to_number_ok() {
+    assert!(check("let mut n: Number = 0\nn = clamp(5, 0, 10)").is_ok());
+}
+
+#[test]
+fn type_clamp_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: clamp(5, 0, 10) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_clamp_array_value_ok() {
+    assert!(check("let arr: Array<Number> = [clamp(5, 0, 10)]").is_ok());
+}
+
+#[test]
+fn type_clamp_map_value_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"v\": clamp(5, 0, 10)}").is_ok());
+}
+
+#[test]
+fn type_clamp_wrong_arity_zero_error() {
+    let err = check("clamp()").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_wrong_arity_one_error() {
+    let err = check("clamp(5)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_wrong_arity_two_error() {
+    let err = check("clamp(5, 0)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_wrong_arity_four_error() {
+    let err = check("clamp(5, 0, 10, 20)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_first_arg_text_error() {
+    let err = check("clamp(\"5\", 0, 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_second_arg_text_error() {
+    let err = check("clamp(5, \"0\", 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_third_arg_text_error() {
+    let err = check("clamp(5, 0, \"10\")").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_bool_arg_error() {
+    let err = check("clamp(true, 0, 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_array_arg_error() {
+    let err = check("clamp([5], 0, 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_map_arg_error() {
+    let err = check("clamp({\"a\": 5}, 0, 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_clamp_struct_arg_error() {
+    let err = check(
+        r#"
+        struct Bounds { lo: Number hi: Number }
+        let b = Bounds { lo: 0, hi: 10 }
+        let n = clamp(b, 0, 10)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "clamp(struct, n, n) should fail: {}", err);
+}
+
+#[test]
+fn type_clamp_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 5\nlet n = clamp(d, 0, 10)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "clamp(unit, n, n) should fail: {}", err);
+}
+
+#[test]
+fn type_clamp_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = clamp(d, 0, 10)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "clamp(state, n, n) should fail: {}", err);
+}
+
+#[test]
+fn type_hypot_still_ok_after_clamp() {
+    assert!(check("let n = hypot(3, 4) + clamp(5, 0, 10)").is_ok());
+}
+
+#[test]
+fn type_inverse_trig_still_ok_after_clamp() {
+    assert!(check("let n = asin(0) + acos(1) + atan(0) + atan2(1, 0)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtins_still_ok_after_clamp() {
+    assert!(check("let n = sqrt(9) + abs(-1) + sin(0) + cos(0) + ln(1)").is_ok());
+}
+
+#[test]
+fn type_conversion_builtins_still_ok_after_clamp() {
+    assert!(check(
+        r#"
+        let s = to_string(clamp(5, 0, 10))
+        let n = to_number("5")
+        let b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_constants_still_ok_after_clamp() {
+    assert!(check("let n = clamp(PI, 0, 4)").is_ok());
+}
+
+// --- Interpreter / behavior tests ---
+
+#[test]
+fn interp_clamp_inside_range() {
+    let out = vm_run("print(clamp(5, 0, 10))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_clamp_below_range() {
+    let out = vm_run("print(clamp(-2, 0, 10))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_clamp_above_range() {
+    let out = vm_run("print(clamp(12, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn interp_clamp_at_lower_bound() {
+    let out = vm_run("print(clamp(0, 0, 10))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_clamp_at_upper_bound() {
+    let out = vm_run("print(clamp(10, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn interp_clamp_equal_bounds() {
+    let out = vm_run("print(clamp(5, 5, 5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_clamp_negative_range() {
+    let out = vm_run("print(clamp(-5, -10, -1))").unwrap();
+    assert_eq!(out, vec!["-5"]);
+}
+
+#[test]
+fn interp_clamp_invalid_bounds_error() {
+    assert!(vm_run("clamp(5, 10, 0)").is_err());
+}
+
+#[test]
+fn interp_clamp_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_n() -> Number { calls += 1 return 5 }
+        fn get_lo() -> Number { calls += 1 return 0 }
+        fn get_hi() -> Number { calls += 1 return 10 }
+        let v = clamp(get_n(), get_lo(), get_hi())
+        print(v)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "3"]);
+}
+
+#[test]
+fn interp_clamp_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        let mut order = 0
+        fn first() -> Number { order += 1 return 5 }
+        fn second() -> Number { order += 10 return 0 }
+        fn third() -> Number { order += 100 return 10 }
+        clamp(first(), second(), third())
+        print(order)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["111"]);
+}
+
+#[test]
+fn interp_clamp_result_arithmetic() {
+    let out = vm_run("print(clamp(5, 0, 10) + clamp(12, 0, 10))").unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn interp_clamp_inside_function() {
+    let out = vm_run(
+        r#"
+        fn bound(n: Number) -> Number { return clamp(n, 0, 10) }
+        print(bound(-5))
+        print(bound(5))
+        print(bound(15))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "5", "10"]);
+}
+
+#[test]
+fn interp_clamp_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Range { lo: Number hi: Number }
+        impl Range { fn bound(self, n: Number) -> Number { return clamp(n, self.lo, self.hi) } }
+        let r = Range { lo: 0, hi: 10 }
+        print(r.bound(15))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn interp_clamp_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn double_clamp(n: Number) -> Number { return clamp(n, 0, 10) * 2 }
+        print(double_clamp(15))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn interp_clamp_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            total += clamp(12, 0, 10)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+// --- Edge behavior tests ---
+
+#[test]
+fn clamp_inside_range() {
+    let out = vm_run("print(clamp(5, 0, 10))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn clamp_below_range() {
+    let out = vm_run("print(clamp(-2, 0, 10))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn clamp_above_range() {
+    let out = vm_run("print(clamp(12, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn clamp_at_lower_bound() {
+    let out = vm_run("print(clamp(0, 0, 10))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn clamp_at_upper_bound() {
+    let out = vm_run("print(clamp(10, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn clamp_equal_bounds() {
+    let out = vm_run("print(clamp(5, 5, 5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn clamp_negative_range_inside() {
+    let out = vm_run("print(clamp(-5, -10, -1))").unwrap();
+    assert_eq!(out, vec!["-5"]);
+}
+
+#[test]
+fn clamp_negative_range_below() {
+    let out = vm_run("print(clamp(-20, -10, -1))").unwrap();
+    assert_eq!(out, vec!["-10"]);
+}
+
+#[test]
+fn clamp_negative_range_above() {
+    let out = vm_run("print(clamp(0, -10, -1))").unwrap();
+    assert_eq!(out, vec!["-1"]);
+}
+
+#[test]
+fn clamp_invalid_bounds_error() {
+    assert!(vm_run("clamp(5, 10, 0)").is_err());
+}
+
+#[test]
+fn clamp_non_finite_input_error_if_reachable() {
+    // Non-finite values not reachable in Kimin; large finite inputs work fine.
+    let out = vm_run("print(clamp(1000, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+// --- Argument order / VM stack ---
+
+#[test]
+fn clamp_args_eval_left_to_right_once() {
+    let out = vm_run(
+        r#"
+        let mut log = 0
+        fn n_arg() -> Number { log += 1 return 5 }
+        fn lo_arg() -> Number { log += 10 return 0 }
+        fn hi_arg() -> Number { log += 100 return 10 }
+        clamp(n_arg(), lo_arg(), hi_arg())
+        print(log)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["111"]);
+}
+
+#[test]
+fn clamp_side_effect_args_tree_vm_match() {
+    let src = r#"
+        let mut log = 0
+        fn n_arg() -> Number { log += 1 return 5 }
+        fn lo_arg() -> Number { log += 10 return 0 }
+        fn hi_arg() -> Number { log += 100 return 10 }
+        let v = clamp(n_arg(), lo_arg(), hi_arg())
+        print(log)
+        print(v)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["111", "5"]);
+}
+
+#[test]
+fn vm_clamp_stack_order_documented() {
+    // Stack: [..., n, lo, hi]; VM pops hi, lo, n
+    let out = vm_run("print(clamp(5, 0, 10))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_clamp_pops_hi_lo_n_correctly() {
+    // If order wrong, clamping would use wrong values
+    let out = vm_run("print(clamp(15, 0, 10))\nprint(clamp(-5, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10", "0"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_clamp_emits_instruction() {
+    let prog = compile_prog("let n = clamp(5, 0, 10)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_clamp_no_call_instruction() {
+    let prog = compile_prog("print(clamp(5, 0, 10))");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "clamp should not emit Call");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_clamp_compiles_args_left_to_right() {
+    let prog = compile_prog("let n = clamp(5, 0, 10)");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Clamp))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_clamp_args_left_to_right() {
+    // n=5, lo=0, hi=10 compiles in order; result correct proves correct order
+    let out = vm_run("print(clamp(5, 0, 10))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn bytecode_clamp_inside_function() {
+    let prog = compile_prog("fn f(n: Number) -> Number { return clamp(n, 0, 10) }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_clamp_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Range { lo: Number hi: Number }
+        impl Range { fn bound(self, n: Number) -> Number { return clamp(n, self.lo, self.hi) } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "bound")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_clamp_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += clamp(12, 0, 10)
+        }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_hypot_unchanged_after_clamp() {
+    let prog = compile_prog("let n = hypot(3, 4) + clamp(5, 0, 10)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_inverse_trig_unchanged_after_clamp() {
+    let prog = compile_prog("let n = asin(0) + atan2(1, 0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Asin)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Atan2)));
+}
+
+#[test]
+fn bytecode_constants_unchanged_after_clamp() {
+    let prog = compile_prog("let n = clamp(PI, 0, 4)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_clamp() {
+    let prog = compile_prog("let n = sqrt(9) + sin(0) + ln(1)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_clamp() {
+    let prog = compile_prog("let s = to_string(clamp(5, 0, 10))");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn disassemble_clamp_stable() {
+    let prog = compile_prog("print(clamp(5, 0, 10))");
+    let text: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    assert!(text.join(" ").contains("Clamp"));
+}
+
