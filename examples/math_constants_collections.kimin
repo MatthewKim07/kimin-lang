@@ -1,0 +1,8 @@
+let angles = [0, PI / 2, PI]
+let mut total: Number = 0
+
+for a in angles {
+  total += round(sin(a))
+}
+
+print(total)

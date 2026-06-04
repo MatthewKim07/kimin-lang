@@ -1,0 +1,13 @@
+// Keep runnable by default.
+
+print(round(sin(PI / 2)))
+print(round(ln(E)))
+
+// Uncomment to test assignment error:
+// PI = 3
+
+// Uncomment to test shadowing error:
+// let E = 2
+
+// Uncomment to test call error:
+// print(PI())

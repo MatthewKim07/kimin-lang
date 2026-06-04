@@ -1,0 +1,18 @@
+struct Circle {
+  radius: Number
+}
+
+impl Circle {
+  fn area(self) -> Number {
+    return PI * self.radius * self.radius
+  }
+
+  fn circumference(self) -> Number {
+    return 2 * PI * self.radius
+  }
+}
+
+let c = Circle { radius: 2 }
+
+print(round(c.area()))
+print(round(c.circumference()))

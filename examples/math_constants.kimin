@@ -1,0 +1,5 @@
+print(PI)
+print(E)
+print(round(sin(PI / 2)))
+print(round(cos(PI)))
+print(round(ln(E)))

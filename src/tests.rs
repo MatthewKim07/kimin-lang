@@ -17987,6 +17987,8 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Log2
             | crate::bytecode::Instruction::Log10
             | crate::bytecode::Instruction::Exp
+            | crate::bytecode::Instruction::Pi
+            | crate::bytecode::Instruction::EConst
             | crate::bytecode::Instruction::Sin
             | crate::bytecode::Instruction::Cos
             | crate::bytecode::Instruction::Tan
@@ -49626,4 +49628,1104 @@ fn bytecode_path_mutation_unchanged_after_trig() {
         .iter()
         .any(|i| matches!(i, Instruction::SetPath { .. }));
     assert!(has_set_path, "SetPath should be emitted for arr[0].n = 5");
+}
+
+// ============================================================
+// M18E — PI and E math constants
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_pi_is_number() {
+    assert!(check("let n: Number = PI").is_ok());
+}
+
+#[test]
+fn type_e_is_number() {
+    assert!(check("let n: Number = E").is_ok());
+}
+
+#[test]
+fn type_pi_used_in_arithmetic() {
+    assert!(check("let n = PI * 2").is_ok());
+}
+
+#[test]
+fn type_e_used_in_arithmetic() {
+    assert!(check("let n = E + 1").is_ok());
+}
+
+#[test]
+fn type_pi_used_with_sin() {
+    assert!(check("let n = sin(PI / 2)").is_ok());
+}
+
+#[test]
+fn type_pi_used_with_cos() {
+    assert!(check("let n = cos(PI)").is_ok());
+}
+
+#[test]
+fn type_e_used_with_ln() {
+    assert!(check("let n = ln(E)").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_array_number() {
+    assert!(check("let arr: Array<Number> = [PI, E]").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_map_number() {
+    assert!(check("let m: Map<Text, Number> = {\"pi\": PI, \"e\": E}").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_struct_number_field() {
+    assert!(check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: PI }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_pi_assign_error() {
+    let err = check("PI = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_e_assign_error() {
+    let err = check("E = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_pi_compound_assign_error() {
+    let err = check("PI += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_pi_shadow_error() {
+    let err = check("let PI = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_e_shadow_error() {
+    let err = check("let E = 2").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_param_pi_shadow_error_if_disallowed() {
+    let err = check("fn f(PI: Number) -> Number { return PI }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_pi_call_error() {
+    let err = check("let n = PI()").unwrap_err().to_string();
+    assert!(
+        err.contains("PI")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_constants_result_is_number() {
+    assert!(check("let a: Number = PI\nlet b: Number = E").is_ok());
+}
+
+// --- Interpreter / behavior tests ---
+
+#[test]
+fn interp_pi_value() {
+    let out = vm_run("print(PI)").unwrap();
+    assert_eq!(out, vec!["3.141592653589793"]);
+}
+
+#[test]
+fn interp_e_value() {
+    let out = vm_run("print(E)").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn interp_pi_in_trig() {
+    let out = vm_run("print(round(sin(PI / 2)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_e_in_ln() {
+    let out = vm_run("print(round(ln(E)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_constants_in_arithmetic() {
+    let out = vm_run("print(round(PI + E))").unwrap();
+    // PI + E ≈ 5.86; rounds to 6
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_constants_inside_function() {
+    let out = vm_run(
+        r#"
+        fn circle_area(r: Number) -> Number { return PI * r * r }
+        print(round(circle_area(1)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_constants_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Circle { radius: Number }
+        impl Circle { fn area(self) -> Number { return PI * self.radius * self.radius } }
+        let c = Circle { radius: 1 }
+        print(round(c.area()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_constants_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn scale(n: Number) -> Number { return n * PI }
+        print(round(scale(1)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_constants_inside_loop() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 1) {
+            total += round(cos(PI))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-1"]);
+}
+
+#[test]
+fn interp_constants_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(cos(PI))
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn interp_constants_in_array_map_struct() {
+    let out = vm_run(
+        r#"
+        let arr = [PI, E]
+        print(round(arr[0]))
+        print(round(arr[1]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+// --- Display format tests ---
+
+#[test]
+fn pi_prints_expected_display() {
+    let out = vm_run("print(PI)").unwrap();
+    assert_eq!(out, vec!["3.141592653589793"]);
+}
+
+#[test]
+fn e_prints_expected_display() {
+    let out = vm_run("print(E)").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn round_sin_pi_over_two() {
+    let out = vm_run("print(round(sin(PI / 2)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn round_cos_pi() {
+    let out = vm_run("print(round(cos(PI)))").unwrap();
+    assert_eq!(out, vec!["-1"]);
+}
+
+#[test]
+fn round_ln_e() {
+    let out = vm_run("print(round(ln(E)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn round_exp_one_still_three() {
+    let out = vm_run("print(round(exp(1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_pi_emits_constant_or_instruction() {
+    let prog = compile_prog("let n = PI");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+#[test]
+fn bytecode_e_emits_constant_or_instruction() {
+    let prog = compile_prog("let n = E");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+}
+
+#[test]
+fn bytecode_pi_no_variable_lookup() {
+    let prog = compile_prog("let n = PI");
+    let has_load =
+        prog.main.instructions.iter().any(
+            |i| matches!(i, Instruction::LoadGlobal(n) | Instruction::LoadLocal(n) if n == "PI"),
+        );
+    assert!(!has_load, "PI should not emit a variable lookup");
+}
+
+#[test]
+fn bytecode_e_no_variable_lookup() {
+    let prog = compile_prog("let n = E");
+    let has_load =
+        prog.main.instructions.iter().any(
+            |i| matches!(i, Instruction::LoadGlobal(n) | Instruction::LoadLocal(n) if n == "E"),
+        );
+    assert!(!has_load, "E should not emit a variable lookup");
+}
+
+#[test]
+fn bytecode_pi_inside_function() {
+    let prog = compile_prog("fn f(r: Number) -> Number { return PI * r * r }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+#[test]
+fn bytecode_e_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct S { n: Number }
+        impl S { fn val(self) -> Number { return E * self.n } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "val")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+}
+
+#[test]
+fn bytecode_constants_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(cos(PI))
+        }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+#[test]
+fn bytecode_constants_with_trig() {
+    let prog = compile_prog("let n = sin(PI / 2)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+}
+
+#[test]
+fn bytecode_constants_no_call_instruction() {
+    let prog = compile_prog("print(PI)\nprint(E)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "PI/E should not emit Call");
+}
+
+#[test]
+fn bytecode_existing_numeric_builtins_unchanged_after_constants() {
+    let prog = compile_prog("let n = sin(0) + cos(0) + ln(1) + sqrt(9)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Cos)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+#[test]
+fn disassemble_pi_e_stable() {
+    let prog = compile_prog("print(PI)\nprint(E)");
+    let instrs: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    let text = instrs.join(" ");
+    assert!(text.contains("Pi"));
+    assert!(text.contains("EConst"));
+}
+
+// --- VM tests ---
+
+#[test]
+fn vm_pi_value() {
+    let out = vm_run("print(PI)").unwrap();
+    assert_eq!(out, vec!["3.141592653589793"]);
+}
+
+#[test]
+fn vm_e_value() {
+    let out = vm_run("print(E)").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn vm_pi_in_trig() {
+    let out = vm_run("print(round(sin(PI / 2)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_e_in_ln() {
+    let out = vm_run("print(round(ln(E)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_constants_in_arithmetic() {
+    let out = vm_run("print(round(PI + E))").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_constants_inside_function() {
+    let out = vm_run(
+        r#"
+        fn circle_area(r: Number) -> Number { return PI * r * r }
+        print(round(circle_area(1)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_constants_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Circle { radius: Number }
+        impl Circle { fn area(self) -> Number { return PI * self.radius * self.radius } }
+        let c = Circle { radius: 1 }
+        print(round(c.area()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_constants_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(cos(PI))
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn vm_constants_stack_clean() {
+    let out = vm_run("print(PI)\nprint(E)\nprint(round(PI + E))").unwrap();
+    assert_eq!(out, vec!["3.141592653589793", "2.718281828459045", "6"]);
+}
+
+#[test]
+fn vm_matches_tree_constants_basic() {
+    let cases = [
+        ("print(PI)", vec!["3.141592653589793"]),
+        ("print(E)", vec!["2.718281828459045"]),
+        ("print(round(sin(PI / 2)))", vec!["1"]),
+        ("print(round(ln(E)))", vec!["1"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_constants_trig_logs() {
+    let out = vm_run(
+        r#"
+        print(round(sin(PI / 2)))
+        print(round(cos(PI)))
+        print(round(tan(PI / 4)))
+        print(round(ln(E)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "-1", "1", "1"]);
+}
+
+#[test]
+fn vm_matches_tree_constants_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn area(r: Number) -> Number { return PI * r * r }
+        struct Circle { radius: Number }
+        impl Circle { fn circ(self) -> Number { return 2 * PI * self.radius } }
+        let c = Circle { radius: 1 }
+        print(round(area(1)))
+        print(round(c.circ()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "6"]);
+}
+
+// --- Math builtin interaction ---
+
+#[test]
+fn constants_with_sin() {
+    let out = vm_run("print(round(sin(PI / 2)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn constants_with_cos() {
+    let out = vm_run("print(round(cos(PI)))").unwrap();
+    assert_eq!(out, vec!["-1"]);
+}
+
+#[test]
+fn constants_with_tan() {
+    let out = vm_run("print(round(tan(PI / 4)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn constants_with_ln() {
+    let out = vm_run("print(round(ln(E)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn constants_with_exp() {
+    let out = vm_run("print(round(exp(ln(E))))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn constants_with_pow() {
+    let out = vm_run("print(round(pow(E, 1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn constants_with_sqrt() {
+    // sqrt(PI) ≈ 1.772; round(sqrt(PI)) = 2
+    let out = vm_run("print(round(sqrt(PI)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn all_numeric_builtins_still_ok_after_constants() {
+    let out = vm_run("print(round(sin(0) + cos(0) + ln(1) + exp(0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn to_string_pi() {
+    let out = vm_run("print(to_string(PI))").unwrap();
+    assert_eq!(out, vec!["3.141592653589793"]);
+}
+
+#[test]
+fn to_string_e() {
+    let out = vm_run("print(to_string(E))").unwrap();
+    assert_eq!(out, vec!["2.718281828459045"]);
+}
+
+#[test]
+fn to_number_to_string_pi_round() {
+    // round(to_number(to_string(PI))) = round(PI) = 3
+    let out = vm_run("print(round(to_number(to_string(PI))))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn to_number_to_string_e_round() {
+    let out = vm_run("print(round(to_number(to_string(E))))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn to_bool_regression_after_constants() {
+    let out = vm_run("print(to_bool(\"true\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn conversion_builtins_still_ok_after_constants() {
+    let out = vm_run(
+        r#"
+        print(to_string(sin(0)))
+        print(to_number("42"))
+        print(to_bool("false"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "42", "false"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn constants_array_values() {
+    let out = vm_run(
+        r#"
+        let nums = [PI, E]
+        print(round(nums[0]))
+        print(round(nums[1]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn constants_map_values() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Number> = {"pi": PI, "e": E}
+        print(round(m["pi"]))
+        print(round(m["e"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn constants_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Vals { pi: Number, e: Number }
+        let v = Vals { pi: PI, e: E }
+        print(round(v.pi))
+        print(round(v.e))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn constants_method_area_circle() {
+    let out = vm_run(
+        r#"
+        struct Circle { radius: Number }
+        impl Circle {
+            fn area(self) -> Number { return PI * self.radius * self.radius }
+        }
+        let c = Circle { radius: 2 }
+        print(round(c.area()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn constants_mut_self_method_if_relevant() {
+    let out = vm_run(
+        r#"
+        struct Wave { phase: Number }
+        impl Wave {
+            fn shift(mut self) -> Wave {
+                self.phase = self.phase + PI
+                return self
+            }
+        }
+        let mut w = Wave { phase: 0 }
+        w = w.shift()
+        print(round(w.phase))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn constants_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = PI
+        print(round(arr[0].v))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_constants() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn constants_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += round(cos(PI))
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn constants_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 2) {
+            total += round(sin(PI / 2))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn constants_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let angles = [0, PI / 2, PI]
+        let mut total: Number = 0
+        for a in angles {
+            total += round(sin(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn constants_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let angles = [PI, PI]
+        let mut total: Number = 0
+        for i, a in angles {
+            total += round(cos(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-2"]);
+}
+
+#[test]
+fn constants_inside_function() {
+    let out = vm_run(
+        r#"
+        fn area(r: Number) -> Number { return PI * r * r }
+        print(round(area(2)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn constants_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Circle { radius: Number }
+        impl Circle { fn area(self) -> Number { return PI * self.radius * self.radius } }
+        let c = Circle { radius: 2 }
+        print(round(c.area()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn constants_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(cos(PI))
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["-3"]);
+}
+
+#[test]
+fn vm_matches_tree_constants_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let angles = [0, PI / 2, PI]
+        let mut total: Number = 0
+        for a in angles {
+            total += round(sin(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Unit and state regression ---
+
+#[test]
+fn constants_unit_assignment_behavior_matches_existing_number_rules() {
+    // PI is Number; Number promotes to unit at assignment site.
+    assert!(check("let d: meters = PI").is_ok());
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_constants() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let t: seconds = 2
+        let v = d / t
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_constants() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn pi_assignment_error_message() {
+    let err = check("PI = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn e_assignment_error_message() {
+    let err = check("E = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn pi_compound_assignment_error_message() {
+    let err = check("PI += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn let_pi_shadow_error_message() {
+    let err = check("let PI = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn let_e_shadow_error_message() {
+    let err = check("let E = 2").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn param_pi_shadow_error_message_if_disallowed() {
+    let err = check("fn f(PI: Number) -> Number { return PI }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn pi_call_error_message() {
+    let err = check("let n = PI()").unwrap_err().to_string();
+    assert!(
+        err.contains("PI")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}
+
+// --- Parser coverage tests ---
+
+#[test]
+fn parse_pi_constant_expr() {
+    assert!(check("let n = PI").is_ok());
+}
+
+#[test]
+fn parse_e_constant_expr() {
+    assert!(check("let n = E").is_ok());
+}
+
+#[test]
+fn parse_pi_in_arithmetic() {
+    assert!(check("let n = PI * 2 + 1").is_ok());
+}
+
+#[test]
+fn parse_e_in_arithmetic() {
+    assert!(check("let n = E * E").is_ok());
+}
+
+#[test]
+fn parse_pi_in_function_call_arg() {
+    assert!(check("let n = sin(PI)").is_ok());
+}
+
+#[test]
+fn parse_constants_in_array_literal() {
+    assert!(check("let arr = [PI, E]").is_ok());
+}
+
+#[test]
+fn parse_constants_in_map_literal() {
+    assert!(check("let m: Map<Text, Number> = {\"p\": PI, \"e\": E}").is_ok());
+}
+
+#[test]
+fn parse_constants_in_struct_literal() {
+    assert!(check(
+        r#"
+        struct Vals { pi: Number }
+        let v = Vals { pi: PI }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn parse_pi_assignment_rejected_or_type_error() {
+    assert!(check("PI = 3").is_err());
+}
+
+#[test]
+fn parse_e_compound_assignment_rejected_or_type_error() {
+    assert!(check("E += 1").is_err());
+}
+
+#[test]
+fn parse_let_pi_shadow_rejected() {
+    assert!(check("let PI = 3").is_err());
+}
+
+#[test]
+fn parse_let_e_shadow_rejected() {
+    assert!(check("let E = 2").is_err());
+}
+
+#[test]
+fn parse_pi_call_rejected_or_unknown_function() {
+    assert!(check("PI()").is_err());
+}
+
+#[test]
+fn parse_normal_identifier_prefix_pie_still_ok() {
+    // "pie" is not PI; plain identifiers starting with PI prefix work.
+    assert!(check("let pie = 3").is_ok());
+}
+
+#[test]
+fn parse_normal_identifier_episode_still_ok() {
+    // "episode" is not E; plain identifiers starting with E prefix work.
+    assert!(check("let episode = 5").is_ok());
 }
