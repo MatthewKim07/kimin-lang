@@ -55320,3 +55320,64 @@ fn clamp_non_finite_runtime_message_if_reachable() {
     let out = vm_run("print(clamp(1000, 0, 10))").unwrap();
     assert_eq!(out, vec!["10"]);
 }
+
+// --- M18H audit: missing tests ---
+
+#[test]
+fn bytecode_methods_unchanged_after_clamp() {
+    // Method calls still lower to CALL_METHOD; clamp inside method works
+    let prog = compile_prog(
+        r#"
+        struct Range { lo: Number hi: Number }
+        impl Range { fn bound(self, n: Number) -> Number { return clamp(n, self.lo, self.hi) } }
+        let r = Range { lo: 0, hi: 10 }
+        let n = r.bound(15)
+    "#,
+    );
+    let has_call_method = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. }));
+    assert!(
+        has_call_method,
+        "CALL_METHOD should be emitted for r.bound()"
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "bound")
+        .unwrap();
+    assert!(
+        method
+            .chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Clamp)),
+        "Clamp should be inside method chunk"
+    );
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_clamp() {
+    let prog = compile_prog(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = clamp(15, 0, 10)
+    "#,
+    );
+    let has_set_path = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has_set_path, "SetPath should be emitted for arr[0].v = ...");
+    assert!(
+        prog.main
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Clamp)),
+        "Clamp should be emitted"
+    );
+}
