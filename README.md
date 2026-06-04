@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-5051_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-5161_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-18F-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-18G-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5051 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5161 tests passing**.
 
 ---
 
@@ -561,6 +561,17 @@ print(round(atan2(1, 0)))      // 2   (≈ PI/2)
 print(round(atan2(0, -1)))     // 3   (≈ PI)
 ```
 
+**Euclidean magnitude:**
+- `hypot(a, b)` — computes √(a²+b²) using `f64::hypot` for numerical stability; both args must be Number
+- Accepts positive, negative, and zero inputs; symmetric (`hypot(a,b) == hypot(b,a)`)
+- No unit-aware overloads; complements `atan2` for vector magnitude/direction
+
+```kimin
+print(hypot(3, 4))     // 5
+print(hypot(5, 12))    // 13
+print(hypot(-3, 4))    // 5
+```
+
 **Math constants:**
 - `PI` — 3.141592653589793 (`std::f64::consts::PI`)
 - `E` — 2.718281828459045 (`std::f64::consts::E`)
@@ -857,6 +868,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 18D | Trigonometric builtins: `sin`, `cos`, `tan` (radians, Number-only) | ✅ |
 | 18E | Math constants: `PI` and `E` (read-only builtin Number constants) | ✅ |
 | 18F | Inverse trig: `asin`, `acos`, `atan`, `atan2(y,x)` (radians, Number-only, domain-checked) | ✅ |
+| 18G | `hypot(a, b)` Euclidean magnitude using `f64::hypot`; complements `atan2` | ✅ |
 
 ---
 
@@ -864,7 +876,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 5051 passed, 0 failed
+# 5161 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -891,7 +903,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        5051 unit tests
+  tests.rs        5161 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -990,6 +1002,9 @@ examples/
   numeric_inverse_trig.kimin        numeric_inverse_trig_edges.kimin
   numeric_inverse_trig_geometry.kimin  numeric_inverse_trig_collections.kimin
   numeric_inverse_trig_simulate.kimin  numeric_inverse_trig_errors.kimin
+  numeric_hypot.kimin               numeric_hypot_geometry.kimin
+  numeric_hypot_collections.kimin   numeric_hypot_simulate.kimin
+  numeric_hypot_errors.kimin
   math_constants.kimin              math_constants_geometry.kimin
   math_constants_collections.kimin  math_constants_simulate.kimin
   math_constants_errors.kimin

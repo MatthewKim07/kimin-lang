@@ -1706,6 +1706,30 @@ print(round(atan2(0, -1)))     // 3   (PI → rounds to 3)
 
 ---
 
+### 4.12E Euclidean Magnitude Builtin (Milestone 18G)
+
+| Builtin | Args | Return | Runtime behavior |
+|---------|------|--------|-----------------|
+| `hypot(a, b)` | `Number, Number` | `Number` | √(a²+b²) via `f64::hypot`; RuntimeError for non-finite input/result |
+
+**Static type rules:** 2 Number args → Number; unit types and all other types are `TypeError`.
+
+**Compiler:** emit `a` then `b`; `Instruction::Hypot`. Stack: `[..., a, b]`; VM pops b first then a; calls `a.hypot(b)`.
+
+**Symmetry:** `hypot(a, b) == hypot(b, a)`. Accepts negative inputs. `hypot(0, 0) = 0`.
+
+**Bytecode:** `HYPOT`
+
+**Examples:**
+```kimin
+print(hypot(3, 4))     // 5
+print(hypot(5, 12))    // 13
+print(hypot(-3, 4))    // 5
+print(hypot(0, 0))     // 0
+```
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:

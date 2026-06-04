@@ -1,0 +1,9 @@
+// Keep runnable by default.
+
+print(hypot(3, 4))
+
+// Uncomment to test wrong type:
+// print(hypot("bad", 4))
+
+// Uncomment to test wrong arity:
+// print(hypot(3))

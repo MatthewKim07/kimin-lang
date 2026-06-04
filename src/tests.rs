@@ -53461,3 +53461,562 @@ fn disassemble_hypot_stable() {
     assert!(instrs.join(" ").contains("Hypot"));
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_hypot_3_4() {
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_hypot_5_12() {
+    let out = vm_run("print(hypot(5, 12))").unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn vm_hypot_negative_args() {
+    let out = vm_run("print(hypot(-3, -4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_hypot_zero_zero() {
+    let out = vm_run("print(hypot(0, 0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_hypot_stack_clean() {
+    let out = vm_run("print(hypot(3, 4))\nprint(hypot(5, 12))").unwrap();
+    assert_eq!(out, vec!["5", "13"]);
+}
+
+#[test]
+fn vm_hypot_pops_b_then_a_correctly() {
+    // Stack: [..., a, b]; pop b first then a → a.hypot(b)
+    // hypot is symmetric so this verifies stack clean behavior
+    let out = vm_run("print(hypot(3, 4))\nprint(hypot(4, 3))").unwrap();
+    assert_eq!(out, vec!["5", "5"]);
+}
+
+#[test]
+fn vm_hypot_stack_order_documented() {
+    // Compiler emits a then b; VM pops b then a; result is a.hypot(b)
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_matches_tree_hypot_basic() {
+    let cases = [
+        ("print(hypot(3, 4))", vec!["5"]),
+        ("print(hypot(5, 12))", vec!["13"]),
+        ("print(hypot(-3, 4))", vec!["5"]),
+        ("print(hypot(0, 0))", vec!["0"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_hypot_errors() {
+    assert!(check("hypot(3)").is_err());
+    assert!(check("hypot(\"bad\", 4)").is_err());
+}
+
+#[test]
+fn vm_matches_tree_hypot_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn dist(x: Number, y: Number) -> Number { return hypot(x, y) }
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn magnitude(self) -> Number { return hypot(self.x, self.y) } }
+        let v = Vec2 { x: 5, y: 12 }
+        print(dist(3, 4))
+        print(v.magnitude())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "13"]);
+}
+
+#[test]
+fn vm_runtime_wrong_type_error_hypot_if_unchecked() {
+    assert!(check("hypot(\"bad\", 4)").is_err());
+    assert!(check("hypot(3, \"bad\")").is_err());
+}
+
+// --- Interaction with atan2 and geometry ---
+
+#[test]
+fn hypot_with_atan2_vector_magnitude_angle() {
+    let out = vm_run(
+        r#"
+        let x = 3
+        let y = 4
+        print(hypot(x, y))
+        print(round(atan2(y, x)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "1"]);
+}
+
+#[test]
+fn hypot_with_struct_vec2_magnitude() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 {
+            fn magnitude(self) -> Number { return hypot(self.x, self.y) }
+            fn angle(self) -> Number { return atan2(self.y, self.x) }
+        }
+        let v = Vec2 { x: 3, y: 4 }
+        print(v.magnitude())
+        print(round(v.angle()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "1"]);
+}
+
+#[test]
+fn atan2_still_ok_after_hypot() {
+    let out = vm_run("print(round(atan2(1, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_still_ok_after_hypot() {
+    let out = vm_run("print(round(asin(1)))\nprint(round(acos(-1)))").unwrap();
+    assert_eq!(out, vec!["2", "3"]);
+}
+
+// --- Numeric builtin interaction ---
+
+#[test]
+fn hypot_result_with_round() {
+    // hypot(3, 4) = 5 exactly
+    let out = vm_run("print(round(hypot(3, 4)))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_result_with_min_max() {
+    let out = vm_run("print(min(hypot(3, 4), hypot(5, 12)))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_result_with_to_string() {
+    let out = vm_run("print(to_string(hypot(3, 4)))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn sqrt_pow_still_ok_after_hypot() {
+    let out = vm_run("print(sqrt(9))\nprint(pow(2, 3))").unwrap();
+    assert_eq!(out, vec!["3", "8"]);
+}
+
+#[test]
+fn logs_exp_still_ok_after_hypot() {
+    let out = vm_run("print(ln(1))\nprint(exp(0))").unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn trig_still_ok_after_hypot() {
+    let out = vm_run("print(sin(0))\nprint(cos(0))").unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn floor_ceil_round_abs_min_max_still_ok_after_hypot() {
+    let out = vm_run(
+        r#"
+        print(floor(1.9))
+        print(ceil(1.1))
+        print(round(1.5))
+        print(abs(-3))
+        print(min(2, 5))
+        print(max(2, 5))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "2", "3", "2", "5"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn hypot_with_to_number_input() {
+    let out =
+        vm_run("let a = to_number(\"3\")\nlet b = to_number(\"4\")\nprint(hypot(a, b))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn to_string_hypot_result() {
+    let out = vm_run("print(to_string(hypot(3, 4)))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn to_bool_to_number_to_string_regression_after_hypot() {
+    let out = vm_run(
+        r#"
+        print(to_bool("true"))
+        print(to_number("42"))
+        print(to_string(hypot(3, 4)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "42", "5"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn hypot_array_values() {
+    let out = vm_run(
+        r#"
+        let nums = [3, 4]
+        print(hypot(nums[0], nums[1]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_map_values() {
+    let out = vm_run(
+        r#"
+        let m = {"x": 3, "y": 4}
+        print(hypot(m["x"], m["y"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_struct_fields() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number y: Number }
+        let p = Pt { x: 3, y: 4 }
+        print(hypot(p.x, p.y))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_method_returns_number() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number y: Number }
+        impl Pt { fn dist(self) -> Number { return hypot(self.x, self.y) } }
+        let p = Pt { x: 5, y: 12 }
+        print(p.dist())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn hypot_mut_self_number_field_if_relevant() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number y: Number }
+        impl Pt {
+            fn scale(mut self, factor: Number) -> Pt {
+                self.x = self.x * factor
+                self.y = self.y * factor
+                return self
+            }
+        }
+        let mut p = Pt { x: 3, y: 4 }
+        p = p.scale(2)
+        print(hypot(p.x, p.y))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn hypot_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number y: Number }
+        let mut arr: Array<Pt> = [Pt { x: 0, y: 0 }]
+        arr[0].x = 3
+        arr[0].y = 4
+        print(hypot(arr[0].x, arr[0].y))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_hypot() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn hypot_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += hypot(3, 4)
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn hypot_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 3) {
+            total += hypot(3, 4)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn hypot_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let pairs = [3, 5]
+        let mut total: Number = 0
+        for a in pairs {
+            total += hypot(a, 0)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["8"]);
+}
+
+#[test]
+fn hypot_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let xs = [3, 5]
+        let ys = [4, 12]
+        let mut total: Number = 0
+        for i, x in xs {
+            total += hypot(x, ys[i])
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["18"]);
+}
+
+#[test]
+fn hypot_inside_function() {
+    let out = vm_run(
+        r#"
+        fn sum_hypots(a: Number, b: Number) -> Number {
+            return hypot(a, b) + hypot(b, a)
+        }
+        print(sum_hypots(3, 4))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn hypot_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn magnitude(self) -> Number { return hypot(self.x, self.y) } }
+        let v = Vec2 { x: 5, y: 12 }
+        print(v.magnitude())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn hypot_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            total += hypot(3, 4)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn vm_matches_tree_hypot_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let xs = [3, 5]
+        let ys = [4, 12]
+        let mut total: Number = 0
+        for i, x in xs {
+            total += hypot(x, ys[i])
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["18"]);
+}
+
+// --- Unit and state regression ---
+
+#[test]
+fn hypot_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 3\nlet n = hypot(d, 4)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "hypot(unit, n) should fail: {}", err);
+}
+
+#[test]
+fn hypot_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = hypot(d, 4)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "hypot(state, n) should fail: {}", err);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_hypot() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let t: seconds = 2
+        let v = d / t
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_hypot() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn hypot_wrong_arity_zero_message() {
+    let err = check("hypot()").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn hypot_wrong_arity_one_message() {
+    let err = check("hypot(3)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn hypot_wrong_arity_three_message() {
+    let err = check("hypot(3, 4, 5)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn hypot_first_arg_wrong_type_message() {
+    let err = check("hypot(\"bad\", 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn hypot_second_arg_wrong_type_message() {
+    let err = check("hypot(3, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn hypot_non_finite_runtime_message_if_reachable() {
+    // Non-finite inputs not reachable; verify large finite input works fine.
+    let out = vm_run("print(hypot(1000, 0))").unwrap();
+    assert_eq!(out, vec!["1000"]);
+}

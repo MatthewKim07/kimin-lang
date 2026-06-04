@@ -1,0 +1,9 @@
+let xs = [3, 5]
+let ys = [4, 12]
+let mut total: Number = 0
+
+for i, x in xs {
+  total += hypot(x, ys[i])
+}
+
+print(total)

@@ -1,0 +1,4 @@
+print(hypot(3, 4))
+print(hypot(5, 12))
+print(hypot(-3, 4))
+print(hypot(0, 0))

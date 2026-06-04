@@ -1,0 +1,10 @@
+let mut total: Number = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  total += hypot(3, 4)
+}
+
+print(total)
