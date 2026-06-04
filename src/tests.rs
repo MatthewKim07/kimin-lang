@@ -54020,3 +54020,74 @@ fn hypot_non_finite_runtime_message_if_reachable() {
     let out = vm_run("print(hypot(1000, 0))").unwrap();
     assert_eq!(out, vec!["1000"]);
 }
+
+// --- M18G audit: missing tests ---
+
+#[test]
+fn hypot_symmetric_behavior() {
+    // hypot is symmetric: hypot(a, b) == hypot(b, a)
+    let out1 = vm_run("print(hypot(3, 4))").unwrap();
+    let out2 = vm_run("print(hypot(4, 3))").unwrap();
+    assert_eq!(out1, vec!["5"]);
+    assert_eq!(out2, vec!["5"]);
+    assert_eq!(out1, out2, "hypot must be symmetric");
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_hypot() {
+    // Method calls still lower to CALL_METHOD; hypot inside method works
+    let prog = compile_prog(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn magnitude(self) -> Number { return hypot(self.x, self.y) } }
+        let v = Vec2 { x: 3, y: 4 }
+        let n = v.magnitude()
+    "#,
+    );
+    let has_call_method = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. }));
+    assert!(
+        has_call_method,
+        "CALL_METHOD should be emitted for v.magnitude()"
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "magnitude")
+        .unwrap();
+    assert!(
+        method
+            .chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Hypot)),
+        "Hypot should be inside method chunk"
+    );
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_hypot() {
+    let prog = compile_prog(
+        r#"
+        struct Pt { x: Number y: Number }
+        let mut arr: Array<Pt> = [Pt { x: 0, y: 0 }]
+        arr[0].x = hypot(3, 4)
+    "#,
+    );
+    let has_set_path = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has_set_path, "SetPath should be emitted for arr[0].x = ...");
+    assert!(
+        prog.main
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Hypot)),
+        "Hypot should be emitted"
+    );
+}
