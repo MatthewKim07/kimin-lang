@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-4611_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-4729_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-18C-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-18D-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **4611 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **4729 tests passing**.
 
 ---
 
@@ -518,6 +518,41 @@ print(total)   // 30
 
 **Current limitations:** Nested maps and non-Text keys are not yet supported. Missing keys on compound assignment or `remove` are runtime errors.
 
+### Numeric and math builtins
+
+All numeric builtins accept `Number` only — unit types are rejected.
+
+**Utility:**
+- `abs(n)`, `floor(n)`, `ceil(n)`, `round(n)` — basic numeric operations
+- `min(a, b)`, `max(a, b)` — pairwise comparison
+- `sqrt(n)` — requires `n ≥ 0`; RuntimeError otherwise
+- `pow(base, exp)` — RuntimeError if result is non-finite
+
+**Logarithm and exponential:**
+- `ln(n)` — natural log; requires `n > 0`
+- `log2(n)` — base-2 log; requires `n > 0`
+- `log10(n)` — base-10 log; requires `n > 0`
+- `exp(n)` — e^n; RuntimeError if result is non-finite (e.g. `exp(1000)`)
+
+**Trigonometry (radians):**
+- `sin(n)`, `cos(n)`, `tan(n)` — standard trig; input in radians
+- No degree mode; `sin(90)` means sin(90 radians), not sin(90°)
+- No inverse trig (`asin`/`acos`/`atan`) yet
+- No unit-aware angle overloads yet
+
+```kimin
+print(sin(0))                              // 0
+print(cos(0))                              // 1
+print(round(sin(1.5707963267948966)))      // 1   (≈ sin(π/2))
+print(round(cos(3.141592653589793)))       // -1  (≈ cos(π))
+print(round(tan(0.7853981633974483)))      // 1   (≈ tan(π/4))
+```
+
+**Conversion builtins:**
+- `to_string(value) -> Text` — converts any value to its display string
+- `to_number(text) -> Number` — parses Text as f64; RuntimeError if invalid
+- `to_bool(text) -> Bool` — accepts `"true"` / `"false"` only; RuntimeError otherwise
+
 ### Bytecode backend
 
 ```sh
@@ -788,6 +823,12 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 14A | `Map<Text, V>` type annotations; typed empty map literals `{}` with annotation context | ✅ |
 | 15A | Minimal structs: `struct` declarations, struct literal construction, dot field access reads | ✅ |
 | 15B | Struct field mutation: `s.field = value`, `s.field += value` (plain and compound) | ✅ |
+| 15C | Path-based mutation: `arr[0].field = value`, nested index+field targets | ✅ |
+| 16A | Struct methods: `impl S { fn m(self) -> T }`, `mut self`, method calls `s.m(args)` | ✅ |
+| 17A | Conversion builtins: `to_string`, `to_number`, `to_bool` | ✅ |
+| 17B | Numeric utility builtins: `abs`, `floor`, `ceil`, `round`, `min`, `max`, `sqrt`, `pow` | ✅ |
+| 18A–18C | Logarithm/exponential builtins: `ln`, `log2`, `log10`, `exp` | ✅ |
+| 18D | Trigonometric builtins: `sin`, `cos`, `tan` (radians, Number-only) | ✅ |
 
 ---
 
@@ -795,7 +836,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 4611 passed, 0 failed
+# 4729 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -822,7 +863,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        4611 unit tests
+  tests.rs        4729 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -912,6 +953,12 @@ examples/
   map_annotations.kimin             map_annotations_empty.kimin
   map_annotations_functions.kimin   map_annotations_for_each.kimin
   map_annotations_errors.kimin
+  numeric_logs_exp.kimin            numeric_logs_exp_edges.kimin
+  numeric_logs_exp_collections.kimin  numeric_logs_exp_structs.kimin
+  numeric_logs_exp_simulate.kimin   numeric_logs_exp_errors.kimin
+  numeric_trig.kimin                numeric_trig_collections.kimin
+  numeric_trig_structs.kimin        numeric_trig_simulate.kimin
+  numeric_trig_errors.kimin
 ```
 
 <details>

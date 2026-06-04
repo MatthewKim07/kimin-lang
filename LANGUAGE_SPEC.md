@@ -1566,6 +1566,78 @@ Rules:
 
 ---
 
+### 4.12A Conversion Builtins (Milestone 17A)
+
+Three builtins convert between Kimin value types. All are intercepted before normal call dispatch; no `CALL` instruction is emitted.
+
+| Builtin | Input | Output | Runtime behavior |
+|---------|-------|--------|-----------------|
+| `to_string(value)` | Any type | `Text` | Formats value using Kimin display rules |
+| `to_number(text)` | `Text` | `Number` | Parses as f64; RuntimeError if not a valid number |
+| `to_bool(text)` | `Text` | `Bool` | Accepts `"true"` or `"false"` exactly; RuntimeError otherwise |
+
+Bytecode instructions: `TO_STRING`, `TO_NUMBER`, `TO_BOOL`.
+
+---
+
+### 4.12B Numeric Utility Builtins (Milestones 17B, 18A–18C)
+
+All numeric builtins accept exactly one `Number` argument (except `pow` and `min`/`max` which take two). Unit types (`meters`, `seconds`, etc.) are distinct from `Number` and are rejected with `TypeError`.
+
+#### Basic math
+
+| Builtin | Return | Runtime behavior |
+|---------|--------|-----------------|
+| `abs(n)` | `Number` | Absolute value |
+| `floor(n)` | `Number` | Round toward −∞ |
+| `ceil(n)` | `Number` | Round toward +∞ |
+| `round(n)` | `Number` | Round half away from zero |
+| `min(a, b)` | `Number` | Minimum of two Numbers |
+| `max(a, b)` | `Number` | Maximum of two Numbers |
+| `sqrt(n)` | `Number` | Square root; RuntimeError if `n < 0` |
+| `pow(base, exp)` | `Number` | `base^exp`; RuntimeError if result non-finite |
+
+Bytecode: `ABS`, `FLOOR`, `CEIL`, `ROUND`, `MIN`, `MAX`, `SQRT`, `POW`.
+
+#### Logarithm and exponential
+
+| Builtin | Return | Domain | Runtime behavior |
+|---------|--------|--------|-----------------|
+| `ln(n)` | `Number` | `n > 0` | Natural logarithm; RuntimeError if `n ≤ 0` |
+| `log2(n)` | `Number` | `n > 0` | Base-2 logarithm; RuntimeError if `n ≤ 0` |
+| `log10(n)` | `Number` | `n > 0` | Base-10 logarithm; RuntimeError if `n ≤ 0` |
+| `exp(n)` | `Number` | all finite | e^n; RuntimeError if result is non-finite (e.g. `exp(1000)`) |
+
+Bytecode: `LN`, `LOG2`, `LOG10`, `EXP`.
+
+#### Trigonometry (Milestone 18D)
+
+All three trig builtins take a `Number` in **radians** and return `Number`. No degree mode. No inverse trig yet. No unit-aware angle overloads.
+
+| Builtin | Return | Runtime behavior |
+|---------|--------|-----------------|
+| `sin(n)` | `Number` | Sine; uses `f64::sin`; RuntimeError if result non-finite |
+| `cos(n)` | `Number` | Cosine; uses `f64::cos`; RuntimeError if result non-finite |
+| `tan(n)` | `Number` | Tangent; uses `f64::tan`; RuntimeError if result non-finite |
+
+Bytecode: `SIN`, `COS`, `TAN`.
+
+**Note:** `tan` near asymptotes (e.g. `tan(π/2)`) produces a very large finite value in IEEE 754 double precision — the exact value of π/2 cannot be represented in `f64`, so the result is always finite. No special-casing is applied.
+
+**Static type rules:** All trig builtins require `Type::Number` arg; return `Type::Number`. Unit types and all other types are `TypeError`.
+
+**Examples:**
+```kimin
+print(sin(0))                              // 0
+print(cos(0))                              // 1
+print(tan(0))                              // 0
+print(round(sin(1.5707963267948966)))      // 1   (≈ sin(π/2))
+print(round(cos(3.141592653589793)))       // -1  (≈ cos(π))
+print(round(tan(0.7853981633974483)))      // 1   (≈ tan(π/4))
+```
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:
