@@ -1,0 +1,10 @@
+// Keep runnable by default.
+
+print(sin(0))
+print(cos(0))
+
+// Uncomment to test wrong type:
+// print(sin("bad"))
+
+// Uncomment to test wrong arity:
+// print(tan())

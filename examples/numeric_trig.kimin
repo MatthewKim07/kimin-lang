@@ -1,0 +1,6 @@
+print(sin(0))
+print(cos(0))
+print(round(tan(0)))
+print(round(sin(1.5707963267948966)))
+print(round(cos(3.141592653589793)))
+print(round(tan(0.7853981633974483)))

@@ -1,0 +1,18 @@
+struct Angle {
+  radians: Number
+}
+
+impl Angle {
+  fn sine(self) -> Number {
+    return sin(self.radians)
+  }
+
+  fn cosine(self) -> Number {
+    return cos(self.radians)
+  }
+}
+
+let a = Angle { radians: 0 }
+
+print(a.sine())
+print(a.cosine())
