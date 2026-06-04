@@ -188,6 +188,8 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Round => "ROUND".to_string(),
         Instruction::Min => "MIN".to_string(),
         Instruction::Max => "MAX".to_string(),
+        Instruction::Pi => "PI".to_string(),
+        Instruction::EConst => "E_CONST".to_string(),
         Instruction::Sin => "SIN".to_string(),
         Instruction::Cos => "COS".to_string(),
         Instruction::Tan => "TAN".to_string(),

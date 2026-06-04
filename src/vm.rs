@@ -1140,6 +1140,14 @@ impl Vm {
                     stack.push(Value::Number(r));
                 }
 
+                Instruction::Pi => {
+                    stack.push(Value::Number(std::f64::consts::PI));
+                }
+
+                Instruction::EConst => {
+                    stack.push(Value::Number(std::f64::consts::E));
+                }
+
                 Instruction::Sin => {
                     let val = pop(stack)?;
                     let n = match val {

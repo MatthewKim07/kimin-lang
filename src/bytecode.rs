@@ -175,6 +175,10 @@ pub enum Instruction {
     Min,
     /// Maximum of two Numbers. Stack: [..., a, b] → max(a, b).
     Max,
+    /// Math constant π (3.141592653589793). Stack: [...] → Number.
+    Pi,
+    /// Math constant e (2.718281828459045). Stack: [...] → Number.
+    EConst,
     /// Sine (radians). Stack: [..., n] → sin(n). RuntimeError for non-finite input or result.
     Sin,
     /// Cosine (radians). Stack: [..., n] → cos(n). RuntimeError for non-finite input or result.

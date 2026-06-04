@@ -935,6 +935,15 @@ impl BytecodeCompiler {
             }
 
             Expr::Variable { name, .. } => {
+                // Builtin constants: emit dedicated instructions.
+                if name == "PI" {
+                    self.chunk.emit(Instruction::Pi);
+                    return Ok(());
+                }
+                if name == "E" {
+                    self.chunk.emit(Instruction::EConst);
+                    return Ok(());
+                }
                 if self.is_local(name) {
                     self.chunk.emit(Instruction::LoadLocal(name.clone()));
                 } else {
