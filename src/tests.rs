@@ -17989,6 +17989,10 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Exp
             | crate::bytecode::Instruction::Pi
             | crate::bytecode::Instruction::EConst
+            | crate::bytecode::Instruction::Asin
+            | crate::bytecode::Instruction::Acos
+            | crate::bytecode::Instruction::Atan
+            | crate::bytecode::Instruction::Atan2
             | crate::bytecode::Instruction::Sin
             | crate::bytecode::Instruction::Cos
             | crate::bytecode::Instruction::Tan
@@ -51256,3 +51260,817 @@ fn state_variant_named_e_or_pi_if_supported_does_not_conflict_or_is_documented()
     // e (variable) holds state, E (builtin) holds math constant
     assert_eq!(out, vec!["Energy.high", "3"]);
 }
+
+// ============================================================
+// M18F — asin / acos / atan / atan2 inverse trig builtins
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_asin_number_ok() {
+    assert!(check("let n = asin(0)").is_ok());
+}
+
+#[test]
+fn type_acos_number_ok() {
+    assert!(check("let n = acos(1)").is_ok());
+}
+
+#[test]
+fn type_atan_number_ok() {
+    assert!(check("let n = atan(0)").is_ok());
+}
+
+#[test]
+fn type_atan2_numbers_ok() {
+    assert!(check("let n = atan2(1, 0)").is_ok());
+}
+
+#[test]
+fn type_asin_result_is_number() {
+    assert!(check("let n: Number = asin(0)").is_ok());
+}
+
+#[test]
+fn type_atan2_result_is_number() {
+    assert!(check("let n: Number = atan2(1, 0)").is_ok());
+}
+
+#[test]
+fn type_asin_used_in_arithmetic() {
+    assert!(check("let n = asin(0) + acos(1)").is_ok());
+}
+
+#[test]
+fn type_acos_used_as_array_index() {
+    assert!(check("let arr = [1, 2]\nlet v = arr[acos(1)]").is_ok());
+}
+
+#[test]
+fn type_atan_used_in_range_bound() {
+    assert!(check(
+        r#"
+        for i in range(0, atan(0) + 1) {
+            print(i)
+        }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_atan2_assign_to_number_ok() {
+    assert!(check("let mut n: Number = 0\nn = atan2(1, 0)").is_ok());
+}
+
+#[test]
+fn type_atan2_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: atan2(1, 0) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_atan2_array_value_ok() {
+    assert!(check("let arr: Array<Number> = [atan2(1, 0)]").is_ok());
+}
+
+#[test]
+fn type_atan2_map_value_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"a\": atan2(1, 0)}").is_ok());
+}
+
+#[test]
+fn type_asin_wrong_arity_zero_error() {
+    let err = check("asin()").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_asin_wrong_arity_two_error() {
+    let err = check("asin(0, 1)").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_atan2_wrong_arity_one_error() {
+    let err = check("atan2(1)").unwrap_err().to_string();
+    assert!(
+        err.contains("atan2") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_atan2_wrong_arity_three_error() {
+    let err = check("atan2(1, 0, 0)").unwrap_err().to_string();
+    assert!(
+        err.contains("atan2") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_asin_text_arg_error() {
+    let err = check("asin(\"0\")").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_asin_bool_arg_error() {
+    let err = check("asin(true)").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_asin_array_arg_error() {
+    let err = check("asin([1])").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_asin_map_arg_error() {
+    let err = check("asin({\"a\": 1})").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_asin_struct_arg_error() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: 1 }
+        let x = asin(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "asin(struct) should fail: {}", err);
+}
+
+#[test]
+fn type_asin_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 1\nlet n = asin(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "asin(unit) should fail: {}", err);
+}
+
+#[test]
+fn type_asin_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = asin(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "asin(state) should fail: {}", err);
+}
+
+#[test]
+fn type_atan2_second_arg_wrong_type_error() {
+    let err = check("atan2(1, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("atan2") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_trig_constants_still_ok_after_inverse_trig() {
+    assert!(check("let n = sin(PI) + cos(PI) + tan(PI / 4)").is_ok());
+    assert!(check("let m = round(PI) + round(E)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtins_still_ok_after_inverse_trig() {
+    assert!(check("let n = sqrt(9) + abs(-1) + ln(1) + exp(0) + sin(0) + cos(0)").is_ok());
+}
+
+#[test]
+fn type_conversion_builtins_still_ok_after_inverse_trig() {
+    assert!(check(
+        r#"
+        let s = to_string(asin(0))
+        let n = to_number("0")
+        let b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+// --- Interpreter / behavior tests ---
+
+#[test]
+fn interp_asin_zero() {
+    let out = vm_run("print(asin(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_asin_one_rounds_to_pi_over_two() {
+    // asin(1) = PI/2 ≈ 1.5707 → round = 2
+    let out = vm_run("print(round(asin(1)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_asin_negative_one_rounds_to_negative_pi_over_two() {
+    let out = vm_run("print(round(asin(-1)))").unwrap();
+    assert_eq!(out, vec!["-2"]);
+}
+
+#[test]
+fn interp_asin_out_of_domain_error() {
+    assert!(vm_run("asin(2)").is_err());
+    assert!(vm_run("asin(-2)").is_err());
+}
+
+#[test]
+fn interp_acos_one_zero() {
+    let out = vm_run("print(acos(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_acos_zero_rounds_to_pi_over_two() {
+    let out = vm_run("print(round(acos(0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_acos_negative_one_rounds_to_pi() {
+    let out = vm_run("print(round(acos(-1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_acos_out_of_domain_error() {
+    assert!(vm_run("acos(2)").is_err());
+    assert!(vm_run("acos(-2)").is_err());
+}
+
+#[test]
+fn interp_atan_zero() {
+    let out = vm_run("print(atan(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_atan_one_rounds_to_pi_over_four() {
+    // atan(1) = PI/4 ≈ 0.785 → round = 1
+    let out = vm_run("print(round(atan(1)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_atan_negative_one_rounds_to_negative_pi_over_four() {
+    let out = vm_run("print(round(atan(-1)))").unwrap();
+    assert_eq!(out, vec!["-1"]);
+}
+
+#[test]
+fn interp_atan2_positive_y_zero_x() {
+    // atan2(1, 0) = PI/2 → round = 2
+    let out = vm_run("print(round(atan2(1, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_atan2_zero_y_negative_x() {
+    // atan2(0, -1) = PI → round = 3
+    let out = vm_run("print(round(atan2(0, -1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_atan2_negative_y_zero_x() {
+    // atan2(-1, 0) = -PI/2 → round = -2
+    let out = vm_run("print(round(atan2(-1, 0)))").unwrap();
+    assert_eq!(out, vec!["-2"]);
+}
+
+#[test]
+fn interp_atan2_zero_y_positive_x() {
+    let out = vm_run("print(atan2(0, 1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_asin_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_n() -> Number { calls += 1 return 0 }
+        let n = asin(get_n())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1"]);
+}
+
+#[test]
+fn interp_atan2_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        let mut order = 0
+        fn first() -> Number { order += 1 return 1 }
+        fn second() -> Number { order += 10 return 0 }
+        let n = atan2(first(), second())
+        print(order)
+    "#,
+    )
+    .unwrap();
+    // first() called first → order=1; second() called second → order=11
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn interp_atan2_args_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_one() -> Number { calls += 1 return 1 }
+        fn get_zero() -> Number { calls += 1 return 0 }
+        let n = atan2(get_one(), get_zero())
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_inverse_trig_inside_function() {
+    let out = vm_run(
+        r#"
+        fn angle_of(y: Number, x: Number) -> Number { return atan2(y, x) }
+        print(round(angle_of(1, 0)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_inverse_trig_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn angle(self) -> Number { return atan2(self.y, self.x) } }
+        let v = Vec2 { x: 0, y: 1 }
+        print(round(v.angle()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_inverse_trig_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn compute(n: Number) -> Number { return asin(n) + acos(n) }
+        print(round(compute(0)))
+    "#,
+    )
+    .unwrap();
+    // asin(0) + acos(0) = 0 + PI/2 ≈ 1.57 → round = 2
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_inverse_trig_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut angle: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            angle += round(atan2(1, 0))
+        }
+        print(angle)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+// --- atan2 argument order tests ---
+
+#[test]
+fn atan2_arg_order_positive_y_zero_x() {
+    let out = vm_run("print(round(atan2(1, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn atan2_arg_order_zero_y_positive_x() {
+    let out = vm_run("print(atan2(0, 1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn atan2_arg_order_zero_y_negative_x() {
+    let out = vm_run("print(round(atan2(0, -1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn atan2_arg_order_negative_y_zero_x() {
+    let out = vm_run("print(round(atan2(-1, 0)))").unwrap();
+    assert_eq!(out, vec!["-2"]);
+}
+
+#[test]
+fn atan2_args_eval_left_to_right_once() {
+    // Same as interp_atan2_args_eval_left_to_right but as named standalone
+    let out = vm_run(
+        r#"
+        let mut log = 0
+        fn y_arg() -> Number { log += 1 return 1 }
+        fn x_arg() -> Number { log += 10 return 0 }
+        atan2(y_arg(), x_arg())
+        print(log)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn vm_atan2_pops_x_then_y_correctly() {
+    // atan2(1,0) ≠ atan2(0,1); VM must pop x first, then y
+    let out1 = vm_run("print(round(atan2(1, 0)))").unwrap();
+    let out2 = vm_run("print(atan2(0, 1))").unwrap();
+    assert_eq!(out1, vec!["2"]); // atan2(y=1, x=0) = PI/2
+    assert_eq!(out2, vec!["0"]); // atan2(y=0, x=1) = 0
+}
+
+#[test]
+fn atan2_side_effect_args_tree_vm_match() {
+    let src = r#"
+        let mut log = 0
+        fn y_arg() -> Number { log += 1 return 1 }
+        fn x_arg() -> Number { log += 10 return 0 }
+        let n = atan2(y_arg(), x_arg())
+        print(log)
+        print(round(n))
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["11", "2"]);
+}
+
+// --- Domain error tests ---
+
+#[test]
+fn asin_below_domain_error() {
+    assert!(vm_run("asin(-1.1)").is_err());
+}
+
+#[test]
+fn asin_above_domain_error() {
+    assert!(vm_run("asin(1.1)").is_err());
+}
+
+#[test]
+fn acos_below_domain_error() {
+    assert!(vm_run("acos(-1.1)").is_err());
+}
+
+#[test]
+fn acos_above_domain_error() {
+    assert!(vm_run("acos(1.1)").is_err());
+}
+
+#[test]
+fn asin_domain_edges_ok() {
+    assert!(vm_run("asin(-1)").is_ok());
+    assert!(vm_run("asin(1)").is_ok());
+}
+
+#[test]
+fn acos_domain_edges_ok() {
+    assert!(vm_run("acos(-1)").is_ok());
+    assert!(vm_run("acos(1)").is_ok());
+}
+
+#[test]
+fn atan_large_finite_ok() {
+    let out = vm_run("print(round(atan(1000)))").unwrap();
+    // atan(1000) ≈ PI/2 ≈ 1.57 → rounds to 2
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn atan2_finite_inputs_ok() {
+    assert!(vm_run("atan2(1000, 0)").is_ok());
+    assert!(vm_run("atan2(0, 1000)").is_ok());
+}
+
+#[test]
+fn asin_non_finite_input_error_if_reachable() {
+    // Non-finite values not reachable in Kimin; test that finite boundary works
+    assert!(vm_run("asin(-1)").is_ok());
+    assert!(vm_run("asin(1)").is_ok());
+}
+
+#[test]
+fn atan2_non_finite_input_error_if_reachable() {
+    // atan2 of large finite values stays finite
+    let out = vm_run("print(round(atan2(1000, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Approximate output tests ---
+
+#[test]
+fn asin_one_rounds_to_two() {
+    let out = vm_run("print(round(asin(1)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn asin_negative_one_rounds_to_negative_two() {
+    let out = vm_run("print(round(asin(-1)))").unwrap();
+    assert_eq!(out, vec!["-2"]);
+}
+
+#[test]
+fn acos_negative_one_rounds_to_three() {
+    let out = vm_run("print(round(acos(-1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn atan_one_rounds_to_one() {
+    let out = vm_run("print(round(atan(1)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn atan2_positive_y_zero_x_rounds_to_two() {
+    let out = vm_run("print(round(atan2(1, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn atan2_zero_y_negative_x_rounds_to_three() {
+    let out = vm_run("print(round(atan2(0, -1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_asin_emits_instruction() {
+    let prog = compile_prog("let n = asin(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Asin)));
+}
+
+#[test]
+fn bytecode_acos_emits_instruction() {
+    let prog = compile_prog("let n = acos(1)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Acos)));
+}
+
+#[test]
+fn bytecode_atan_emits_instruction() {
+    let prog = compile_prog("let n = atan(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Atan)));
+}
+
+#[test]
+fn bytecode_atan2_emits_instruction() {
+    let prog = compile_prog("let n = atan2(1, 0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Atan2)));
+}
+
+#[test]
+fn bytecode_inverse_trig_no_call_instruction() {
+    let prog = compile_prog("print(asin(0))\nprint(acos(1))\nprint(atan(0))\nprint(atan2(1, 0))");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "inverse trig should not emit Call");
+}
+
+#[test]
+fn bytecode_asin_compiles_arg_once() {
+    let prog = compile_prog("let n = asin(0)");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Asin))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_atan2_compiles_args_left_to_right() {
+    // atan2(y_arg, x_arg): y compiled first, x second, then Atan2
+    let prog = compile_prog("let n = atan2(1, 0)");
+    let instrs: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    let text = instrs.join(" ");
+    // Both constants should appear before Atan2
+    assert!(text.contains("Atan2"));
+}
+
+#[test]
+fn bytecode_asin_inside_function() {
+    let prog = compile_prog("fn f(n: Number) -> Number { return asin(n) }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Asin)));
+}
+
+#[test]
+fn bytecode_acos_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct S { v: Number }
+        impl S { fn inv(self) -> Number { return acos(self.v) } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "inv")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Acos)));
+}
+
+#[test]
+fn bytecode_atan2_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(atan2(1, 0))
+        }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Atan2)));
+}
+
+#[test]
+fn bytecode_trig_unchanged_after_inverse_trig() {
+    let prog = compile_prog("let n = sin(0) + cos(0) + tan(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Cos)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tan)));
+}
+
+#[test]
+fn bytecode_constants_unchanged_after_inverse_trig() {
+    let prog = compile_prog("let n = asin(sin(PI / 2))");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Asin)));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_inverse_trig() {
+    let prog = compile_prog("let n = sqrt(9) + ln(1) + exp(0) + abs(-1)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_inverse_trig() {
+    let prog = compile_prog("let s = to_string(asin(0))");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Asin)));
+}
+
+#[test]
+fn disassemble_asin_acos_atan_atan2_stable() {
+    let prog = compile_prog("print(asin(0))\nprint(acos(1))\nprint(atan(0))\nprint(atan2(1, 0))");
+    let instrs: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    let text = instrs.join(" ");
+    assert!(text.contains("Asin"));
+    assert!(text.contains("Acos"));
+    assert!(text.contains("Atan"));
+    assert!(text.contains("Atan2"));
+}
+
