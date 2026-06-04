@@ -1674,6 +1674,38 @@ print(round(ln(E)))                   // 1
 
 ---
 
+### 4.12D Inverse Trigonometric Builtins (Milestone 18F)
+
+| Builtin | Args | Return | Domain | Runtime behavior |
+|---------|------|--------|--------|-----------------|
+| `asin(n)` | `Number` | `Number` | [-1, 1] | `n.asin()` in radians; RuntimeError if `n < -1` or `n > 1` |
+| `acos(n)` | `Number` | `Number` | [-1, 1] | `n.acos()` in radians; RuntimeError if `n < -1` or `n > 1` |
+| `atan(n)` | `Number` | `Number` | any finite | `n.atan()` in radians |
+| `atan2(y, x)` | `Number, Number` | `Number` | both finite | `y.atan2(x)` in radians; argument order is `(y, x)` |
+
+**Static type rules:**
+- `asin`/`acos`/`atan`: exactly 1 `Number` arg; returns `Number`
+- `atan2`: exactly 2 `Number` args; returns `Number`
+- All four reject non-Number args (unit types, Bool, Text, etc.) with `TypeError`
+
+**Argument order for atan2:**
+- Source: `atan2(y, x)` — y first, x second
+- Compiler emits y first, then x; VM pops x from stack first, then y
+- Consistent with Rust's `f64::atan2` and standard math convention
+
+**Bytecode:** `ASIN`, `ACOS`, `ATAN`, `ATAN2`
+
+**Examples:**
+```kimin
+print(round(asin(1)))          // 2   (PI/2 ≈ 1.57 → rounds to 2)
+print(round(acos(-1)))         // 3   (PI ≈ 3.14 → rounds to 3)
+print(round(atan(1)))          // 1   (PI/4 ≈ 0.79 → rounds to 1)
+print(round(atan2(1, 0)))      // 2   (PI/2 → rounds to 2)
+print(round(atan2(0, -1)))     // 3   (PI → rounds to 3)
+```
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:

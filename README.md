@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-4887_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-5035_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-18E-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-18F-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **4887 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5035 tests passing**.
 
 ---
 
@@ -537,15 +537,28 @@ All numeric builtins accept `Number` only — unit types are rejected.
 **Trigonometry (radians):**
 - `sin(n)`, `cos(n)`, `tan(n)` — standard trig; input in radians
 - No degree mode; `sin(90)` means sin(90 radians), not sin(90°)
-- No inverse trig (`asin`/`acos`/`atan`) yet
-- No unit-aware angle overloads yet
+- No unit-aware angle overloads
 
 ```kimin
 print(sin(0))                              // 0
 print(cos(0))                              // 1
-print(round(sin(1.5707963267948966)))      // 1   (≈ sin(π/2))
-print(round(cos(3.141592653589793)))       // -1  (≈ cos(π))
-print(round(tan(0.7853981633974483)))      // 1   (≈ tan(π/4))
+print(round(sin(PI / 2)))                 // 1
+print(round(cos(PI)))                     // -1
+```
+
+**Inverse trigonometry (radians):**
+- `asin(n)` — input must be in [-1, 1]; returns radians; RuntimeError outside domain
+- `acos(n)` — input must be in [-1, 1]; returns radians; RuntimeError outside domain
+- `atan(n)` — any finite Number input; returns radians
+- `atan2(y, x)` — two-argument atan; argument order is atan2(y, x); both must be finite; returns radians
+- No degree mode; no unit-aware angle overloads
+
+```kimin
+print(round(asin(1)))          // 2   (≈ PI/2)
+print(round(acos(-1)))         // 3   (≈ PI)
+print(round(atan(1)))          // 1   (≈ PI/4)
+print(round(atan2(1, 0)))      // 2   (≈ PI/2)
+print(round(atan2(0, -1)))     // 3   (≈ PI)
 ```
 
 **Math constants:**
@@ -843,6 +856,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 18A–18C | Logarithm/exponential builtins: `ln`, `log2`, `log10`, `exp` | ✅ |
 | 18D | Trigonometric builtins: `sin`, `cos`, `tan` (radians, Number-only) | ✅ |
 | 18E | Math constants: `PI` and `E` (read-only builtin Number constants) | ✅ |
+| 18F | Inverse trig: `asin`, `acos`, `atan`, `atan2(y,x)` (radians, Number-only, domain-checked) | ✅ |
 
 ---
 
@@ -850,7 +864,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 4887 passed, 0 failed
+# 5035 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -877,7 +891,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        4887 unit tests
+  tests.rs        5035 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -973,6 +987,9 @@ examples/
   numeric_trig.kimin                numeric_trig_collections.kimin
   numeric_trig_structs.kimin        numeric_trig_simulate.kimin
   numeric_trig_errors.kimin
+  numeric_inverse_trig.kimin        numeric_inverse_trig_edges.kimin
+  numeric_inverse_trig_geometry.kimin  numeric_inverse_trig_collections.kimin
+  numeric_inverse_trig_simulate.kimin  numeric_inverse_trig_errors.kimin
   math_constants.kimin              math_constants_geometry.kimin
   math_constants_collections.kimin  math_constants_simulate.kimin
   math_constants_errors.kimin

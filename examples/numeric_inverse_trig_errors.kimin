@@ -1,0 +1,13 @@
+// Keep runnable by default.
+
+print(round(asin(1)))
+print(round(atan2(1, 0)))
+
+// Uncomment to test asin domain error:
+// print(asin(2))
+
+// Uncomment to test acos domain error:
+// print(acos(-2))
+
+// Uncomment to test wrong type:
+// print(atan("bad"))

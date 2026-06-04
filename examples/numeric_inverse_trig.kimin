@@ -1,0 +1,4 @@
+print(round(asin(1)))
+print(round(acos(-1)))
+print(round(atan(1)))
+print(round(atan2(1, 0)))

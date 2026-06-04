@@ -52074,3 +52074,623 @@ fn disassemble_asin_acos_atan_atan2_stable() {
     assert!(text.contains("Atan2"));
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_asin_zero() {
+    let out = vm_run("print(asin(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_asin_one_rounds_to_pi_over_two() {
+    let out = vm_run("print(round(asin(1)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_asin_out_of_domain_error() {
+    assert!(vm_run("asin(2)").is_err());
+}
+
+#[test]
+fn vm_acos_one_zero() {
+    let out = vm_run("print(acos(1))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_acos_negative_one_rounds_to_pi() {
+    let out = vm_run("print(round(acos(-1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_acos_out_of_domain_error() {
+    assert!(vm_run("acos(-2)").is_err());
+}
+
+#[test]
+fn vm_atan_zero() {
+    let out = vm_run("print(atan(0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_atan_one_rounds_to_pi_over_four() {
+    let out = vm_run("print(round(atan(1)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_atan2_positive_y_zero_x() {
+    let out = vm_run("print(round(atan2(1, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_atan2_zero_y_negative_x() {
+    let out = vm_run("print(round(atan2(0, -1)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_atan2_stack_clean() {
+    let out = vm_run("print(atan2(0, 1))\nprint(round(atan2(1, 0)))").unwrap();
+    assert_eq!(out, vec!["0", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_inverse_trig_basic() {
+    let cases = [
+        ("print(asin(0))", vec!["0"]),
+        ("print(round(asin(1)))", vec!["2"]),
+        ("print(acos(1))", vec!["0"]),
+        ("print(round(acos(-1)))", vec!["3"]),
+        ("print(atan(0))", vec!["0"]),
+        ("print(round(atan(1)))", vec!["1"]),
+        ("print(round(atan2(1, 0)))", vec!["2"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_inverse_trig_errors() {
+    assert!(vm_run("asin(2)").is_err());
+    assert!(vm_run("acos(-2)").is_err());
+}
+
+#[test]
+fn vm_matches_tree_inverse_trig_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn compute(y: Number, x: Number) -> Number { return atan2(y, x) }
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn angle(self) -> Number { return atan2(self.y, self.x) } }
+        let v = Vec2 { x: 0, y: 1 }
+        print(round(compute(1, 0)))
+        print(round(v.angle()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "2"]);
+}
+
+// --- Interaction with trig/constants ---
+
+#[test]
+fn asin_with_sin_pi_over_two() {
+    // round(asin(sin(PI/2))) = round(asin(≈1)) = round(PI/2) = 2
+    let out = vm_run("print(round(asin(sin(PI / 2))))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn acos_with_cos_pi() {
+    // round(acos(cos(PI))) = round(acos(-1)) = round(PI) = 3
+    let out = vm_run("print(round(acos(cos(PI))))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn atan_with_tan_pi_over_four() {
+    // round(atan(tan(PI/4))) = round(atan(1)) = round(PI/4) = 1
+    let out = vm_run("print(round(atan(tan(PI / 4))))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn atan2_with_sin_cos() {
+    // atan2(sin(PI/2), cos(PI/2)) = atan2(≈1, ≈0) = PI/2 → round = 2
+    let out = vm_run("print(round(atan2(sin(PI / 2), cos(PI / 2))))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn pi_e_constants_still_ok_after_inverse_trig() {
+    let out = vm_run("print(round(PI))\nprint(round(E))").unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn sin_cos_tan_still_ok_after_inverse_trig() {
+    let out = vm_run("print(sin(0))\nprint(cos(0))\nprint(tan(0))").unwrap();
+    assert_eq!(out, vec!["0", "1", "0"]);
+}
+
+// --- Interaction with other numeric builtins ---
+
+#[test]
+fn inverse_trig_result_with_round() {
+    let out =
+        vm_run("print(round(asin(1)))\nprint(round(acos(-1)))\nprint(round(atan(1)))").unwrap();
+    assert_eq!(out, vec!["2", "3", "1"]);
+}
+
+#[test]
+fn inverse_trig_result_with_abs() {
+    // abs(asin(-1)) = abs(-PI/2) ≈ 1.57 → round = 2
+    let out = vm_run("print(round(abs(asin(-1))))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_result_with_min_max() {
+    // max(asin(1), acos(1)) = max(PI/2, 0) = PI/2 → round = 2
+    let out = vm_run("print(round(max(asin(1), acos(1))))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn sqrt_pow_still_ok_after_inverse_trig() {
+    let out = vm_run("print(sqrt(9))\nprint(pow(2, 3))").unwrap();
+    assert_eq!(out, vec!["3", "8"]);
+}
+
+#[test]
+fn logs_exp_still_ok_after_inverse_trig() {
+    let out = vm_run("print(ln(1))\nprint(exp(0))\nprint(log2(8))\nprint(log10(1000))").unwrap();
+    assert_eq!(out, vec!["0", "1", "3", "3"]);
+}
+
+#[test]
+fn floor_ceil_round_abs_min_max_still_ok_after_inverse_trig() {
+    let out = vm_run(
+        r#"
+        print(floor(1.9))
+        print(ceil(1.1))
+        print(round(1.5))
+        print(abs(-3))
+        print(min(2, 5))
+        print(max(2, 5))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "2", "3", "2", "5"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn asin_with_to_number_input() {
+    let out = vm_run("let n = to_number(\"1\")\nprint(round(asin(n)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn atan2_with_to_number_input() {
+    let out =
+        vm_run("let y = to_number(\"1\")\nlet x = to_number(\"0\")\nprint(round(atan2(y, x)))")
+            .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn to_string_inverse_trig_result() {
+    let out = vm_run("print(to_string(asin(0)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn to_bool_to_number_to_string_regression_after_inverse_trig() {
+    let out = vm_run(
+        r#"
+        print(to_bool("true"))
+        print(to_number("42"))
+        print(to_string(asin(0)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "42", "0"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn inverse_trig_array_value() {
+    let out = vm_run(
+        r#"
+        let vals = [0, 1]
+        print(asin(vals[0]))
+        print(round(asin(vals[1])))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "2"]);
+}
+
+#[test]
+fn inverse_trig_map_value() {
+    let out = vm_run(
+        r#"
+        let m = {"y": 1, "x": 0}
+        print(round(atan2(m["y"], m["x"])))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        let v = Vec2 { x: 0, y: 1 }
+        print(round(atan2(v.y, v.x)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_method_returns_number() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn angle(self) -> Number { return atan2(self.y, self.x) } }
+        let v = Vec2 { x: 0, y: 1 }
+        print(round(v.angle()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_mut_self_number_field_if_relevant() {
+    let out = vm_run(
+        r#"
+        struct Angle { val: Number }
+        impl Angle {
+            fn normalize(mut self) -> Angle {
+                self.val = asin(sin(self.val))
+                return self
+            }
+        }
+        let mut a = Angle { val: 0 }
+        a = a.normalize()
+        print(a.val)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn inverse_trig_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = 1
+        print(round(asin(arr[0].v)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_inverse_trig() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn inverse_trig_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 2 {
+            total += round(asin(1))
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn inverse_trig_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 2) {
+            total += round(atan2(1, 0))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn inverse_trig_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let vals = [0, 1]
+        let mut total: Number = 0
+        for v in vals {
+            total += round(asin(v))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let vals = [1, 0]
+        let mut total: Number = 0
+        for i, v in vals {
+            total += round(atan2(v, 0) + atan2(0, v + 1))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    // i=0: v=1 → atan2(1,0)≈PI/2→2 + atan2(0,2)=0 = 2
+    // i=1: v=0 → atan2(0,0)=0 + atan2(0,1)=0 = 0
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_inside_function() {
+    let out = vm_run(
+        r#"
+        fn inv_sum(n: Number) -> Number {
+            return round(asin(n)) + round(acos(n))
+        }
+        print(inv_sum(0))
+    "#,
+    )
+    .unwrap();
+    // asin(0)=0 + acos(0)=PI/2≈1.57→round=2 → 2
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn angle(self) -> Number { return atan2(self.y, self.x) } }
+        let v = Vec2 { x: 0, y: 1 }
+        print(round(v.angle()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn inverse_trig_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut angle: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            angle += round(atan2(1, 0))
+        }
+        print(angle)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_matches_tree_inverse_trig_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let vals = [0, 1]
+        let mut total: Number = 0
+        for v in vals {
+            total += round(asin(v))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Unit and state regression ---
+
+#[test]
+fn asin_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 1\nlet n = asin(d)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "asin(unit) should fail: {}", err);
+}
+
+#[test]
+fn atan2_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 1\nlet n = atan2(d, 0)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "atan2(unit, n) should fail: {}", err);
+}
+
+#[test]
+fn asin_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = asin(d)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "asin(state) should fail: {}", err);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_inverse_trig() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let t: seconds = 2
+        let v = d / t
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_inverse_trig() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn asin_wrong_arity_zero_message() {
+    let err = check("asin()").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn asin_wrong_arity_two_message() {
+    let err = check("asin(0, 1)").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") && (err.contains("1") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn atan2_wrong_arity_one_message() {
+    let err = check("atan2(1)").unwrap_err().to_string();
+    assert!(
+        err.contains("atan2") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn atan2_wrong_arity_three_message() {
+    let err = check("atan2(1, 0, 0)").unwrap_err().to_string();
+    assert!(
+        err.contains("atan2") && (err.contains("2") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn asin_wrong_type_message() {
+    let err = check("asin(\"hello\")").unwrap_err().to_string();
+    assert!(
+        err.contains("asin") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn atan2_second_arg_wrong_type_message() {
+    let err = check("atan2(1, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("atan2") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn asin_domain_runtime_message() {
+    let err = vm_run("asin(2)").unwrap_err().to_string();
+    assert!(
+        err.contains("asin")
+            && (err.contains("1") || err.contains("domain") || err.contains("[-1")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn acos_domain_runtime_message() {
+    let err = vm_run("acos(-2)").unwrap_err().to_string();
+    assert!(
+        err.contains("acos")
+            && (err.contains("1") || err.contains("domain") || err.contains("[-1")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn atan_non_finite_runtime_message_if_reachable() {
+    // Non-finite values not reachable; large finite input works fine
+    let out = vm_run("print(round(atan(1000)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn atan2_non_finite_runtime_message_if_reachable() {
+    let out = vm_run("print(round(atan2(1000, 0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}

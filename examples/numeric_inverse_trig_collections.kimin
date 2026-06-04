@@ -1,0 +1,8 @@
+let vals = [0, 1]
+let mut total: Number = 0
+
+for v in vals {
+  total += round(asin(v))
+}
+
+print(total)

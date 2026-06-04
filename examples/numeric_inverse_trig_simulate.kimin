@@ -1,0 +1,10 @@
+let mut angle: Number = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  angle += round(atan2(1, 0))
+}
+
+print(angle)
