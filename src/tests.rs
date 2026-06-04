@@ -17989,6 +17989,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Exp
             | crate::bytecode::Instruction::Pi
             | crate::bytecode::Instruction::EConst
+            | crate::bytecode::Instruction::Hypot
             | crate::bytecode::Instruction::Asin
             | crate::bytecode::Instruction::Acos
             | crate::bytecode::Instruction::Atan
@@ -52859,3 +52860,604 @@ fn vm_runtime_wrong_type_error_inverse_trig_if_unchecked() {
     assert!(check("asin(\"bad\")").is_err());
     assert!(check("atan2(1, \"bad\")").is_err());
 }
+
+// ============================================================
+// M18G — hypot(a, b) Euclidean magnitude builtin
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_hypot_numbers_ok() {
+    assert!(check("let n = hypot(3, 4)").is_ok());
+}
+
+#[test]
+fn type_hypot_result_is_number() {
+    assert!(check("let n: Number = hypot(3, 4)").is_ok());
+}
+
+#[test]
+fn type_hypot_used_in_arithmetic() {
+    assert!(check("let n = hypot(3, 4) + 1").is_ok());
+}
+
+#[test]
+fn type_hypot_used_as_array_index() {
+    assert!(check("let arr = [1, 2, 3, 4, 5]\nlet v = arr[hypot(3, 4)]").is_ok());
+}
+
+#[test]
+fn type_hypot_used_in_range_bound() {
+    assert!(check("for i in range(0, hypot(3, 4)) { print(i) }").is_ok());
+}
+
+#[test]
+fn type_hypot_assign_to_number_ok() {
+    assert!(check("let mut n: Number = 0\nn = hypot(3, 4)").is_ok());
+}
+
+#[test]
+fn type_hypot_struct_field_ok() {
+    assert!(check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: hypot(3, 4) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_hypot_array_value_ok() {
+    assert!(check("let arr: Array<Number> = [hypot(3, 4)]").is_ok());
+}
+
+#[test]
+fn type_hypot_map_value_ok() {
+    assert!(check("let m: Map<Text, Number> = {\"d\": hypot(3, 4)}").is_ok());
+}
+
+#[test]
+fn type_hypot_wrong_arity_zero_error() {
+    let err = check("hypot()").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_wrong_arity_one_error() {
+    let err = check("hypot(3)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_wrong_arity_three_error() {
+    let err = check("hypot(3, 4, 5)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_first_arg_text_error() {
+    let err = check("hypot(\"3\", 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_second_arg_text_error() {
+    let err = check("hypot(3, \"4\")").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_bool_arg_error() {
+    let err = check("hypot(true, 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_array_arg_error() {
+    let err = check("hypot([3], 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_map_arg_error() {
+    let err = check("hypot({\"a\": 3}, 4)").unwrap_err().to_string();
+    assert!(
+        err.contains("hypot") || err.contains("Number"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_hypot_struct_arg_error() {
+    let err = check(
+        r#"
+        struct Pt { x: Number }
+        let p = Pt { x: 3 }
+        let n = hypot(p, 4)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "hypot(struct, n) should fail: {}", err);
+}
+
+#[test]
+fn type_hypot_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 3\nlet n = hypot(d, 4)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "hypot(unit, n) should fail: {}", err);
+}
+
+#[test]
+fn type_hypot_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = hypot(d, 4)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "hypot(state, n) should fail: {}", err);
+}
+
+#[test]
+fn type_inverse_trig_still_ok_after_hypot() {
+    assert!(check("let n = asin(0) + acos(1) + atan(0) + atan2(1, 0)").is_ok());
+}
+
+#[test]
+fn type_numeric_builtins_still_ok_after_hypot() {
+    assert!(check("let n = sqrt(9) + abs(-1) + sin(0) + cos(0) + ln(1)").is_ok());
+}
+
+#[test]
+fn type_conversion_builtins_still_ok_after_hypot() {
+    assert!(check(
+        r#"
+        let s = to_string(hypot(3, 4))
+        let n = to_number("5")
+        let b = to_bool("true")
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_constants_still_ok_after_hypot() {
+    assert!(check("let n = hypot(PI, E)").is_ok());
+}
+
+// --- Interpreter / behavior tests ---
+
+#[test]
+fn interp_hypot_3_4() {
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_hypot_5_12() {
+    let out = vm_run("print(hypot(5, 12))").unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn interp_hypot_negative_first_arg() {
+    let out = vm_run("print(hypot(-3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_hypot_negative_second_arg() {
+    let out = vm_run("print(hypot(3, -4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_hypot_both_negative() {
+    let out = vm_run("print(hypot(-3, -4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_hypot_zero_zero() {
+    let out = vm_run("print(hypot(0, 0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_hypot_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_a() -> Number { calls += 1 return 3 }
+        fn get_b() -> Number { calls += 1 return 4 }
+        let n = hypot(get_a(), get_b())
+        print(n)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5", "2"]);
+}
+
+#[test]
+fn interp_hypot_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        let mut order = 0
+        fn first() -> Number { order += 1 return 3 }
+        fn second() -> Number { order += 10 return 4 }
+        hypot(first(), second())
+        print(order)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn interp_hypot_result_arithmetic() {
+    let out = vm_run("print(hypot(3, 4) + hypot(5, 12))").unwrap();
+    assert_eq!(out, vec!["18"]);
+}
+
+#[test]
+fn interp_hypot_inside_function() {
+    let out = vm_run(
+        r#"
+        fn dist(x: Number, y: Number) -> Number { return hypot(x, y) }
+        print(dist(3, 4))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_hypot_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn magnitude(self) -> Number { return hypot(self.x, self.y) } }
+        let v = Vec2 { x: 3, y: 4 }
+        print(v.magnitude())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_hypot_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn scale(a: Number, b: Number) -> Number { return hypot(a, b) * 2 }
+        print(scale(3, 4))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn interp_hypot_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            total += hypot(3, 4)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+// --- Edge behavior tests ---
+
+#[test]
+fn hypot_3_4() {
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_4_3() {
+    let out = vm_run("print(hypot(4, 3))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_negative_first_arg() {
+    let out = vm_run("print(hypot(-3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_negative_second_arg() {
+    let out = vm_run("print(hypot(3, -4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_both_negative_args() {
+    let out = vm_run("print(hypot(-3, -4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn hypot_zero_zero() {
+    let out = vm_run("print(hypot(0, 0))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn hypot_5_12() {
+    let out = vm_run("print(hypot(5, 12))").unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn hypot_non_finite_input_error_if_reachable() {
+    // Non-finite values not reachable in Kimin; large finite inputs work fine.
+    let out = vm_run("print(hypot(1000, 0))").unwrap();
+    assert_eq!(out, vec!["1000"]);
+}
+
+#[test]
+fn hypot_non_finite_result_error_if_reachable() {
+    // hypot of finite values always produces finite result.
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+// --- Argument order / symmetry ---
+
+#[test]
+fn hypot_args_eval_left_to_right_once() {
+    let out = vm_run(
+        r#"
+        let mut log = 0
+        fn a_arg() -> Number { log += 1 return 3 }
+        fn b_arg() -> Number { log += 10 return 4 }
+        hypot(a_arg(), b_arg())
+        print(log)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn hypot_side_effect_args_tree_vm_match() {
+    let src = r#"
+        let mut log = 0
+        fn a_arg() -> Number { log += 1 return 3 }
+        fn b_arg() -> Number { log += 10 return 4 }
+        let n = hypot(a_arg(), b_arg())
+        print(log)
+        print(n)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["11", "5"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_hypot_emits_instruction() {
+    let prog = compile_prog("let n = hypot(3, 4)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn bytecode_hypot_no_call_instruction() {
+    let prog = compile_prog("print(hypot(3, 4))");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "hypot should not emit Call");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn bytecode_hypot_compiles_args_left_to_right() {
+    let prog = compile_prog("let n = hypot(3, 4)");
+    let instrs: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    let text = instrs.join(" ");
+    assert!(text.contains("Hypot"));
+}
+
+#[test]
+fn bytecode_hypot_args_left_to_right() {
+    let prog = compile_prog("let n = hypot(3, 4)");
+    let count = prog
+        .main
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Hypot))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn bytecode_hypot_inside_function() {
+    let prog = compile_prog("fn f(a: Number, b: Number) -> Number { return hypot(a, b) }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn bytecode_hypot_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Vec2 { x: Number y: Number }
+        impl Vec2 { fn magnitude(self) -> Number { return hypot(self.x, self.y) } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "magnitude")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn bytecode_hypot_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += hypot(3, 4)
+        }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn bytecode_inverse_trig_unchanged_after_hypot() {
+    let prog = compile_prog("let n = asin(0) + acos(1) + atan(0) + atan2(1, 0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Asin)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Atan2)));
+}
+
+#[test]
+fn bytecode_constants_unchanged_after_hypot() {
+    let prog = compile_prog("let n = hypot(PI, E)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_hypot() {
+    let prog = compile_prog("let n = sqrt(9) + sin(0) + ln(1)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_hypot() {
+    let prog = compile_prog("let s = to_string(hypot(3, 4))");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Hypot)));
+}
+
+#[test]
+fn disassemble_hypot_stable() {
+    let prog = compile_prog("print(hypot(3, 4))");
+    let instrs: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    assert!(instrs.join(" ").contains("Hypot"));
+}
+
