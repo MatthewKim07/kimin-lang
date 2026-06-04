@@ -577,6 +577,16 @@ impl TypeChecker {
                         );
                         // Remaining params (skip self at index 0)
                         for param in params.iter().skip(1) {
+                            if param.name == "PI" || param.name == "E" {
+                                return Err(TypeError {
+                                    msg: format!(
+                                        "cannot use builtin constant name '{}' as parameter",
+                                        param.name
+                                    ),
+                                    line: param.span.line,
+                                    col: param.span.col,
+                                });
+                            }
                             let ty = self.resolve_annotation(&param.ty, *mspan)?;
                             self.env.define(param.name.clone(), ty);
                         }
@@ -1283,6 +1293,13 @@ impl TypeChecker {
                         })
                     }
                 };
+                if var_name == "PI" || var_name == "E" {
+                    return Err(TypeError {
+                        msg: format!("cannot shadow builtin constant '{}'", var_name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
                 self.env.push_scope();
                 self.env
                     .define_with_variant(var_name.clone(), elem_ty, None, false);
@@ -1319,6 +1336,20 @@ impl TypeChecker {
                         })
                     }
                 };
+                if index_name == "PI" || index_name == "E" {
+                    return Err(TypeError {
+                        msg: format!("cannot shadow builtin constant '{}'", index_name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+                if var_name == "PI" || var_name == "E" {
+                    return Err(TypeError {
+                        msg: format!("cannot shadow builtin constant '{}'", var_name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
                 self.env.push_scope();
                 self.env
                     .define_with_variant(index_name.clone(), Type::Number, None, false);
