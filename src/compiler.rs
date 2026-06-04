@@ -1127,6 +1127,14 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Tan);
                         return Ok(());
                     }
+                    // clamp: compile n, lo, hi, emit Clamp
+                    if name == "clamp" && args.len() == 3 {
+                        self.compile_expr(&args[0])?; // n
+                        self.compile_expr(&args[1])?; // lo
+                        self.compile_expr(&args[2])?; // hi
+                        self.chunk.emit(Instruction::Clamp);
+                        return Ok(());
+                    }
                     // hypot: compile a then b, emit Hypot
                     if name == "hypot" && args.len() == 2 {
                         self.compile_expr(&args[0])?; // a

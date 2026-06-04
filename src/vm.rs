@@ -1211,6 +1211,55 @@ impl Vm {
                     stack.push(Value::Number(r));
                 }
 
+                Instruction::Clamp => {
+                    let hi_val = pop(stack)?;
+                    let lo_val = pop(stack)?;
+                    let n_val = pop(stack)?;
+                    let hi = match hi_val {
+                        Value::Number(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "clamp() argument 3 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let lo = match lo_val {
+                        Value::Number(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "clamp() argument 2 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let n = match n_val {
+                        Value::Number(v) => v,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "clamp() argument 1 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() || !lo.is_finite() || !hi.is_finite() {
+                        return Err(runtime_err("clamp input is not finite"));
+                    }
+                    if lo > hi {
+                        return Err(runtime_err(
+                            "clamp lower bound cannot be greater than upper bound",
+                        ));
+                    }
+                    let result = if n < lo {
+                        lo
+                    } else if n > hi {
+                        hi
+                    } else {
+                        n
+                    };
+                    stack.push(Value::Number(result));
+                }
+
                 Instruction::Hypot => {
                     let b_val = pop(stack)?;
                     let a_val = pop(stack)?;

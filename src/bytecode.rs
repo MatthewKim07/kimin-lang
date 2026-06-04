@@ -179,6 +179,8 @@ pub enum Instruction {
     Pi,
     /// Math constant e (2.718281828459045). Stack: [...] → Number.
     EConst,
+    /// Clamp n to [lo, hi]. Stack: [..., n, lo, hi] → clamp(n, lo, hi). RuntimeError if lo > hi or non-finite.
+    Clamp,
     /// Euclidean magnitude. Stack: [..., a, b] → hypot(a, b). RuntimeError for non-finite input/result.
     Hypot,
     /// Inverse sine. Stack: [..., n] → asin(n) radians. RuntimeError if n ∉ [-1, 1].

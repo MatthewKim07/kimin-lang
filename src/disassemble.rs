@@ -190,6 +190,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Max => "MAX".to_string(),
         Instruction::Pi => "PI".to_string(),
         Instruction::EConst => "E_CONST".to_string(),
+        Instruction::Clamp => "CLAMP".to_string(),
         Instruction::Hypot => "HYPOT".to_string(),
         Instruction::Asin => "ASIN".to_string(),
         Instruction::Acos => "ACOS".to_string(),
