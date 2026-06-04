@@ -1663,6 +1663,40 @@ impl Interpreter {
                         return Ok(Value::Number(result));
                     }
 
+                    // sin / cos / tan: Number -> Number (radians)
+                    if matches!(name.as_str(), "sin" | "cos" | "tan") && args.len() == 1 {
+                        let val = self.eval_expr(&args[0])?;
+                        let n = match val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "{}() expects Number, got {}",
+                                        name,
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        if !n.is_finite() {
+                            return Err(RuntimeError {
+                                msg: format!("{} input is not finite", name),
+                            });
+                        }
+                        let result = match name.as_str() {
+                            "sin" => n.sin(),
+                            "cos" => n.cos(),
+                            "tan" => n.tan(),
+                            _ => unreachable!(),
+                        };
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: format!("{} result is not finite", name),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
                     // sqrt: Number -> Number (non-negative)
                     if name == "sqrt" && args.len() == 1 {
                         let val = self.eval_expr(&args[0])?;
