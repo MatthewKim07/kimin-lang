@@ -1127,6 +1127,29 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Tan);
                         return Ok(());
                     }
+                    // asin / acos / atan: compile arg, emit instruction
+                    if name == "asin" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Asin);
+                        return Ok(());
+                    }
+                    if name == "acos" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Acos);
+                        return Ok(());
+                    }
+                    if name == "atan" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Atan);
+                        return Ok(());
+                    }
+                    // atan2: compile y then x, emit Atan2
+                    if name == "atan2" && args.len() == 2 {
+                        self.compile_expr(&args[0])?; // y
+                        self.compile_expr(&args[1])?; // x
+                        self.chunk.emit(Instruction::Atan2);
+                        return Ok(());
+                    }
                     // sqrt: compile arg, emit Sqrt
                     if name == "sqrt" && args.len() == 1 {
                         self.compile_expr(&args[0])?;

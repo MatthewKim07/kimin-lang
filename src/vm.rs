@@ -1211,6 +1211,112 @@ impl Vm {
                     stack.push(Value::Number(r));
                 }
 
+                Instruction::Asin => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "asin() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() {
+                        return Err(runtime_err("asin input is not finite"));
+                    }
+                    if n < -1.0 || n > 1.0 {
+                        return Err(runtime_err(&format!(
+                            "asin requires input in [-1, 1], got {}",
+                            n
+                        )));
+                    }
+                    let r = n.asin();
+                    if !r.is_finite() {
+                        return Err(runtime_err("asin result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Acos => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "acos() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() {
+                        return Err(runtime_err("acos input is not finite"));
+                    }
+                    if n < -1.0 || n > 1.0 {
+                        return Err(runtime_err(&format!(
+                            "acos requires input in [-1, 1], got {}",
+                            n
+                        )));
+                    }
+                    let r = n.acos();
+                    if !r.is_finite() {
+                        return Err(runtime_err("acos result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Atan => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "atan() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() {
+                        return Err(runtime_err("atan input is not finite"));
+                    }
+                    let r = n.atan();
+                    if !r.is_finite() {
+                        return Err(runtime_err("atan result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Atan2 => {
+                    let x_val = pop(stack)?;
+                    let y_val = pop(stack)?;
+                    let x = match x_val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "atan2() argument 2 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let y = match y_val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "atan2() argument 1 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !y.is_finite() || !x.is_finite() {
+                        return Err(runtime_err("atan2 input is not finite"));
+                    }
+                    let r = y.atan2(x);
+                    if !r.is_finite() {
+                        return Err(runtime_err("atan2 result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
                 Instruction::Sqrt => {
                     let val = pop(stack)?;
                     let n = match val {

@@ -179,6 +179,14 @@ pub enum Instruction {
     Pi,
     /// Math constant e (2.718281828459045). Stack: [...] → Number.
     EConst,
+    /// Inverse sine. Stack: [..., n] → asin(n) radians. RuntimeError if n ∉ [-1, 1].
+    Asin,
+    /// Inverse cosine. Stack: [..., n] → acos(n) radians. RuntimeError if n ∉ [-1, 1].
+    Acos,
+    /// Inverse tangent (one-arg). Stack: [..., n] → atan(n) radians.
+    Atan,
+    /// Two-arg inverse tangent. Stack: [..., y, x] → atan2(y, x) radians.
+    Atan2,
     /// Sine (radians). Stack: [..., n] → sin(n). RuntimeError for non-finite input or result.
     Sin,
     /// Cosine (radians). Stack: [..., n] → cos(n). RuntimeError for non-finite input or result.
