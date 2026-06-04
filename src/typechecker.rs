@@ -666,6 +666,15 @@ impl TypeChecker {
                 value,
                 span,
             } => {
+                // Reject shadowing of builtin constants PI/E.
+                if name == "PI" || name == "E" {
+                    return Err(TypeError {
+                        msg: format!("cannot shadow builtin constant '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
                 // Pre-resolve annotation so we can pass the expected type to the expression
                 // checker — this enables empty array literals when the annotation is Array<T>.
                 let ann_ty_opt: Option<Type> = match annotation.as_ref() {
@@ -723,6 +732,15 @@ impl TypeChecker {
             }
 
             Stmt::Assign { name, value, span } => {
+                // Reject assignment to builtin constants.
+                if name == "PI" || name == "E" {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to builtin constant '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
                 let (var_ty, var_mutable) = self
                     .env
                     .get(name)
@@ -779,6 +797,15 @@ impl TypeChecker {
                 value,
                 span,
             } => {
+                // Reject compound assignment to builtin constants.
+                if name == "PI" || name == "E" {
+                    return Err(TypeError {
+                        msg: format!("cannot assign to builtin constant '{}'", name),
+                        line: span.line,
+                        col: span.col,
+                    });
+                }
+
                 let (var_ty, var_mutable) = self
                     .env
                     .get(name)
@@ -1099,6 +1126,16 @@ impl TypeChecker {
 
                 self.env.push_scope();
                 for param in params {
+                    if param.name == "PI" || param.name == "E" {
+                        return Err(TypeError {
+                            msg: format!(
+                                "cannot use builtin constant name '{}' as parameter",
+                                param.name
+                            ),
+                            line: param.span.line,
+                            col: param.span.col,
+                        });
+                    }
                     let param_ty = self.resolve_annotation(&param.ty, param.span)?;
                     self.env.define(param.name.clone(), param_ty);
                 }
@@ -1537,6 +1574,10 @@ impl TypeChecker {
             Expr::Bool(_) => Ok(Type::Bool),
 
             Expr::Variable { name, span } => {
+                // Builtin constants: PI and E are always Number.
+                if name == "PI" || name == "E" {
+                    return Ok(Type::Number);
+                }
                 self.env
                     .get(name)
                     .map(|vi| vi.ty.clone())
@@ -1984,6 +2025,16 @@ impl TypeChecker {
             }
 
             Expr::Call { callee, args, span } => {
+                // Builtin constants PI/E are not callable.
+                if let Expr::Variable { name, .. } = callee.as_ref() {
+                    if name == "PI" || name == "E" {
+                        return Err(TypeError {
+                            msg: format!("'{}' is a builtin constant, not a function", name),
+                            line: span.line,
+                            col: span.col,
+                        });
+                    }
+                }
                 // `len` builtin: len(array) -> Number
                 if let Expr::Variable { name, .. } = callee.as_ref() {
                     if name == "len" {

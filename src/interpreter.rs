@@ -860,6 +860,13 @@ impl Interpreter {
             }
 
             Expr::Variable { name, .. } => {
+                // Builtin constants.
+                if name == "PI" {
+                    return Ok(Value::Number(std::f64::consts::PI));
+                }
+                if name == "E" {
+                    return Ok(Value::Number(std::f64::consts::E));
+                }
                 self.env.borrow().get(name).ok_or_else(|| RuntimeError {
                     msg: format!("undefined variable '{}'", name),
                 })
