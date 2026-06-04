@@ -1704,6 +1704,94 @@ impl Interpreter {
                         return Ok(Value::Number(result));
                     }
 
+                    // asin / acos / atan: Number -> Number (radians)
+                    if matches!(name.as_str(), "asin" | "acos" | "atan") && args.len() == 1 {
+                        let val = self.eval_expr(&args[0])?;
+                        let n = match val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "{}() expects Number, got {}",
+                                        name,
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        if !n.is_finite() {
+                            return Err(RuntimeError {
+                                msg: format!("{} input is not finite", name),
+                            });
+                        }
+                        let result = match name.as_str() {
+                            "asin" => {
+                                if n < -1.0 || n > 1.0 {
+                                    return Err(RuntimeError {
+                                        msg: format!("asin requires input in [-1, 1], got {}", n),
+                                    });
+                                }
+                                n.asin()
+                            }
+                            "acos" => {
+                                if n < -1.0 || n > 1.0 {
+                                    return Err(RuntimeError {
+                                        msg: format!("acos requires input in [-1, 1], got {}", n),
+                                    });
+                                }
+                                n.acos()
+                            }
+                            "atan" => n.atan(),
+                            _ => unreachable!(),
+                        };
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: format!("{} result is not finite", name),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
+                    // atan2: Number, Number -> Number (radians)
+                    if name == "atan2" && args.len() == 2 {
+                        let y_val = self.eval_expr(&args[0])?;
+                        let y = match y_val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "atan2() argument 1 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let x_val = self.eval_expr(&args[1])?;
+                        let x = match x_val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "atan2() argument 2 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        if !y.is_finite() || !x.is_finite() {
+                            return Err(RuntimeError {
+                                msg: "atan2 input is not finite".into(),
+                            });
+                        }
+                        let result = y.atan2(x);
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: "atan2 result is not finite".into(),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
                     // sqrt: Number -> Number (non-negative)
                     if name == "sqrt" && args.len() == 1 {
                         let val = self.eval_expr(&args[0])?;

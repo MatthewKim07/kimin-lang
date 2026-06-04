@@ -2683,6 +2683,60 @@ impl TypeChecker {
                         return Ok(Type::Number);
                     }
 
+                    // asin / acos / atan: Number -> Number (radians)
+                    if matches!(name.as_str(), "asin" | "acos" | "atan") {
+                        if args.len() != 1 {
+                            return Err(TypeError {
+                                msg: format!("{}() expects 1 argument, got {}", name, args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let arg_ty = self.check_expr(&args[0], *span)?;
+                        if !arg_ty.is_unknown() && arg_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!("{}() expects Number, got {}", name, arg_ty.name()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
+                    // atan2: Number, Number -> Number (radians)
+                    if name == "atan2" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("atan2() expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let y_ty = self.check_expr(&args[0], *span)?;
+                        if !y_ty.is_unknown() && y_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "atan2() argument 1 expects Number, got {}",
+                                    y_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let x_ty = self.check_expr(&args[1], *span)?;
+                        if !x_ty.is_unknown() && x_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "atan2() argument 2 expects Number, got {}",
+                                    x_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
                     // sqrt: Number -> Number (non-negative required at runtime)
                     if name == "sqrt" {
                         if args.len() != 1 {
