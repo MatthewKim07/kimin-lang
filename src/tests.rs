@@ -48244,3 +48244,55 @@ fn exp_non_finite_runtime_message() {
         err
     );
 }
+
+// --- M18C audit: missing tests ---
+
+#[test]
+fn type_sqrt_pow_still_ok_after_logs_exp() {
+    assert!(check("let a = sqrt(9)\nlet b = pow(2, 10)\nlet c = sqrt(pow(2, 4))").is_ok());
+}
+
+#[test]
+fn log2_power_of_two_exact() {
+    // log2(8) = exactly 3; no rounding needed
+    let out = vm_run("print(log2(8))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn log10_power_of_ten_exact() {
+    // log10(1000) = exactly 3; no rounding needed
+    let out = vm_run("print(log10(1000))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn logs_exp_mut_self_number_field_if_relevant() {
+    // exp and log work on a field updated via mut self method
+    let out = vm_run(
+        r#"
+        struct Rate { value: Number }
+        impl Rate {
+            fn scale(mut self) -> Rate {
+                self.value = log2(self.value) + 1
+                return self
+            }
+        }
+        let mut r = Rate { value: 8 }
+        r = r.scale()
+        print(r.value)
+        print(exp(0))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4", "1"]);
+}
+
+#[test]
+fn exp_non_finite_input_error_if_reachable() {
+    // Non-finite Number values cannot be produced in Kimin (division by zero
+    // raises RuntimeError, no NaN/Inf literals exist). Verify that exp of a
+    // very negative number underflows to 0 (finite) without error.
+    let out = vm_run("print(exp(-800))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
