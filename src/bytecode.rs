@@ -179,6 +179,8 @@ pub enum Instruction {
     Pi,
     /// Math constant e (2.718281828459045). Stack: [...] → Number.
     EConst,
+    /// Euclidean magnitude. Stack: [..., a, b] → hypot(a, b). RuntimeError for non-finite input/result.
+    Hypot,
     /// Inverse sine. Stack: [..., n] → asin(n) radians. RuntimeError if n ∉ [-1, 1].
     Asin,
     /// Inverse cosine. Stack: [..., n] → acos(n) radians. RuntimeError if n ∉ [-1, 1].

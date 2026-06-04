@@ -1211,6 +1211,37 @@ impl Vm {
                     stack.push(Value::Number(r));
                 }
 
+                Instruction::Hypot => {
+                    let b_val = pop(stack)?;
+                    let a_val = pop(stack)?;
+                    let b = match b_val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "hypot() argument 2 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let a = match a_val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "hypot() argument 1 expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !a.is_finite() || !b.is_finite() {
+                        return Err(runtime_err("hypot input is not finite"));
+                    }
+                    let r = a.hypot(b);
+                    if !r.is_finite() {
+                        return Err(runtime_err("hypot result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
                 Instruction::Asin => {
                     let val = pop(stack)?;
                     let n = match val {

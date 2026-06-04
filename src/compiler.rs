@@ -1127,6 +1127,13 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Tan);
                         return Ok(());
                     }
+                    // hypot: compile a then b, emit Hypot
+                    if name == "hypot" && args.len() == 2 {
+                        self.compile_expr(&args[0])?; // a
+                        self.compile_expr(&args[1])?; // b
+                        self.chunk.emit(Instruction::Hypot);
+                        return Ok(());
+                    }
                     // asin / acos / atan: compile arg, emit instruction
                     if name == "asin" && args.len() == 1 {
                         self.compile_expr(&args[0])?;
