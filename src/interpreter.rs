@@ -1704,6 +1704,46 @@ impl Interpreter {
                         return Ok(Value::Number(result));
                     }
 
+                    // hypot: Number, Number -> Number (Euclidean magnitude)
+                    if name == "hypot" && args.len() == 2 {
+                        let a_val = self.eval_expr(&args[0])?;
+                        let a = match a_val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "hypot() argument 1 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let b_val = self.eval_expr(&args[1])?;
+                        let b = match b_val {
+                            Value::Number(n) => n,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "hypot() argument 2 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        if !a.is_finite() || !b.is_finite() {
+                            return Err(RuntimeError {
+                                msg: "hypot input is not finite".into(),
+                            });
+                        }
+                        let result = a.hypot(b);
+                        if !result.is_finite() {
+                            return Err(RuntimeError {
+                                msg: "hypot result is not finite".into(),
+                            });
+                        }
+                        return Ok(Value::Number(result));
+                    }
+
                     // asin / acos / atan: Number -> Number (radians)
                     if matches!(name.as_str(), "asin" | "acos" | "atan") && args.len() == 1 {
                         let val = self.eval_expr(&args[0])?;

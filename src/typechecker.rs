@@ -2683,6 +2683,40 @@ impl TypeChecker {
                         return Ok(Type::Number);
                     }
 
+                    // hypot: Number, Number -> Number (Euclidean magnitude)
+                    if name == "hypot" {
+                        if args.len() != 2 {
+                            return Err(TypeError {
+                                msg: format!("hypot() expects 2 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let a_ty = self.check_expr(&args[0], *span)?;
+                        if !a_ty.is_unknown() && a_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "hypot() argument 1 expects Number, got {}",
+                                    a_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let b_ty = self.check_expr(&args[1], *span)?;
+                        if !b_ty.is_unknown() && b_ty != Type::Number {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "hypot() argument 2 expects Number, got {}",
+                                    b_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        return Ok(Type::Number);
+                    }
+
                     // asin / acos / atan: Number -> Number (radians)
                     if matches!(name.as_str(), "asin" | "acos" | "atan") {
                         if args.len() != 1 {
