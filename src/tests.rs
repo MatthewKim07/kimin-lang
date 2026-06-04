@@ -50729,3 +50729,530 @@ fn parse_normal_identifier_episode_still_ok() {
     // "episode" is not E; plain identifiers starting with E prefix work.
     assert!(check("let episode = 5").is_ok());
 }
+
+// ============================================================
+// M18E audit: missing tests
+// ============================================================
+
+// --- Parser additions ---
+
+#[test]
+fn parse_e_in_function_call_arg() {
+    assert!(check("let n = ln(E)").is_ok());
+}
+
+#[test]
+fn parse_e_call_rejected_or_type_error() {
+    assert!(check("E()").is_err());
+}
+
+#[test]
+fn parse_struct_field_named_pi_if_supported() {
+    // Struct fields named PI are allowed (field context, not expression).
+    let out = vm_run(
+        r#"
+        struct S { PI: Number }
+        let s = S { PI: 3 }
+        print(s.PI)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn parse_state_variant_with_e_if_supported() {
+    // State variants named E work via dot syntax; bare E remains builtin constant.
+    let out = vm_run(
+        r#"
+        state Charge { low medium high transition low -> medium transition medium -> high }
+        let mut c = Charge.low
+        transition c -> medium
+        print(c)
+        print(E > 2)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Charge.medium", "true"]);
+}
+
+// --- Typechecker additions ---
+
+#[test]
+fn type_e_used_with_exp_or_pow() {
+    assert!(check("let n = pow(E, 2)").is_ok());
+    assert!(check("let n = exp(ln(E))").is_ok());
+}
+
+#[test]
+fn type_constants_used_as_function_arg() {
+    assert!(check("fn f(n: Number) -> Number { return n }\nlet x = f(PI)").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_method_body() {
+    assert!(check(
+        r#"
+        struct Circle { radius: Number }
+        impl Circle { fn area(self) -> Number { return PI * self.radius * self.radius } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_e_call_error() {
+    let err = check("E()").unwrap_err().to_string();
+    assert!(
+        err.contains("E")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}
+
+// --- Read-only / shadowing additions ---
+
+#[test]
+fn type_e_compound_assign_error() {
+    let err = check("E += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_mut_pi_shadow_error() {
+    let err = check("let mut PI = 3").unwrap_err().to_string();
+    assert!(
+        err.contains("PI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_mut_e_shadow_error() {
+    let err = check("let mut E = 2").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_param_e_shadow_error() {
+    let err = check("fn f(E: Number) -> Number { return E }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("E") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_method_param_pi_shadow_error() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        impl S { fn f(self, PI: Number) -> Number { return PI } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("PI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_for_each_pi_shadow_error_if_applicable() {
+    let err = check("for PI in [1, 2, 3] { print(PI) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_indexed_for_each_e_shadow_error_if_applicable() {
+    let err = check("for E, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("E") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_pi_path_assignment_error_if_parseable() {
+    // PI = 3 is caught; PI as an assignment target is rejected.
+    assert!(check("PI = 3").is_err());
+}
+
+// --- Error message additions ---
+
+#[test]
+fn e_compound_assignment_error_message() {
+    let err = check("E += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("E") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn method_param_e_shadow_error_message() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        impl S { fn f(self, E: Number) -> Number { return E } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("E") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn e_call_error_message() {
+    let err = check("E()").unwrap_err().to_string();
+    assert!(
+        err.contains("E")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}
+
+// --- Interpreter additions ---
+
+#[test]
+fn interp_constants_inside_block() {
+    // Kimin blocks are statements; PI works inside nested block scopes.
+    let out = vm_run(
+        r#"
+        let mut n: Number = 0
+        {
+            let x = PI * 2
+            n = round(x)
+        }
+        print(n)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_constants_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 2 {
+            total += round(sin(PI / 2))
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_constants_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let vals = [PI, E]
+        let mut total: Number = 0
+        for v in vals {
+            total += round(v)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_constants_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let vals = [PI, E]
+        let mut total: Number = 0
+        for i, v in vals {
+            total += round(v)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_normal_identifier_pie_env_lookup() {
+    // "pie" is not PI; resolves through env normally.
+    let out = vm_run("let pie = 42\nprint(pie)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_normal_identifier_episode_env_lookup() {
+    // "episode" is not E; resolves through env normally.
+    let out = vm_run("let episode = 7\nprint(episode)").unwrap();
+    assert_eq!(out, vec!["7"]);
+}
+
+// --- Bytecode additions ---
+
+#[test]
+fn bytecode_pi_no_call_instruction() {
+    let prog = compile_prog("print(PI)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "PI should not emit Call");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+#[test]
+fn bytecode_e_no_call_instruction() {
+    let prog = compile_prog("print(E)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "E should not emit Call");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+}
+
+#[test]
+fn bytecode_constants_inside_closure() {
+    let prog = compile_prog(
+        r#"
+        fn scale(n: Number) -> Number { return n * PI }
+        let n = scale(2)
+    "#,
+    );
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "scale").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+#[test]
+fn bytecode_constants_with_logs_exp() {
+    let prog = compile_prog("let n = ln(E) + exp(0) + log2(8) + log10(1000)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ln)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Exp)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_constants() {
+    let prog =
+        compile_prog("let s = to_string(PI)\nlet n = to_number(\"3\")\nlet b = to_bool(\"true\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToNumber)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToBool)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_constants() {
+    let prog = compile_prog(
+        r#"
+        struct Circle { radius: Number }
+        impl Circle { fn area(self) -> Number { return PI * self.radius * self.radius } }
+        let c = Circle { radius: 1 }
+        let n = c.area()
+    "#,
+    );
+    let has_call_method = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. }));
+    assert!(has_call_method, "CALL_METHOD should be emitted");
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "area")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_constants() {
+    let prog = compile_prog(
+        r#"
+        struct S { n: Number }
+        let mut arr: Array<S> = [S { n: 0 }]
+        arr[0].n = PI
+    "#,
+    );
+    let has_set_path = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has_set_path, "SetPath should be emitted");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+}
+
+// --- VM additions ---
+
+#[test]
+fn vm_constants_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn circle_area(r: Number) -> Number { return PI * r * r }
+        print(round(circle_area(2)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["13"]);
+}
+
+#[test]
+fn vm_constants_in_array_map_struct() {
+    let out = vm_run(
+        r#"
+        let arr = [PI, E]
+        let m: Map<Text, Number> = {"pi": PI, "e": E}
+        struct Vals { pi: Number }
+        let v = Vals { pi: PI }
+        print(round(arr[0]))
+        print(round(m["e"]))
+        print(round(v.pi))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3", "3", "3"]);
+}
+
+// --- Display / format ---
+
+#[test]
+fn raw_constant_display_documented() {
+    // PI and E display as their full f64 representations.
+    // These are stable across platforms (IEEE 754 deterministic).
+    let pi_out = vm_run("print(PI)").unwrap();
+    let e_out = vm_run("print(E)").unwrap();
+    assert_eq!(
+        pi_out,
+        vec!["3.141592653589793"],
+        "PI display must be exact"
+    );
+    assert_eq!(e_out, vec!["2.718281828459045"], "E display must be exact");
+    // Approximate use goes through round().
+    let approx = vm_run("print(round(PI + E))").unwrap();
+    assert_eq!(approx, vec!["6"]);
+}
+
+// --- Math builtin additions ---
+
+#[test]
+fn constants_with_min_max() {
+    let out = vm_run("print(max(PI, E))\nprint(min(PI, E))").unwrap();
+    assert_eq!(out, vec!["3.141592653589793", "2.718281828459045"]);
+}
+
+// --- State/variant additions ---
+
+#[test]
+fn state_variant_syntax_still_ok_after_constants() {
+    let out = vm_run(
+        r#"
+        state Light { red green transition red -> green }
+        let mut light = Light.red
+        transition light -> green
+        print(light)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Light.green"]);
+}
+
+#[test]
+fn state_variant_named_e_or_pi_if_supported_does_not_conflict_or_is_documented() {
+    // State machine with variants named differently from PI/E — no conflict.
+    // Bare E/PI in expression position always resolves to builtin constant.
+    let out = vm_run(
+        r#"
+        state Energy { low high transition low -> high }
+        let mut e = Energy.low
+        transition e -> high
+        print(e)
+        print(round(E))
+    "#,
+    )
+    .unwrap();
+    // e (variable) holds state, E (builtin) holds math constant
+    assert_eq!(out, vec!["Energy.high", "3"]);
+}
