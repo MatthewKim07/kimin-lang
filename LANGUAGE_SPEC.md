@@ -1638,6 +1638,42 @@ print(round(tan(0.7853981633974483)))      // 1   (≈ tan(π/4))
 
 ---
 
+### 4.12C Math Constants (Milestone 18E)
+
+Two read-only builtin constants of type `Number`:
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| `PI` | 3.141592653589793 | `std::f64::consts::PI` |
+| `E` | 2.718281828459045 | `std::f64::consts::E` |
+
+**Static type rules:**
+- `PI` and `E` always have type `Type::Number`.
+- Usable in any expression position.
+- Assignment `PI = 3`, compound assignment `PI += 1`, shadowing `let PI = 3`, and function param `fn f(PI: Number)` are `TypeError`.
+- Calling `PI()` or `E()` is `TypeError: 'PI' is a builtin constant, not a function`.
+
+**Runtime rules:**
+- Interpreter: intercepted before env lookup; return `Value::Number(std::f64::consts::PI)` / `E`.
+- No TAU, PHI, or other constants yet.
+- No user-defined `const` declarations.
+
+**Bytecode:**
+- `Instruction::Pi` → push `3.141592653589793`
+- `Instruction::EConst` → push `2.718281828459045`
+- Disassembler: `PI`, `E_CONST`
+
+**Examples:**
+```kimin
+print(PI)                              // 3.141592653589793
+print(E)                               // 2.718281828459045
+print(round(sin(PI / 2)))             // 1
+print(round(cos(PI)))                 // -1
+print(round(ln(E)))                   // 1
+```
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:

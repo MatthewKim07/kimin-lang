@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-4737_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-4849_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-18D-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-18E-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **4737 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **4849 tests passing**.
 
 ---
 
@@ -548,6 +548,19 @@ print(round(cos(3.141592653589793)))       // -1  (≈ cos(π))
 print(round(tan(0.7853981633974483)))      // 1   (≈ tan(π/4))
 ```
 
+**Math constants:**
+- `PI` — 3.141592653589793 (`std::f64::consts::PI`)
+- `E` — 2.718281828459045 (`std::f64::consts::E`)
+- Both are read-only `Number` constants; assignment `PI = 3` and shadowing `let PI = 3` are TypeError
+- No TAU or PHI yet; no user-defined constants yet
+
+```kimin
+print(PI)                              // 3.141592653589793
+print(round(sin(PI / 2)))             // 1
+print(round(cos(PI)))                 // -1
+print(round(ln(E)))                   // 1
+```
+
 **Conversion builtins:**
 - `to_string(value) -> Text` — converts any value to its display string
 - `to_number(text) -> Number` — parses Text as f64; RuntimeError if invalid
@@ -829,6 +842,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 17B | Numeric utility builtins: `abs`, `floor`, `ceil`, `round`, `min`, `max`, `sqrt`, `pow` | ✅ |
 | 18A–18C | Logarithm/exponential builtins: `ln`, `log2`, `log10`, `exp` | ✅ |
 | 18D | Trigonometric builtins: `sin`, `cos`, `tan` (radians, Number-only) | ✅ |
+| 18E | Math constants: `PI` and `E` (read-only builtin Number constants) | ✅ |
 
 ---
 
@@ -836,7 +850,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 4737 passed, 0 failed
+# 4849 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -863,7 +877,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        4737 unit tests
+  tests.rs        4849 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -959,6 +973,9 @@ examples/
   numeric_trig.kimin                numeric_trig_collections.kimin
   numeric_trig_structs.kimin        numeric_trig_simulate.kimin
   numeric_trig_errors.kimin
+  math_constants.kimin              math_constants_geometry.kimin
+  math_constants_collections.kimin  math_constants_simulate.kimin
+  math_constants_errors.kimin
 ```
 
 <details>
