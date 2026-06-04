@@ -1140,6 +1140,69 @@ impl Vm {
                     stack.push(Value::Number(r));
                 }
 
+                Instruction::Sin => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "sin() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() {
+                        return Err(runtime_err("sin input is not finite"));
+                    }
+                    let r = n.sin();
+                    if !r.is_finite() {
+                        return Err(runtime_err("sin result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Cos => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "cos() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() {
+                        return Err(runtime_err("cos input is not finite"));
+                    }
+                    let r = n.cos();
+                    if !r.is_finite() {
+                        return Err(runtime_err("cos result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
+                Instruction::Tan => {
+                    let val = pop(stack)?;
+                    let n = match val {
+                        Value::Number(n) => n,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "tan() expects Number, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    if !n.is_finite() {
+                        return Err(runtime_err("tan input is not finite"));
+                    }
+                    let r = n.tan();
+                    if !r.is_finite() {
+                        return Err(runtime_err("tan result is not finite"));
+                    }
+                    stack.push(Value::Number(r));
+                }
+
                 Instruction::Sqrt => {
                     let val = pop(stack)?;
                     let n = match val {

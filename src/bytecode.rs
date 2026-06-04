@@ -175,6 +175,12 @@ pub enum Instruction {
     Min,
     /// Maximum of two Numbers. Stack: [..., a, b] → max(a, b).
     Max,
+    /// Sine (radians). Stack: [..., n] → sin(n). RuntimeError for non-finite input or result.
+    Sin,
+    /// Cosine (radians). Stack: [..., n] → cos(n). RuntimeError for non-finite input or result.
+    Cos,
+    /// Tangent (radians). Stack: [..., n] → tan(n). RuntimeError for non-finite input or result.
+    Tan,
 
     /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
     /// Empty delimiter splits into individual characters.

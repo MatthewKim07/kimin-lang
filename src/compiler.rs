@@ -1102,6 +1102,22 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Exp);
                         return Ok(());
                     }
+                    // sin / cos / tan: compile arg, emit instruction
+                    if name == "sin" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Sin);
+                        return Ok(());
+                    }
+                    if name == "cos" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Cos);
+                        return Ok(());
+                    }
+                    if name == "tan" && args.len() == 1 {
+                        self.compile_expr(&args[0])?;
+                        self.chunk.emit(Instruction::Tan);
+                        return Ok(());
+                    }
                     // sqrt: compile arg, emit Sqrt
                     if name == "sqrt" && args.len() == 1 {
                         self.compile_expr(&args[0])?;
