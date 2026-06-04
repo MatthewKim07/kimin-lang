@@ -1,0 +1,14 @@
+struct Range {
+  lo: Number
+  hi: Number
+}
+
+impl Range {
+  fn clamp_value(self, n: Number) -> Number {
+    return clamp(n, self.lo, self.hi)
+  }
+}
+
+let r = Range { lo: 0, hi: 10 }
+
+print(r.clamp_value(12))

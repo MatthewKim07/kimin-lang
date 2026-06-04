@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-5164_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-5284_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-18G-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-18H-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5164 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5284 tests passing**.
 
 ---
 
@@ -572,6 +572,18 @@ print(hypot(5, 12))    // 13
 print(hypot(-3, 4))    // 5
 ```
 
+**Clamping:**
+- `clamp(n, lo, hi)` — clamps `n` to inclusive range [lo, hi]; all args must be Number
+- Returns `lo` if `n < lo`, `hi` if `n > hi`, else `n`
+- RuntimeError if `lo > hi`; no unit-aware overloads
+
+```kimin
+print(clamp(5, 0, 10))     // 5
+print(clamp(-2, 0, 10))    // 0
+print(clamp(12, 0, 10))    // 10
+print(clamp(5, 5, 5))      // 5
+```
+
 **Math constants:**
 - `PI` — 3.141592653589793 (`std::f64::consts::PI`)
 - `E` — 2.718281828459045 (`std::f64::consts::E`)
@@ -869,6 +881,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 18E | Math constants: `PI` and `E` (read-only builtin Number constants) | ✅ |
 | 18F | Inverse trig: `asin`, `acos`, `atan`, `atan2(y,x)` (radians, Number-only, domain-checked) | ✅ |
 | 18G | `hypot(a, b)` Euclidean magnitude using `f64::hypot`; complements `atan2` | ✅ |
+| 18H | `clamp(n, lo, hi)` clamps n to [lo, hi]; RuntimeError if lo > hi | ✅ |
 
 ---
 
@@ -876,7 +889,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 5164 passed, 0 failed
+# 5284 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -903,7 +916,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        5164 unit tests
+  tests.rs        5284 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -1005,6 +1018,9 @@ examples/
   numeric_hypot.kimin               numeric_hypot_geometry.kimin
   numeric_hypot_collections.kimin   numeric_hypot_simulate.kimin
   numeric_hypot_errors.kimin
+  numeric_clamp.kimin               numeric_clamp_math.kimin
+  numeric_clamp_collections.kimin   numeric_clamp_structs.kimin
+  numeric_clamp_simulate.kimin      numeric_clamp_errors.kimin
   math_constants.kimin              math_constants_geometry.kimin
   math_constants_collections.kimin  math_constants_simulate.kimin
   math_constants_errors.kimin

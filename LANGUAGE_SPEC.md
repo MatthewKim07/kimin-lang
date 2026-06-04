@@ -1730,6 +1730,32 @@ print(hypot(0, 0))     // 0
 
 ---
 
+### 4.12F Clamp Builtin (Milestone 18H)
+
+| Builtin | Args | Return | Runtime behavior |
+|---------|------|--------|-----------------|
+| `clamp(n, lo, hi)` | `Number, Number, Number` | `Number` | if n < lo → lo; if n > hi → hi; else → n. RuntimeError if lo > hi. |
+
+**Static type rules:** 3 Number args → Number; unit types and all other types are `TypeError`.
+
+**Compiler:** emit `n`, then `lo`, then `hi`; `Instruction::Clamp`. Stack: `[..., n, lo, hi]`; VM pops `hi` first, then `lo`, then `n`.
+
+**Inclusive bounds:** `clamp(0, 0, 10) = 0`, `clamp(10, 0, 10) = 10`.
+
+**Invalid bounds:** `clamp(n, 10, 0)` → `RuntimeError: clamp lower bound cannot be greater than upper bound`.
+
+**Bytecode:** `CLAMP`
+
+**Examples:**
+```kimin
+print(clamp(5, 0, 10))     // 5
+print(clamp(-2, 0, 10))    // 0
+print(clamp(12, 0, 10))    // 10
+print(clamp(5, 5, 5))      // 5
+```
+
+---
+
 ### 4.12 Mutable Variables and Assignment
 
 Variables are **immutable by default**. Reassignment requires an explicit `mut` modifier:

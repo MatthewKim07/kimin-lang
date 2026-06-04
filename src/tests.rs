@@ -54766,3 +54766,557 @@ fn disassemble_clamp_stable() {
     assert!(text.join(" ").contains("Clamp"));
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_clamp_inside_range() {
+    let out = vm_run("print(clamp(5, 0, 10))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_clamp_below_range() {
+    let out = vm_run("print(clamp(-2, 0, 10))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_clamp_above_range() {
+    let out = vm_run("print(clamp(12, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn vm_clamp_equal_bounds() {
+    let out = vm_run("print(clamp(5, 5, 5))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn vm_clamp_negative_range() {
+    let out = vm_run("print(clamp(-5, -10, -1))").unwrap();
+    assert_eq!(out, vec!["-5"]);
+}
+
+#[test]
+fn vm_clamp_invalid_bounds_error() {
+    assert!(vm_run("clamp(5, 10, 0)").is_err());
+}
+
+#[test]
+fn vm_clamp_stack_clean() {
+    let out =
+        vm_run("print(clamp(5, 0, 10))\nprint(clamp(-2, 0, 10))\nprint(clamp(12, 0, 10))").unwrap();
+    assert_eq!(out, vec!["5", "0", "10"]);
+}
+
+#[test]
+fn vm_matches_tree_clamp_basic() {
+    let cases = [
+        ("print(clamp(5, 0, 10))", vec!["5"]),
+        ("print(clamp(-2, 0, 10))", vec!["0"]),
+        ("print(clamp(12, 0, 10))", vec!["10"]),
+        ("print(clamp(5, 5, 5))", vec!["5"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_clamp_errors() {
+    assert!(check("clamp(5, 0)").is_err());
+    assert!(check("clamp(\"bad\", 0, 10)").is_err());
+    assert!(vm_run("clamp(5, 10, 0)").is_err());
+}
+
+#[test]
+fn vm_matches_tree_clamp_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn bound(n: Number) -> Number { return clamp(n, 0, 10) }
+        struct Range { lo: Number hi: Number }
+        impl Range { fn clamp_val(self, n: Number) -> Number { return clamp(n, self.lo, self.hi) } }
+        let r = Range { lo: 0, hi: 10 }
+        print(bound(-5))
+        print(r.clamp_val(15))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "10"]);
+}
+
+#[test]
+fn vm_runtime_wrong_type_error_clamp_if_unchecked() {
+    assert!(check("clamp(\"bad\", 0, 10)").is_err());
+    assert!(check("clamp(5, \"bad\", 10)").is_err());
+    assert!(check("clamp(5, 0, \"bad\")").is_err());
+}
+
+// --- Interaction with numeric builtins ---
+
+#[test]
+fn clamp_with_hypot_result() {
+    // hypot(3,4)=5; clamp(5, 0, 4) = 4
+    let out = vm_run("print(clamp(hypot(3, 4), 0, 4))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn clamp_with_trig_result() {
+    // round(sin(PI/2))=1; clamp(1, 0, 1) = 1
+    let out = vm_run("print(clamp(round(sin(PI / 2)), 0, 1))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn clamp_with_min_max_bounds() {
+    // clamp(-5, min(0,1), max(10,20)) = clamp(-5, 0, 20) = 0
+    let out = vm_run("print(clamp(-5, min(0, 1), max(10, 20)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn clamp_with_abs_result() {
+    // abs(-5)=5; clamp(5, 0, 3) = 3
+    let out = vm_run("print(clamp(abs(-5), 0, 3))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn hypot_still_ok_after_clamp() {
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn inverse_trig_still_ok_after_clamp() {
+    let out = vm_run("print(round(asin(1)))\nprint(round(acos(-1)))").unwrap();
+    assert_eq!(out, vec!["2", "3"]);
+}
+
+#[test]
+fn constants_still_ok_after_clamp() {
+    let out = vm_run("print(round(PI))\nprint(round(E))").unwrap();
+    assert_eq!(out, vec!["3", "3"]);
+}
+
+#[test]
+fn floor_ceil_round_abs_min_max_still_ok_after_clamp() {
+    let out = vm_run(
+        r#"
+        print(floor(1.9))
+        print(ceil(1.1))
+        print(round(1.5))
+        print(abs(-3))
+        print(min(2, 5))
+        print(max(2, 5))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1", "2", "2", "3", "2", "5"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn clamp_with_to_number_input() {
+    let out = vm_run("let n = to_number(\"12\")\nprint(clamp(n, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn to_string_clamp_result() {
+    let out = vm_run("print(to_string(clamp(12, 0, 10)))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn to_bool_to_number_to_string_regression_after_clamp() {
+    let out = vm_run(
+        r#"
+        print(to_bool("true"))
+        print(to_number("42"))
+        print(to_string(clamp(5, 0, 10)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["true", "42", "5"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn clamp_array_values() {
+    let out = vm_run(
+        r#"
+        let nums = [-2, 5, 12]
+        print(clamp(nums[0], 0, 10))
+        print(clamp(nums[1], 0, 10))
+        print(clamp(nums[2], 0, 10))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "5", "10"]);
+}
+
+#[test]
+fn clamp_map_values() {
+    let out = vm_run(
+        r#"
+        let bounds: Map<Text, Number> = {"lo": 0, "hi": 10}
+        print(clamp(12, bounds["lo"], bounds["hi"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn clamp_struct_fields() {
+    let out = vm_run(
+        r#"
+        struct Bounds { lo: Number hi: Number }
+        let b = Bounds { lo: 0, hi: 10 }
+        print(clamp(12, b.lo, b.hi))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn clamp_method_returns_number() {
+    let out = vm_run(
+        r#"
+        struct Range { lo: Number hi: Number }
+        impl Range { fn clamp_value(self, n: Number) -> Number { return clamp(n, self.lo, self.hi) } }
+        let r = Range { lo: 0, hi: 10 }
+        print(r.clamp_value(12))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn clamp_mut_self_number_field_if_relevant() {
+    let out = vm_run(
+        r#"
+        struct Sensor { value: Number }
+        impl Sensor {
+            fn normalize(mut self) -> Sensor {
+                self.value = clamp(self.value, 0, 100)
+                return self
+            }
+        }
+        let mut s = Sensor { value: 150 }
+        s = s.normalize()
+        print(s.value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["100"]);
+}
+
+#[test]
+fn clamp_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = 15
+        print(clamp(arr[0].v, 0, 10))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["10"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_clamp() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn clamp_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += clamp(i * 10, 0, 10)
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    // i=0: clamp(0,0,10)=0; i=1: clamp(10,0,10)=10; i=2: clamp(20,0,10)=10 → 20
+    assert_eq!(out, vec!["20"]);
+}
+
+#[test]
+fn clamp_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 3) {
+            total += clamp(12, 0, 10)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn clamp_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [-2, 5, 12]
+        let mut total: Number = 0
+        for n in nums {
+            total += clamp(n, 0, 10)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn clamp_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [-2, 5, 12]
+        let mut total: Number = 0
+        for i, n in nums {
+            total += clamp(n, 0, 10)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn clamp_inside_function() {
+    let out = vm_run(
+        r#"
+        fn sum_clamped(nums: Array<Number>) -> Number {
+            let mut total: Number = 0
+            for n in nums {
+                total += clamp(n, 0, 10)
+            }
+            return total
+        }
+        print(sum_clamped([-2, 5, 12]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn clamp_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Range { lo: Number hi: Number }
+        impl Range { fn bound(self, n: Number) -> Number { return clamp(n, self.lo, self.hi) } }
+        let r = Range { lo: 0, hi: 10 }
+        print(r.bound(-5))
+        print(r.bound(15))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "10"]);
+}
+
+#[test]
+fn clamp_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            total += clamp(12, 0, 10)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["30"]);
+}
+
+#[test]
+fn vm_matches_tree_clamp_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let nums = [-2, 5, 12]
+        let mut total: Number = 0
+        for n in nums {
+            total += clamp(n, 0, 10)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["15"]);
+}
+
+// --- Unit and state regression ---
+
+#[test]
+fn clamp_unit_arg_error_if_units_are_distinct() {
+    let err = check("let d: meters = 5\nlet n = clamp(d, 0, 10)")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "clamp(unit, n, n) should fail: {}", err);
+}
+
+#[test]
+fn clamp_state_arg_error_if_supported() {
+    let err = check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let n = clamp(d, 0, 10)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(!err.is_empty(), "clamp(state, n, n) should fail: {}", err);
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_clamp() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let t: seconds = 2
+        let v = d / t
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_clamp() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn clamp_wrong_arity_zero_message() {
+    let err = check("clamp()").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("3") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_wrong_arity_one_message() {
+    let err = check("clamp(5)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("3") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_wrong_arity_two_message() {
+    let err = check("clamp(5, 0)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("3") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_wrong_arity_four_message() {
+    let err = check("clamp(5, 0, 10, 20)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("3") || err.contains("argument")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_first_arg_wrong_type_message() {
+    let err = check("clamp(\"bad\", 0, 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_second_arg_wrong_type_message() {
+    let err = check("clamp(5, \"bad\", 10)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_third_arg_wrong_type_message() {
+    let err = check("clamp(5, 0, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("Number") || err.contains("Text")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_invalid_bounds_runtime_message() {
+    let err = vm_run("clamp(5, 10, 0)").unwrap_err().to_string();
+    assert!(
+        err.contains("clamp") && (err.contains("bound") || err.contains("lower")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn clamp_non_finite_runtime_message_if_reachable() {
+    // Non-finite values not reachable; large finite inputs work fine.
+    let out = vm_run("print(clamp(1000, 0, 10))").unwrap();
+    assert_eq!(out, vec!["10"]);
+}

@@ -1,0 +1,12 @@
+// Keep runnable by default.
+
+print(clamp(5, 0, 10))
+
+// Uncomment to test invalid bounds:
+// print(clamp(5, 10, 0))
+
+// Uncomment to test wrong type:
+// print(clamp("bad", 0, 10))
+
+// Uncomment to test wrong arity:
+// print(clamp(5, 0))

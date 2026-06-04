@@ -1,0 +1,8 @@
+let nums = [-2, 5, 12]
+let mut total: Number = 0
+
+for n in nums {
+  total += clamp(n, 0, 10)
+}
+
+print(total)
