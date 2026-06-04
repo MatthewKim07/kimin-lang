@@ -2683,6 +2683,32 @@ impl TypeChecker {
                         return Ok(Type::Number);
                     }
 
+                    // clamp: Number, Number, Number -> Number
+                    if name == "clamp" {
+                        if args.len() != 3 {
+                            return Err(TypeError {
+                                msg: format!("clamp() expects 3 arguments, got {}", args.len()),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        for (idx, arg) in args.iter().enumerate() {
+                            let ty = self.check_expr(arg, *span)?;
+                            if !ty.is_unknown() && ty != Type::Number {
+                                return Err(TypeError {
+                                    msg: format!(
+                                        "clamp() argument {} expects Number, got {}",
+                                        idx + 1,
+                                        ty.name()
+                                    ),
+                                    line: span.line,
+                                    col: span.col,
+                                });
+                            }
+                        }
+                        return Ok(Type::Number);
+                    }
+
                     // hypot: Number, Number -> Number (Euclidean magnitude)
                     if name == "hypot" {
                         if args.len() != 2 {

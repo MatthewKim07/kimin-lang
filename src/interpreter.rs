@@ -1704,6 +1704,64 @@ impl Interpreter {
                         return Ok(Value::Number(result));
                     }
 
+                    // clamp: Number, Number, Number -> Number
+                    if name == "clamp" && args.len() == 3 {
+                        let n_val = self.eval_expr(&args[0])?;
+                        let n = match n_val {
+                            Value::Number(v) => v,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "clamp() argument 1 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let lo_val = self.eval_expr(&args[1])?;
+                        let lo = match lo_val {
+                            Value::Number(v) => v,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "clamp() argument 2 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let hi_val = self.eval_expr(&args[2])?;
+                        let hi = match hi_val {
+                            Value::Number(v) => v,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "clamp() argument 3 expects Number, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        if !n.is_finite() || !lo.is_finite() || !hi.is_finite() {
+                            return Err(RuntimeError {
+                                msg: "clamp input is not finite".into(),
+                            });
+                        }
+                        if lo > hi {
+                            return Err(RuntimeError {
+                                msg: "clamp lower bound cannot be greater than upper bound".into(),
+                            });
+                        }
+                        let result = if n < lo {
+                            lo
+                        } else if n > hi {
+                            hi
+                        } else {
+                            n
+                        };
+                        return Ok(Value::Number(result));
+                    }
+
                     // hypot: Number, Number -> Number (Euclidean magnitude)
                     if name == "hypot" && args.len() == 2 {
                         let a_val = self.eval_expr(&args[0])?;
