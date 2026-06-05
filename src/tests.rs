@@ -17989,6 +17989,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Exp
             | crate::bytecode::Instruction::Pi
             | crate::bytecode::Instruction::EConst
+            | crate::bytecode::Instruction::Tau
             | crate::bytecode::Instruction::Clamp
             | crate::bytecode::Instruction::Hypot
             | crate::bytecode::Instruction::Asin
@@ -55381,3 +55382,544 @@ fn bytecode_path_mutation_unchanged_after_clamp() {
         "Clamp should be emitted"
     );
 }
+
+// ============================================================
+// M19A — TAU math constant
+// ============================================================
+
+// --- Parser tests ---
+
+#[test]
+fn parse_tau_constant_expr() {
+    assert!(check("let n = TAU").is_ok());
+}
+
+#[test]
+fn parse_tau_in_arithmetic() {
+    assert!(check("let n = TAU * 2").is_ok());
+}
+
+#[test]
+fn parse_tau_in_function_call_arg() {
+    assert!(check("let n = sin(TAU)").is_ok());
+}
+
+#[test]
+fn parse_tau_in_array_literal() {
+    assert!(check("let arr = [PI, TAU, E]").is_ok());
+}
+
+#[test]
+fn parse_tau_in_map_literal() {
+    assert!(check("let m: Map<Text, Number> = {\"tau\": TAU}").is_ok());
+}
+
+#[test]
+fn parse_tau_in_struct_literal() {
+    assert!(check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: TAU }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn parse_tau_call_rejected_or_type_error() {
+    assert!(check("TAU()").is_err());
+}
+
+#[test]
+fn parse_normal_identifier_tau_still_ok() {
+    // lowercase "tau" is not TAU; resolves via env
+    assert!(check("let tau = 6").is_ok());
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_tau_is_number() {
+    assert!(check("let n: Number = TAU").is_ok());
+}
+
+#[test]
+fn type_tau_used_in_arithmetic() {
+    assert!(check("let n = TAU + PI").is_ok());
+}
+
+#[test]
+fn type_tau_used_with_sin() {
+    assert!(check("let n = sin(TAU)").is_ok());
+}
+
+#[test]
+fn type_tau_used_with_cos() {
+    assert!(check("let n = cos(TAU)").is_ok());
+}
+
+#[test]
+fn type_tau_over_pi_is_two() {
+    let out = vm_run("print(round(TAU / PI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn type_constants_used_in_array_number_after_tau() {
+    assert!(check("let arr: Array<Number> = [PI, TAU, E]").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_map_number_after_tau() {
+    assert!(check("let m: Map<Text, Number> = {\"tau\": TAU, \"pi\": PI}").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_struct_number_field_after_tau() {
+    assert!(check(
+        r#"
+        struct Vals { tau: Number pi: Number }
+        let v = Vals { tau: TAU, pi: PI }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_tau_call_error() {
+    let err = check("TAU()").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_tau_assign_error() {
+    let err = check("TAU = 6").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_tau_compound_assign_error() {
+    let err = check("TAU += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_tau_shadow_error() {
+    let err = check("let TAU = 6").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_mut_tau_shadow_error() {
+    let err = check("let mut TAU = 6").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_param_tau_shadow_error() {
+    let err = check("fn f(TAU: Number) -> Number { return TAU }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_method_param_tau_shadow_error() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        impl S { fn f(self, TAU: Number) -> Number { return TAU } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_for_each_tau_shadow_error() {
+    let err = check("for TAU in [1, 2, 3] { print(TAU) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_indexed_for_each_tau_shadow_error() {
+    let err = check("for TAU, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+// --- Interpreter / behavior tests ---
+
+#[test]
+fn interp_tau_value() {
+    let out = vm_run("print(TAU)").unwrap();
+    assert_eq!(out, vec!["6.283185307179586"]);
+}
+
+#[test]
+fn interp_tau_over_pi_rounds_to_two() {
+    let out = vm_run("print(round(TAU / PI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_sin_tau_rounds_to_zero() {
+    let out = vm_run("print(round(sin(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_cos_tau_rounds_to_one() {
+    let out = vm_run("print(round(cos(TAU)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_tau_in_arithmetic() {
+    let out = vm_run("print(round(TAU + PI))").unwrap();
+    // TAU + PI ≈ 9.42 → round = 9
+    assert_eq!(out, vec!["9"]);
+}
+
+#[test]
+fn interp_tau_inside_function() {
+    let out = vm_run(
+        r#"
+        fn full_rotation() -> Number { return TAU }
+        print(round(full_rotation()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_tau_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+        let r = Rotation { angle: TAU }
+        print(round(r.turns()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_tau_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn scale(n: Number) -> Number { return n * TAU }
+        print(round(scale(1)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_tau_inside_loop() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 1) {
+            total += round(cos(TAU))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn interp_tau_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(cos(TAU))
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_tau_in_array_map_struct() {
+    let out = vm_run(
+        r#"
+        let arr = [PI, TAU]
+        print(round(arr[1]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_normal_identifier_tau_env_lookup() {
+    // lowercase "tau" is not TAU
+    let out = vm_run("let tau = 42\nprint(tau)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+// --- Display / format ---
+
+#[test]
+fn tau_prints_expected_display() {
+    let out = vm_run("print(TAU)").unwrap();
+    assert_eq!(out, vec!["6.283185307179586"]);
+}
+
+#[test]
+fn round_sin_tau() {
+    let out = vm_run("print(round(sin(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn round_cos_tau() {
+    let out = vm_run("print(round(cos(TAU)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn round_tau_over_pi() {
+    let out = vm_run("print(round(TAU / PI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn round_tau_over_two() {
+    let out = vm_run("print(round(TAU / 2))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn raw_tau_display_documented() {
+    // TAU display is exact and stable.
+    let out = vm_run("print(TAU)").unwrap();
+    assert_eq!(out, vec!["6.283185307179586"]);
+    // Approximate use goes through round().
+    let approx = vm_run("print(round(TAU))").unwrap();
+    assert_eq!(approx, vec!["6"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_tau_emits_instruction() {
+    let prog = compile_prog("let n = TAU");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn bytecode_tau_no_variable_lookup() {
+    let prog = compile_prog("let n = TAU");
+    let has_load =
+        prog.main.instructions.iter().any(
+            |i| matches!(i, Instruction::LoadGlobal(n) | Instruction::LoadLocal(n) if n == "TAU"),
+        );
+    assert!(!has_load, "TAU should not emit a variable lookup");
+}
+
+#[test]
+fn bytecode_tau_no_call_instruction() {
+    let prog = compile_prog("print(TAU)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "TAU should not emit Call");
+}
+
+#[test]
+fn bytecode_tau_inside_function() {
+    let prog = compile_prog("fn f() -> Number { return TAU }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn bytecode_tau_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "turns")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn bytecode_tau_inside_closure() {
+    let prog = compile_prog("fn f(n: Number) -> Number { return n * TAU }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn bytecode_tau_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt { x += round(cos(TAU)) }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn bytecode_tau_with_trig() {
+    let prog = compile_prog("let n = sin(TAU)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+}
+
+#[test]
+fn bytecode_pi_e_unchanged_after_tau() {
+    let prog = compile_prog("let n = PI + E + TAU");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_tau() {
+    let prog = compile_prog("let n = sin(TAU) + cos(0) + sqrt(9)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_tau() {
+    let prog = compile_prog("let s = to_string(TAU)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+#[test]
+fn disassemble_tau_stable() {
+    let prog = compile_prog("print(TAU)");
+    let text: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    assert!(text.join(" ").contains("Tau"));
+}
+
