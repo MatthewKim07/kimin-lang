@@ -1,0 +1,13 @@
+struct Rotation {
+  angle: Number
+}
+
+impl Rotation {
+  fn turns(self) -> Number {
+    return self.angle / TAU
+  }
+}
+
+let r = Rotation { angle: TAU }
+
+print(round(r.turns()))

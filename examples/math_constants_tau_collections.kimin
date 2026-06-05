@@ -1,0 +1,8 @@
+let angles = [0, TAU]
+let mut total: Number = 0
+
+for a in angles {
+  total += round(cos(a))
+}
+
+print(total)

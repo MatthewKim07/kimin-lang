@@ -55923,3 +55923,597 @@ fn disassemble_tau_stable() {
     assert!(text.join(" ").contains("Tau"));
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_tau_value() {
+    let out = vm_run("print(TAU)").unwrap();
+    assert_eq!(out, vec!["6.283185307179586"]);
+}
+
+#[test]
+fn vm_tau_over_pi_rounds_to_two() {
+    let out = vm_run("print(round(TAU / PI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_sin_tau_rounds_to_zero() {
+    let out = vm_run("print(round(sin(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_cos_tau_rounds_to_one() {
+    let out = vm_run("print(round(cos(TAU)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_tau_inside_function() {
+    let out = vm_run(
+        r#"
+        fn full() -> Number { return TAU }
+        print(round(full()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_tau_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+        let r = Rotation { angle: TAU }
+        print(round(r.turns()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn vm_tau_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn scale(n: Number) -> Number { return n * TAU }
+        print(round(scale(1)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_tau_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt { x += round(cos(TAU)) }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_tau_stack_clean() {
+    let out = vm_run("print(TAU)\nprint(PI)\nprint(E)").unwrap();
+    assert_eq!(
+        out,
+        vec![
+            "6.283185307179586",
+            "3.141592653589793",
+            "2.718281828459045"
+        ]
+    );
+}
+
+#[test]
+fn vm_matches_tree_tau_basic() {
+    let cases = [
+        ("print(TAU)", vec!["6.283185307179586"]),
+        ("print(round(TAU / PI))", vec!["2"]),
+        ("print(round(sin(TAU)))", vec!["0"]),
+        ("print(round(cos(TAU)))", vec!["1"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_tau_trig() {
+    let out = vm_run(
+        r#"
+        print(round(sin(TAU)))
+        print(round(cos(TAU)))
+        print(round(tan(TAU)))
+        print(round(TAU / PI))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "1", "0", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_tau_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn full() -> Number { return TAU }
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+        let r = Rotation { angle: TAU }
+        print(round(full()))
+        print(round(r.turns()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6", "1"]);
+}
+
+// --- Math builtin interaction ---
+
+#[test]
+fn tau_with_sin() {
+    let out = vm_run("print(round(sin(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn tau_with_cos() {
+    let out = vm_run("print(round(cos(TAU)))").unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn tau_with_tan() {
+    let out = vm_run("print(round(tan(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn tau_with_pi() {
+    let out = vm_run("print(round(TAU / PI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn tau_with_round() {
+    let out = vm_run("print(round(TAU))").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn tau_with_clamp() {
+    // clamp(TAU, 0, 4) = 4 since TAU ≈ 6.28
+    let out = vm_run("print(clamp(TAU, 0, 4))").unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn tau_with_hypot_if_relevant() {
+    // hypot still works
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn all_numeric_builtins_still_ok_after_tau() {
+    let out = vm_run("print(round(sin(0) + cos(0) + ln(1) + exp(0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn to_string_tau() {
+    let out = vm_run("print(to_string(TAU))").unwrap();
+    assert_eq!(out, vec!["6.283185307179586"]);
+}
+
+#[test]
+fn to_number_to_string_tau_round() {
+    let out = vm_run("print(round(to_number(to_string(TAU))))").unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn conversion_builtins_still_ok_after_tau() {
+    let out = vm_run(
+        r#"
+        print(to_string(sin(0)))
+        print(to_number("42"))
+        print(to_bool("false"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "42", "false"]);
+}
+
+#[test]
+fn to_bool_regression_after_tau() {
+    let out = vm_run("print(to_bool(\"true\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn tau_array_values() {
+    let out = vm_run(
+        r#"
+        let nums = [PI, TAU, E]
+        print(round(nums[1]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn tau_map_values() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Number> = {"tau": TAU}
+        print(round(m["tau"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn tau_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Vals { tau: Number pi: Number }
+        let v = Vals { tau: TAU, pi: PI }
+        print(round(v.tau))
+        print(round(v.pi))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6", "3"]);
+}
+
+#[test]
+fn tau_method_full_rotation() {
+    let out = vm_run(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+        let r = Rotation { angle: TAU }
+        print(round(r.turns()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn tau_mut_self_method_if_relevant() {
+    let out = vm_run(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation {
+            fn add_full(mut self) -> Rotation {
+                self.angle = self.angle + TAU
+                return self
+            }
+        }
+        let mut r = Rotation { angle: 0 }
+        r = r.add_full()
+        print(round(r.angle))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn tau_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = TAU
+        print(round(arr[0].v))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_tau() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn tau_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 2 {
+            total += round(cos(TAU))
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn tau_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 2) {
+            total += round(sin(TAU))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn tau_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let angles = [0, TAU]
+        let mut total: Number = 0
+        for a in angles {
+            total += round(cos(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn tau_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let angles = [PI, TAU]
+        let mut total: Number = 0
+        for i, a in angles {
+            total += round(cos(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    // cos(PI)=-1, cos(TAU)=1 → total=0
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn tau_inside_function() {
+    let out = vm_run(
+        r#"
+        fn half_tau() -> Number { return TAU / 2 }
+        print(round(half_tau()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn tau_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+        let r = Rotation { angle: TAU }
+        print(round(r.turns()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+#[test]
+fn tau_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(cos(TAU))
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_matches_tree_tau_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let angles = [0, TAU]
+        let mut total: Number = 0
+        for a in angles {
+            total += round(cos(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Unit and state regression ---
+
+#[test]
+fn tau_unit_assignment_behavior_matches_existing_number_rules() {
+    // TAU is Number; Number promotes to unit at assignment site.
+    assert!(check("let d: meters = TAU").is_ok());
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_tau() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let t: seconds = 2
+        let v = d / t
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_tau() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn state_variant_syntax_still_ok_after_tau() {
+    let out = vm_run(
+        r#"
+        state Light { red green transition red -> green }
+        let mut light = Light.red
+        transition light -> green
+        print(light)
+        print(round(TAU))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Light.green", "6"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn tau_assignment_error_message() {
+    let err = check("TAU = 6").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn tau_compound_assignment_error_message() {
+    let err = check("TAU += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn let_tau_shadow_error_message() {
+    let err = check("let TAU = 6").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn param_tau_shadow_error_message() {
+    let err = check("fn f(TAU: Number) -> Number { return TAU }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn method_param_tau_shadow_error_message() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        impl S { fn f(self, TAU: Number) -> Number { return TAU } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn for_each_tau_shadow_error_message() {
+    let err = check("for TAU in [1, 2, 3] { print(TAU) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn indexed_for_each_tau_shadow_error_message() {
+    let err = check("for TAU, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn tau_call_error_message() {
+    let err = check("TAU()").unwrap_err().to_string();
+    assert!(
+        err.contains("TAU")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}

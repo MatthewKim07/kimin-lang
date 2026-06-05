@@ -1,0 +1,4 @@
+print(TAU)
+print(round(sin(TAU)))
+print(round(cos(TAU)))
+print(round(TAU / PI))

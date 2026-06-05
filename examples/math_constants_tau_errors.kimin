@@ -1,0 +1,12 @@
+// Keep runnable by default.
+
+print(round(TAU / PI))
+
+// Uncomment to test assignment error:
+// TAU = 6
+
+// Uncomment to test shadowing error:
+// let TAU = 6
+
+// Uncomment to test call error:
+// print(TAU())
