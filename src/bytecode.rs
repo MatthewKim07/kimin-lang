@@ -202,6 +202,12 @@ pub enum Instruction {
     /// Tangent (radians). Stack: [..., n] → tan(n). RuntimeError for non-finite input or result.
     Tan,
 
+    /// Format a template string with N arguments.
+    /// Stack: [..., template, arg1, ..., argN] → Text.
+    /// Replace `{}` placeholders left-to-right; RuntimeError if count mismatch.
+    Format {
+        arg_count: usize,
+    },
     /// Split a string by a delimiter. Stack: [..., text, delimiter] → Array<Text>.
     /// Empty delimiter splits into individual characters.
     Split,

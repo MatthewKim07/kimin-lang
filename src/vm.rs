@@ -1538,6 +1538,27 @@ impl Vm {
                     stack.push(Value::Number(an.max(bn)));
                 }
 
+                Instruction::Format { arg_count } => {
+                    // Pop arg_count args in reverse, then pop template
+                    let mut fmt_args: Vec<Value> = (0..arg_count)
+                        .map(|_| pop(stack))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    fmt_args.reverse(); // restore source order
+                    let tmpl_val = pop(stack)?;
+                    let template = match tmpl_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(runtime_err(&format!(
+                                "format() expects template Text, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    let result = crate::value::format_template(&template, &fmt_args)
+                        .map_err(|msg| runtime_err(&msg))?;
+                    stack.push(Value::Str(result));
+                }
+
                 Instruction::Split => {
                     let delim_val = pop(stack)?;
                     let text_val = pop(stack)?;

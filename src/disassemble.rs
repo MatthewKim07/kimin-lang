@@ -201,6 +201,7 @@ fn fmt_instruction(instr: &Instruction) -> String {
         Instruction::Sin => "SIN".to_string(),
         Instruction::Cos => "COS".to_string(),
         Instruction::Tan => "TAN".to_string(),
+        Instruction::Format { arg_count } => format!("FORMAT {}", arg_count),
         Instruction::Split => "SPLIT".to_string(),
         Instruction::Join => "JOIN".to_string(),
         Instruction::HasKey => "HAS_KEY".to_string(),

@@ -1059,6 +1059,16 @@ impl BytecodeCompiler {
                         self.chunk.emit(Instruction::Join);
                         return Ok(());
                     }
+                    // format: compile template, then each arg; emit Format(arg_count)
+                    if name == "format" && !args.is_empty() {
+                        let arg_count = args.len() - 1;
+                        self.compile_expr(&args[0])?; // template
+                        for arg in args.iter().skip(1) {
+                            self.compile_expr(arg)?;
+                        }
+                        self.chunk.emit(Instruction::Format { arg_count });
+                        return Ok(());
+                    }
                     if name == "has_key" && args.len() == 2 {
                         self.compile_expr(&args[0])?;
                         self.compile_expr(&args[1])?;
