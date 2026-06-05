@@ -1566,6 +1566,48 @@ Rules:
 
 ---
 
+### 4.11G String Formatting Builtin (Milestone 20A)
+
+```
+format(template: Text, ...args) -> Text
+```
+
+**Signature:** First argument must be `Text`; remaining arguments may be any type; returns `Text`.
+
+**Placeholders:** Only `{}` (exactly an opening brace followed immediately by a closing brace) is a placeholder. `{name}`, `{0}`, bare `{`, and bare `}` are all literal text.
+
+**Semantics:**
+1. Count the number of `{}` substrings (left-to-right, non-overlapping) in `template`.
+2. If placeholder count ≠ number of extra args after template → `RuntimeError`.
+3. Rebuild the string replacing each `{}` left-to-right with the display representation of the corresponding arg (same as `to_string` / `print` formatting).
+4. Return the resulting `Text`.
+
+**Arity:**
+- `format()` with zero args → `TypeError: format() expects at least 1 argument`
+- `format("hello")` with no extra args → valid, returns `"hello"` (zero placeholders, zero extra args)
+
+**Static type rules:**
+- First arg must be `Type::Text`; RuntimeError if wrong type at runtime.
+- Remaining args: any `Type`; typechecker calls `check_expr` without constraint.
+- Returns `Type::Text`.
+
+**Bytecode:** `Instruction::Format { arg_count }` where `arg_count` is the number of args after the template.
+- Compiler: compile template, then each arg left-to-right, then emit `Format { arg_count }`.
+- VM stack: `[..., template, arg1, ..., argN]`; VM pops N args (reverse→restore order), pops template, builds result.
+- Disassembler: `FORMAT N`
+
+**Shared helper:** `value::format_template(template: &str, args: &[Value]) -> Result<String, String>` — used by both interpreter and VM.
+
+**Examples:**
+```kimin
+format("Hello, {}", "Kimin")         // "Hello, Kimin"
+format("{} + {} = {}", 2, 3, 5)      // "2 + 3 = 5"
+format("pi={}", PI)                  // "pi=3.141592653589793"
+format("{name}")                     // "{name}"  (not a placeholder)
+```
+
+---
+
 ### 4.12A Conversion Builtins (Milestone 17A)
 
 Three builtins convert between Kimin value types. All are intercepted before normal call dispatch; no `CALL` instruction is emitted.

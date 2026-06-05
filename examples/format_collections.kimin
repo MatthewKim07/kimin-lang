@@ -1,0 +1,5 @@
+let messages = [format("x={}", 1), format("y={}", 2)]
+print(join(messages, ","))
+
+let m: Map<Text, Text> = {"msg": format("score={}", 10)}
+print(m["msg"])

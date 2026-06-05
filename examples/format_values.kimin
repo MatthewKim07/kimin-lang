@@ -1,0 +1,10 @@
+struct User {
+  name: Text
+  score: Number
+}
+
+let u = User { name: "alice", score: 10 }
+
+print(format("user={}", u))
+print(format("scores={}", [1, 2, 3]))
+print(format("map={}", {"b": 2, "a": 1}))

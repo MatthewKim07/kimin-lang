@@ -1,0 +1,5 @@
+let nums = [1, 2, 3]
+
+for i, n in nums {
+  print(format("{}:{}", i, n))
+}

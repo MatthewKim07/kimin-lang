@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-5550_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-5669_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-19B-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-20A-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5550 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5669 tests passing**.
 
 ---
 
@@ -428,6 +428,25 @@ print(csv)                        // one,two,three
 // Round-trip with split
 let parts = split("a-b-c", "-")
 print(join(parts, "::"))          // a::b::c
+```
+
+### String formatting builtin
+
+- `format(template, ...args) -> Text` — replaces `{}` placeholders with arg display values
+- First arg must be `Text`; remaining args can be any type; returns `Text`
+- Placeholder count must match arg count (RuntimeError if mismatch)
+- `{}` is the only placeholder form; `{name}` is treated as literal text
+- Args formatted using the same display as `print`/`to_string`
+- No named placeholders, no format specs yet
+
+```kimin
+print(format("Hello, {}", "Kimin"))       // Hello, Kimin
+print(format("{} + {} = {}", 2, 3, 5))   // 2 + 3 = 5
+print(format("pi={}", PI))               // pi=3.141592653589793
+
+struct Point { x: Number  y: Number }
+let p = Point { x: 3, y: 4 }
+print(format("point={}", p))             // point=Point { x: 3, y: 4 }
 ```
 
 ### Maps (dictionaries)
@@ -888,6 +907,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 18H | `clamp(n, lo, hi)` clamps n to [lo, hi]; RuntimeError if lo > hi | ✅ |
 | 19A | `TAU` constant = 2π = 6.283185307179586; same read-only enforcement as PI/E | ✅ |
 | 19B | `PHI` constant = golden ratio = 1.618033988749895; same read-only enforcement | ✅ |
+| 20A | `format(template, ...args) -> Text` — `{}` placeholder replacement | ✅ |
 
 ---
 
@@ -895,7 +915,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 5550 passed, 0 failed
+# 5669 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -922,7 +942,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        5550 unit tests
+  tests.rs        5669 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -1036,6 +1056,10 @@ examples/
   math_constants_phi.kimin          math_constants_phi_structs.kimin
   math_constants_phi_collections.kimin  math_constants_phi_simulate.kimin
   math_constants_phi_errors.kimin
+  format_basic.kimin               format_values.kimin
+  format_math.kimin                format_collections.kimin
+  format_loops.kimin               format_simulate.kimin
+  format_errors.kimin
 ```
 
 <details>

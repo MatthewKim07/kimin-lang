@@ -1,0 +1,9 @@
+let mut x: Number = 0
+
+let duration: seconds = 2
+let dt: seconds = 1
+
+simulate duration step dt {
+  x += 1
+  print(format("x={}", x))
+}

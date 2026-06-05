@@ -58861,3 +58861,513 @@ fn disassemble_format_stable() {
     assert!(text.join(" ").contains("Format"));
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_format_basic_text() {
+    let out = vm_run("print(format(\"Hello, {}\", \"world\"))").unwrap();
+    assert_eq!(out, vec!["Hello, world"]);
+}
+
+#[test]
+fn vm_format_number() {
+    let out = vm_run("print(format(\"n={}\", 99))").unwrap();
+    assert_eq!(out, vec!["n=99"]);
+}
+
+#[test]
+fn vm_format_multiple_args() {
+    let out = vm_run("print(format(\"{} {} {}\", 1, 2, 3))").unwrap();
+    assert_eq!(out, vec!["1 2 3"]);
+}
+
+#[test]
+fn vm_format_zero_placeholders() {
+    let out = vm_run("print(format(\"static text\"))").unwrap();
+    assert_eq!(out, vec!["static text"]);
+}
+
+#[test]
+fn vm_format_empty_template() {
+    let out = vm_run("print(format(\"\"))").unwrap();
+    assert_eq!(out, vec![""]);
+}
+
+#[test]
+fn vm_format_array_map_struct() {
+    let out = vm_run(
+        r#"
+        print(format("{}", [1, 2]))
+        print(format("{}", {"b": 2, "a": 1}))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["[1, 2]", "{a: 1, b: 2}"]);
+}
+
+#[test]
+fn vm_format_too_few_args_error() {
+    assert!(vm_run("format(\"{} {}\", 1)").is_err());
+}
+
+#[test]
+fn vm_format_too_many_args_error() {
+    assert!(vm_run("format(\"{}\", 1, 2)").is_err());
+}
+
+#[test]
+fn vm_format_stack_clean() {
+    let out = vm_run("print(format(\"{}\", 1))\nprint(format(\"{}\", 2))").unwrap();
+    assert_eq!(out, vec!["1", "2"]);
+}
+
+#[test]
+fn vm_format_pops_args_and_template_correctly() {
+    // Verify result is correctly ordered
+    let out = vm_run("print(format(\"{} {}\", \"first\", \"second\"))").unwrap();
+    assert_eq!(out, vec!["first second"]);
+}
+
+#[test]
+fn vm_format_stack_order_documented() {
+    // Stack: [..., template, arg1, arg2]; VM pops arg2, arg1, then template
+    let out = vm_run("print(format(\"{}\", 42))").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn vm_matches_tree_format_basic() {
+    let cases = [
+        (
+            "print(format(\"Hello, {}\", \"Kimin\"))",
+            vec!["Hello, Kimin"],
+        ),
+        ("print(format(\"{} {}\", 1, 2))", vec!["1 2"]),
+        ("print(format(\"x\"))", vec!["x"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_format_errors() {
+    assert!(vm_run("format(\"{}\", 1, 2)").is_err());
+    assert!(vm_run("format(\"{} {}\", 1)").is_err());
+    assert!(check("format()").is_err());
+}
+
+#[test]
+fn vm_matches_tree_format_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn greet(n: Text) -> Text { return format("Hi, {}!", n) }
+        struct Pt { x: Number y: Number }
+        impl Pt { fn label(self) -> Text { return format("({}, {})", self.x, self.y) } }
+        let p = Pt { x: 1, y: 2 }
+        print(greet("Alice"))
+        print(p.label())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Hi, Alice!", "(1, 2)"]);
+}
+
+// --- Math / constants interaction ---
+
+#[test]
+fn format_pi_constant() {
+    let out = vm_run("print(format(\"pi={}\", PI))").unwrap();
+    assert_eq!(out, vec!["pi=3.141592653589793"]);
+}
+
+#[test]
+fn format_tau_constant() {
+    let out = vm_run("print(format(\"tau={}\", TAU))").unwrap();
+    assert_eq!(out, vec!["tau=6.283185307179586"]);
+}
+
+#[test]
+fn format_phi_constant() {
+    let out = vm_run("print(format(\"phi={}\", PHI))").unwrap();
+    assert_eq!(out, vec!["phi=1.618033988749895"]);
+}
+
+#[test]
+fn format_math_builtin_result() {
+    let out = vm_run("print(format(\"h={}\", hypot(3, 4)))").unwrap();
+    assert_eq!(out, vec!["h=5"]);
+}
+
+#[test]
+fn format_clamp_result() {
+    let out = vm_run("print(format(\"c={}\", clamp(12, 0, 10)))").unwrap();
+    assert_eq!(out, vec!["c=10"]);
+}
+
+#[test]
+fn math_builtins_still_ok_after_format() {
+    let out = vm_run("print(sqrt(9))\nprint(round(PHI))").unwrap();
+    assert_eq!(out, vec!["3", "2"]);
+}
+
+#[test]
+fn constants_still_ok_after_format() {
+    let out = vm_run("print(round(PI))\nprint(round(E))\nprint(round(TAU))").unwrap();
+    assert_eq!(out, vec!["3", "3", "6"]);
+}
+
+// --- String builtin interaction ---
+
+#[test]
+fn format_result_len() {
+    let out = vm_run("print(len(format(\"{}\", \"hi\")))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn format_result_contains() {
+    let out = vm_run("print(contains(format(\"Hello, {}\", \"world\"), \"world\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn format_result_starts_with() {
+    let out = vm_run("print(starts_with(format(\"{} world\", \"hello\"), \"hello\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn format_result_ends_with() {
+    let out = vm_run("print(ends_with(format(\"hello {}\", \"world\"), \"world\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn format_result_to_upper() {
+    let out = vm_run("print(to_upper(format(\"hi {}\", \"there\")))").unwrap();
+    assert_eq!(out, vec!["HI THERE"]);
+}
+
+#[test]
+fn format_result_to_lower() {
+    let out = vm_run("print(to_lower(format(\"{}\", \"HELLO\")))").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn format_result_trim() {
+    let out = vm_run("print(trim(format(\" {} \", \"hi\")))").unwrap();
+    assert_eq!(out, vec!["hi"]);
+}
+
+#[test]
+fn format_result_split_join() {
+    let out = vm_run(
+        r#"
+        let s = format("{} {}", "a", "b")
+        let parts = split(s, " ")
+        print(join(parts, ","))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["a,b"]);
+}
+
+#[test]
+fn string_builtins_still_ok_after_format() {
+    let out = vm_run("print(len(\"hello\"))\nprint(contains(\"hi\", \"h\"))").unwrap();
+    assert_eq!(out, vec!["5", "true"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn format_array_values() {
+    let out = vm_run(
+        r#"
+        let messages = [format("x={}", 1), format("y={}", 2)]
+        print(join(messages, ","))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["x=1,y=2"]);
+}
+
+#[test]
+fn format_map_values() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Text> = {"msg": format("score={}", 10)}
+        print(m["msg"])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["score=10"]);
+}
+
+#[test]
+fn format_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Label { text: Text }
+        let l = Label { text: format("id={}", 42) }
+        print(l.text)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["id=42"]);
+}
+
+#[test]
+fn format_method_returns_text() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number y: Number }
+        impl Point { fn label(self) -> Text { return format("({}, {})", self.x, self.y) } }
+        let p = Point { x: 3, y: 4 }
+        print(p.label())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["(3, 4)"]);
+}
+
+#[test]
+fn format_with_path_mutated_text_field() {
+    let out = vm_run(
+        r#"
+        struct Msg { text: Text }
+        let mut arr: Array<Msg> = [Msg { text: "init" }]
+        arr[0].text = format("id={}", 99)
+        print(arr[0].text)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["id=99"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_format() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn format_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut i = 0
+        while i < 2 {
+            print(format("i={}", i))
+            i += 1
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["i=0", "i=1"]);
+}
+
+#[test]
+fn format_inside_for_range() {
+    let out = vm_run(
+        r#"
+        for i in range(0, 3) {
+            print(format("n={}", i))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["n=0", "n=1", "n=2"]);
+}
+
+#[test]
+fn format_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [10, 20, 30]
+        for n in nums {
+            print(format("v={}", n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["v=10", "v=20", "v=30"]);
+}
+
+#[test]
+fn format_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 2, 3]
+        for i, n in nums {
+            print(format("{}:{}", i, n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0:1", "1:2", "2:3"]);
+}
+
+#[test]
+fn format_inside_function() {
+    let out = vm_run(
+        r#"
+        fn greet(name: Text) -> Text { return format("Hello, {}!", name) }
+        print(greet("Kimin"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Hello, Kimin!"]);
+}
+
+#[test]
+fn format_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number y: Number }
+        impl Pt { fn label(self) -> Text { return format("({}, {})", self.x, self.y) } }
+        let p = Pt { x: 5, y: 12 }
+        print(p.label())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["(5, 12)"]);
+}
+
+#[test]
+fn format_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 2
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += 1
+            print(format("x={}", x))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["x=1", "x=2"]);
+}
+
+#[test]
+fn vm_matches_tree_format_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 2, 3]
+        for i, n in nums {
+            print(format("{}:{}", i, n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0:1", "1:2", "2:3"]);
+}
+
+// --- Struct / value display tests ---
+
+#[test]
+fn format_struct_value() {
+    let out = vm_run(
+        r#"
+        struct User { name: Text score: Number }
+        let u = User { name: "alice", score: 10 }
+        print(format("user={}", u))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["user=User { name: alice, score: 10 }"]);
+}
+
+#[test]
+fn format_array_value() {
+    let out = vm_run("print(format(\"arr={}\", [1, 2, 3]))").unwrap();
+    assert_eq!(out, vec!["arr=[1, 2, 3]"]);
+}
+
+#[test]
+fn format_map_value() {
+    let out = vm_run("print(format(\"map={}\", {\"b\": 2, \"a\": 1}))").unwrap();
+    assert_eq!(out, vec!["map={a: 1, b: 2}"]);
+}
+
+#[test]
+fn format_state_value_if_supported() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        print(format("door={}", d))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["door=Door.closed"]);
+}
+
+#[test]
+fn format_unit_value_if_supported() {
+    let out = vm_run("let d: meters = 5\nprint(format(\"d={}\", d))").unwrap();
+    assert_eq!(out, vec!["d=5"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn format_zero_args_error_message() {
+    let err = check("format()").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn format_first_arg_wrong_type_message() {
+    let err = check("format(42, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn format_too_few_args_error_message() {
+    let err = vm_run("format(\"{} {}\", 1)").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("placeholder") || err.contains("value"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn format_too_many_args_error_message() {
+    let err = vm_run("format(\"{}\", 1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("placeholder") || err.contains("value"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn format_vm_template_wrong_type_error_if_unchecked() {
+    // Typechecker catches this; test documents VM-level guard
+    assert!(check("format(42, \"bad\")").is_err());
+}

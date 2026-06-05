@@ -1,0 +1,12 @@
+// Keep runnable by default.
+
+print(format("Hello, {}", "Kimin"))
+
+// Uncomment to test too few args:
+// print(format("{} {}", 1))
+
+// Uncomment to test too many args:
+// print(format("{}", 1, 2))
+
+// Uncomment to test wrong template type:
+// print(format(123, "bad"))
