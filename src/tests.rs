@@ -17992,6 +17992,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Tau
             | crate::bytecode::Instruction::Phi
             | crate::bytecode::Instruction::Clamp
+            | crate::bytecode::Instruction::Format { .. }
             | crate::bytecode::Instruction::Hypot
             | crate::bytecode::Instruction::Asin
             | crate::bytecode::Instruction::Acos
@@ -58245,3 +58246,618 @@ fn vm_phi_in_array_map_struct() {
     .unwrap();
     assert_eq!(out, vec!["2", "2", "2"]);
 }
+
+// ============================================================
+// M20A — format(template, ...args) -> Text builtin
+// ============================================================
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_format_basic_ok() {
+    assert!(check("let s = format(\"Hello, {}\", \"world\")").is_ok());
+}
+
+#[test]
+fn type_format_zero_placeholders_ok() {
+    assert!(check("let s = format(\"hello\")").is_ok());
+}
+
+#[test]
+fn type_format_multiple_args_ok() {
+    assert!(check("let s = format(\"{} {} {}\", 1, 2, 3)").is_ok());
+}
+
+#[test]
+fn type_format_number_arg_ok() {
+    assert!(check("let s = format(\"{}\", 42)").is_ok());
+}
+
+#[test]
+fn type_format_bool_arg_ok() {
+    assert!(check("let s = format(\"{}\", true)").is_ok());
+}
+
+#[test]
+fn type_format_array_arg_ok() {
+    assert!(check("let s = format(\"{}\", [1, 2, 3])").is_ok());
+}
+
+#[test]
+fn type_format_map_arg_ok() {
+    assert!(check("let s = format(\"{}\", {\"a\": 1})").is_ok());
+}
+
+#[test]
+fn type_format_struct_arg_ok() {
+    assert!(check(
+        r#"
+        struct Pt { x: Number }
+        let p = Pt { x: 1 }
+        let s = format("{}", p)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_format_unit_arg_ok_if_units_supported() {
+    assert!(check("let d: meters = 5\nlet s = format(\"{}\", d)").is_ok());
+}
+
+#[test]
+fn type_format_state_arg_ok_if_states_supported() {
+    assert!(check(
+        r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        let s = format("{}", d)
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_format_returns_text() {
+    assert!(check("let s: Text = format(\"hello\")").is_ok());
+}
+
+#[test]
+fn type_format_result_used_in_concat_or_text_context() {
+    assert!(check("let s = format(\"{}\", 1) + \" world\"").is_ok());
+}
+
+#[test]
+fn type_format_zero_args_error() {
+    let err = check("format()").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("argument"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_format_first_arg_number_error() {
+    let err = check("format(42, \"bad\")").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_format_first_arg_bool_error() {
+    let err = check("format(true)").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_format_first_arg_array_error() {
+    let err = check("format([1, 2])").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_format_first_arg_map_error() {
+    let err = check("format({\"a\": 1})").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("Text"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_format_first_arg_struct_error() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        let s = S { v: 1 }
+        format(s)
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        !err.is_empty(),
+        "format(struct) as template should fail: {}",
+        err
+    );
+}
+
+#[test]
+fn type_to_string_still_ok_after_format() {
+    assert!(check("let s = to_string(42)").is_ok());
+}
+
+#[test]
+fn type_string_builtins_still_ok_after_format() {
+    assert!(check("let n = len(\"hello\")\nlet b = contains(\"hello\", \"ell\")").is_ok());
+}
+
+// --- Interpreter / behavior tests ---
+
+#[test]
+fn interp_format_basic_text() {
+    let out = vm_run("print(format(\"Hello, {}\", \"Kimin\"))").unwrap();
+    assert_eq!(out, vec!["Hello, Kimin"]);
+}
+
+#[test]
+fn interp_format_number() {
+    let out = vm_run("print(format(\"n={}\", 42))").unwrap();
+    assert_eq!(out, vec!["n=42"]);
+}
+
+#[test]
+fn interp_format_multiple_args() {
+    let out = vm_run("print(format(\"{} + {} = {}\", 2, 3, 5))").unwrap();
+    assert_eq!(out, vec!["2 + 3 = 5"]);
+}
+
+#[test]
+fn interp_format_zero_placeholders() {
+    let out = vm_run("print(format(\"hello\"))").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn interp_format_empty_template() {
+    let out = vm_run("print(format(\"\"))").unwrap();
+    assert_eq!(out, vec![""]);
+}
+
+#[test]
+fn interp_format_bool() {
+    let out = vm_run("print(format(\"{}\", true))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+#[test]
+fn interp_format_array() {
+    let out = vm_run("print(format(\"{}\", [1, 2, 3]))").unwrap();
+    assert_eq!(out, vec!["[1, 2, 3]"]);
+}
+
+#[test]
+fn interp_format_map() {
+    let out = vm_run("print(format(\"{}\", {\"b\": 2, \"a\": 1}))").unwrap();
+    assert_eq!(out, vec!["{a: 1, b: 2}"]);
+}
+
+#[test]
+fn interp_format_struct() {
+    let out = vm_run(
+        r#"
+        struct Pt { x: Number y: Number }
+        let p = Pt { x: 3, y: 4 }
+        print(format("pt={}", p))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["pt=Pt { x: 3, y: 4 }"]);
+}
+
+#[test]
+fn interp_format_nested_values() {
+    let out = vm_run("print(format(\"a={} b={}\", [1, 2], \"hi\"))").unwrap();
+    assert_eq!(out, vec!["a=[1, 2] b=hi"]);
+}
+
+#[test]
+fn interp_format_math_results() {
+    let out = vm_run("print(format(\"h={}\", hypot(3, 4)))").unwrap();
+    assert_eq!(out, vec!["h=5"]);
+}
+
+#[test]
+fn interp_format_constants() {
+    let out = vm_run("print(format(\"pi={}\", PI))").unwrap();
+    assert_eq!(out, vec!["pi=3.141592653589793"]);
+}
+
+#[test]
+fn interp_format_too_few_args_error() {
+    assert!(vm_run("format(\"{} {}\", 1)").is_err());
+}
+
+#[test]
+fn interp_format_too_many_args_error() {
+    assert!(vm_run("format(\"{}\", 1, 2)").is_err());
+}
+
+#[test]
+fn interp_format_bare_braces_literal_or_error_documented() {
+    // "{x}" has zero {} placeholders, so with 0 extra args it succeeds and returns "{x}"
+    let out = vm_run("print(format(\"{x}\"))").unwrap();
+    assert_eq!(out, vec!["{x}"]);
+    // But with 1 arg it fails (placeholder count mismatch)
+    assert!(vm_run("format(\"{x}\", 1)").is_err());
+}
+
+#[test]
+fn interp_format_named_braces_literal_behavior() {
+    // Named braces are NOT placeholders; only {} counts
+    let out = vm_run("print(format(\"key={name} val={}\", 42))").unwrap();
+    assert_eq!(out, vec!["key={name} val=42"]);
+}
+
+#[test]
+fn interp_format_arg_eval_once() {
+    let out = vm_run(
+        r#"
+        let mut calls = 0
+        fn get_val() -> Number { calls += 1 return 42 }
+        let s = format("{}", get_val())
+        print(s)
+        print(calls)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["42", "1"]);
+}
+
+#[test]
+fn interp_format_args_eval_left_to_right() {
+    let out = vm_run(
+        r#"
+        let mut order = 0
+        fn first() -> Number { order += 1 return 1 }
+        fn second() -> Number { order += 10 return 2 }
+        let s = format("{} {}", first(), second())
+        print(order)
+        print(s)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11", "1 2"]);
+}
+
+#[test]
+fn interp_format_inside_function() {
+    let out = vm_run(
+        r#"
+        fn greet(name: Text) -> Text { return format("Hello, {}!", name) }
+        print(greet("Kimin"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Hello, Kimin!"]);
+}
+
+#[test]
+fn interp_format_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Point { x: Number y: Number }
+        impl Point { fn label(self) -> Text { return format("({}, {})", self.x, self.y) } }
+        let p = Point { x: 3, y: 4 }
+        print(p.label())
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["(3, 4)"]);
+}
+
+#[test]
+fn interp_format_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn make_label(prefix: Text, n: Number) -> Text {
+            return format("{}: {}", prefix, n)
+        }
+        print(make_label("score", 42))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["score: 42"]);
+}
+
+#[test]
+fn interp_format_inside_loop() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 2, 3]
+        for i, n in nums {
+            print(format("{}:{}", i, n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0:1", "1:2", "2:3"]);
+}
+
+#[test]
+fn interp_format_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 2
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += 1
+            print(format("x={}", x))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["x=1", "x=2"]);
+}
+
+// --- Placeholder behavior tests ---
+
+#[test]
+fn format_placeholder_exact_empty_braces() {
+    let out = vm_run("print(format(\"{}\", \"hi\"))").unwrap();
+    assert_eq!(out, vec!["hi"]);
+}
+
+#[test]
+fn format_named_braces_not_placeholder() {
+    // {name} is NOT a placeholder; 0 {} means 0 extra args needed
+    let out = vm_run("print(format(\"{name}\"))").unwrap();
+    assert_eq!(out, vec!["{name}"]);
+}
+
+#[test]
+fn format_bare_left_brace_literal() {
+    // Single { not followed by } is literal
+    let out = vm_run("print(format(\"a{b\"))").unwrap();
+    assert_eq!(out, vec!["a{b"]);
+}
+
+#[test]
+fn format_bare_right_brace_literal() {
+    let out = vm_run("print(format(\"a}b\"))").unwrap();
+    assert_eq!(out, vec!["a}b"]);
+}
+
+#[test]
+fn format_adjacent_placeholders() {
+    let out = vm_run("print(format(\"{}{}\", \"a\", \"b\"))").unwrap();
+    assert_eq!(out, vec!["ab"]);
+}
+
+#[test]
+fn format_placeholder_count_too_few_args() {
+    let err = vm_run("format(\"{} {}\", 1)").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("placeholder") || err.contains("1"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn format_placeholder_count_too_many_args() {
+    let err = vm_run("format(\"{}\", 1, 2)").unwrap_err().to_string();
+    assert!(
+        err.contains("format") || err.contains("placeholder") || err.contains("2"),
+        "got: {}",
+        err
+    );
+}
+
+// --- Argument order tests ---
+
+#[test]
+fn format_args_eval_left_to_right_once() {
+    let out = vm_run(
+        r#"
+        let mut log = 0
+        fn arg1() -> Number { log += 1 return 10 }
+        fn arg2() -> Number { log += 10 return 20 }
+        format("{} {}", arg1(), arg2())
+        print(log)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["11"]);
+}
+
+#[test]
+fn format_template_eval_before_args() {
+    // Template is always first; ensure it's evaluated before args
+    let out = vm_run("let s = format(\"{}\", 42)\nprint(s)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn format_side_effect_args_tree_vm_match() {
+    let src = r#"
+        let mut log = 0
+        fn a() -> Number { log += 1 return 1 }
+        fn b() -> Number { log += 10 return 2 }
+        let s = format("{} {}", a(), b())
+        print(log)
+        print(s)
+    "#;
+    let out = vm_run(src).unwrap();
+    assert_eq!(out, vec!["11", "1 2"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_format_emits_instruction() {
+    let prog = compile_prog("let s = format(\"{}\", 1)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Format { .. })));
+}
+
+#[test]
+fn bytecode_format_no_call_instruction() {
+    let prog = compile_prog("format(\"{}\", 1)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "format should not emit Call");
+}
+
+#[test]
+fn bytecode_format_zero_args_after_template() {
+    let prog = compile_prog("let s = format(\"hello\")");
+    let fmt_instr = prog
+        .main
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Format { .. }));
+    assert!(
+        matches!(fmt_instr, Some(Instruction::Format { arg_count: 0 })),
+        "zero-arg format should emit Format {{ arg_count: 0 }}"
+    );
+}
+
+#[test]
+fn bytecode_format_arg_count_correct() {
+    let prog = compile_prog("format(\"{} {} {}\", 1, 2, 3)");
+    let fmt_instr = prog
+        .main
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Format { .. }));
+    assert!(
+        matches!(fmt_instr, Some(Instruction::Format { arg_count: 3 })),
+        "3-arg format should emit Format {{ arg_count: 3 }}"
+    );
+}
+
+#[test]
+fn bytecode_format_compiles_args_left_to_right() {
+    // Template compiled first, then each arg
+    let prog = compile_prog("format(\"{} {}\", 1, 2)");
+    let instrs: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    let text = instrs.join(" ");
+    assert!(text.contains("Format"));
+}
+
+#[test]
+fn bytecode_format_args_left_to_right() {
+    let out = vm_run("print(format(\"{} {}\", 1, 2))").unwrap();
+    assert_eq!(out, vec!["1 2"]);
+}
+
+#[test]
+fn bytecode_format_inside_function() {
+    let prog = compile_prog("fn f(n: Number) -> Text { return format(\"n={}\", n) }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Format { .. })));
+}
+
+#[test]
+fn bytecode_format_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Pt { x: Number y: Number }
+        impl Pt { fn label(self) -> Text { return format("({}, {})", self.x, self.y) } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "label")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Format { .. })));
+}
+
+#[test]
+fn bytecode_format_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += 1
+            print(format("x={}", x))
+        }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Format { .. })));
+}
+
+#[test]
+fn bytecode_to_string_unchanged_after_format() {
+    let prog = compile_prog("let s = to_string(42)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+}
+
+#[test]
+fn bytecode_string_builtins_unchanged_after_format() {
+    let prog = compile_prog("let n = len(\"hello\")");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Len)));
+}
+
+#[test]
+fn disassemble_format_stable() {
+    let prog = compile_prog("format(\"{} {}\", 1, 2)");
+    let text: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    assert!(text.join(" ").contains("Format"));
+}
+
