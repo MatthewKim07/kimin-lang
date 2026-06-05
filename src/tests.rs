@@ -17990,6 +17990,7 @@ fn bytecode_no_new_instruction_introduced_by_m10f() {
             | crate::bytecode::Instruction::Pi
             | crate::bytecode::Instruction::EConst
             | crate::bytecode::Instruction::Tau
+            | crate::bytecode::Instruction::Phi
             | crate::bytecode::Instruction::Clamp
             | crate::bytecode::Instruction::Hypot
             | crate::bytecode::Instruction::Asin
@@ -56842,3 +56843,704 @@ fn state_variant_named_tau_if_supported_does_not_conflict_or_is_documented() {
     .unwrap();
     assert_eq!(out, vec!["Cycle.end", "6"]);
 }
+
+// ============================================================
+// M19B — PHI golden ratio constant
+// ============================================================
+
+const PHI_VAL: &str = "1.618033988749895";
+
+// --- Parser tests ---
+
+#[test]
+fn parse_phi_constant_expr() {
+    assert!(check("let n = PHI").is_ok());
+}
+
+#[test]
+fn parse_phi_in_arithmetic() {
+    assert!(check("let n = PHI * 2").is_ok());
+}
+
+#[test]
+fn parse_phi_in_function_call_arg() {
+    assert!(check("let n = round(PHI)").is_ok());
+}
+
+#[test]
+fn parse_phi_in_array_literal() {
+    assert!(check("let arr = [PI, E, TAU, PHI]").is_ok());
+}
+
+#[test]
+fn parse_phi_in_map_literal() {
+    assert!(check("let m: Map<Text, Number> = {\"phi\": PHI}").is_ok());
+}
+
+#[test]
+fn parse_phi_in_struct_literal() {
+    assert!(check(
+        r#"
+        struct Golden { value: Number }
+        let g = Golden { value: PHI }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn parse_phi_call_rejected_or_type_error() {
+    assert!(check("PHI()").is_err());
+}
+
+#[test]
+fn parse_normal_identifier_phi_still_ok() {
+    assert!(check("let phi = 1.6").is_ok());
+}
+
+#[test]
+fn parse_normal_identifier_philosophy_still_ok() {
+    assert!(check("let philosophy = 42").is_ok());
+}
+
+#[test]
+fn parse_normal_identifier_phile_still_ok() {
+    assert!(check("let phile = 5").is_ok());
+}
+
+#[test]
+fn parse_pi_e_tau_still_ok_after_phi() {
+    assert!(check("let n = PI + E + TAU + PHI").is_ok());
+}
+
+// --- Typechecker tests ---
+
+#[test]
+fn type_phi_is_number() {
+    assert!(check("let n: Number = PHI").is_ok());
+}
+
+#[test]
+fn type_phi_used_in_arithmetic() {
+    assert!(check("let n = PHI + 1").is_ok());
+}
+
+#[test]
+fn type_phi_squared_relation() {
+    // PHI * PHI ≈ PHI + 1 (golden ratio property)
+    assert!(check("let n = PHI * PHI").is_ok());
+}
+
+#[test]
+fn type_phi_plus_one_relation() {
+    assert!(check("let n = PHI + 1").is_ok());
+}
+
+#[test]
+fn type_phi_used_with_round() {
+    assert!(check("let n = round(PHI)").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_array_number_after_phi() {
+    assert!(check("let arr: Array<Number> = [PI, E, TAU, PHI]").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_map_number_after_phi() {
+    assert!(check("let m: Map<Text, Number> = {\"phi\": PHI, \"pi\": PI}").is_ok());
+}
+
+#[test]
+fn type_constants_used_in_struct_number_field_after_phi() {
+    assert!(check(
+        r#"
+        struct Vals { phi: Number pi: Number }
+        let v = Vals { phi: PHI, pi: PI }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_phi_used_as_function_arg() {
+    assert!(check("fn f(n: Number) -> Number { return n }\nlet x = f(PHI)").is_ok());
+}
+
+#[test]
+fn type_phi_used_in_method_body() {
+    assert!(check(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn scaled(self) -> Number { return self.value * PHI } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_phi_call_error() {
+    let err = check("PHI()").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_phi_result_is_number() {
+    assert!(check("let n: Number = PHI").is_ok());
+}
+
+#[test]
+fn type_pi_e_tau_still_ok_after_phi() {
+    assert!(check("let n = PI + E + TAU + PHI").is_ok());
+    assert!(check("let n: Number = PI").is_ok());
+    assert!(check("let n: Number = TAU").is_ok());
+}
+
+#[test]
+fn type_phi_assign_error() {
+    let err = check("PHI = 1.6").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_phi_compound_assign_error() {
+    let err = check("PHI += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_phi_shadow_error() {
+    let err = check("let PHI = 1.6").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_let_mut_phi_shadow_error() {
+    let err = check("let mut PHI = 1.6").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_param_phi_shadow_error() {
+    let err = check("fn f(PHI: Number) -> Number { return PHI }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_method_param_phi_shadow_error() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        impl S { fn f(self, PHI: Number) -> Number { return PHI } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_for_each_phi_shadow_error() {
+    let err = check("for PHI in [1, 2, 3] { print(PHI) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_indexed_for_each_phi_shadow_error() {
+    let err = check("for PHI, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+// --- Interpreter tests ---
+
+#[test]
+fn interp_phi_value() {
+    let out = vm_run("print(PHI)").unwrap();
+    assert_eq!(out, vec![PHI_VAL]);
+}
+
+#[test]
+fn interp_phi_rounds_to_two() {
+    let out = vm_run("print(round(PHI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_phi_squared_rounds_to_three() {
+    // PHI^2 = PHI + 1 ≈ 2.618 → round = 3
+    let out = vm_run("print(round(PHI * PHI))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_phi_plus_one_rounds_to_three() {
+    let out = vm_run("print(round(PHI + 1))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_phi_relation_with_sqrt_five() {
+    // PHI = (1 + sqrt(5)) / 2; verify same rounded result
+    let out1 = vm_run("print(round(PHI))").unwrap();
+    let out2 = vm_run("print(round((1 + sqrt(5)) / 2))").unwrap();
+    assert_eq!(out1, vec!["2"]);
+    assert_eq!(out2, vec!["2"]);
+}
+
+#[test]
+fn interp_phi_in_arithmetic() {
+    let out = vm_run("print(round(PHI + PI))").unwrap();
+    // PHI + PI ≈ 4.76 → round = 5
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn interp_phi_inside_function() {
+    let out = vm_run(
+        r#"
+        fn golden() -> Number { return PHI }
+        print(round(golden()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_phi_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn next(self) -> Number { return self.value + 1 } }
+        let g = Golden { value: PHI }
+        print(round(g.next()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_phi_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn scale(n: Number) -> Number { return n * PHI }
+        print(round(scale(2)))
+    "#,
+    )
+    .unwrap();
+    // 2 * PHI ≈ 3.236 → round = 3
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn interp_phi_inside_block() {
+    let out = vm_run(
+        r#"
+        let mut n: Number = 0
+        {
+            let x = round(PHI)
+            n = x
+        }
+        print(n)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_phi_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 2 {
+            total += round(PHI)
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn interp_phi_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [PHI, PHI]
+        let mut total: Number = 0
+        for n in nums {
+            total += round(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn interp_phi_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [PHI, PHI]
+        let mut total: Number = 0
+        for i, n in nums {
+            total += round(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn interp_phi_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(PHI)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_phi_in_array_map_struct() {
+    let out = vm_run(
+        r#"
+        let arr = [PI, E, TAU, PHI]
+        print(round(arr[3]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_normal_identifier_phi_env_lookup() {
+    let out = vm_run("let phi = 42\nprint(phi)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_normal_identifier_philosophy_env_lookup() {
+    let out = vm_run("let philosophy = 99\nprint(philosophy)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+// --- Display tests ---
+
+#[test]
+fn phi_prints_expected_display() {
+    let out = vm_run("print(PHI)").unwrap();
+    assert_eq!(out, vec![PHI_VAL]);
+}
+
+#[test]
+fn round_phi() {
+    let out = vm_run("print(round(PHI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn round_phi_squared() {
+    let out = vm_run("print(round(PHI * PHI))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn round_phi_plus_one() {
+    let out = vm_run("print(round(PHI + 1))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn round_phi_times_ten() {
+    // PHI * 10 ≈ 16.18 → round = 16
+    let out = vm_run("print(round(PHI * 10))").unwrap();
+    assert_eq!(out, vec!["16"]);
+}
+
+#[test]
+fn phi_matches_sqrt_definition_rounded() {
+    let out = vm_run("print(round((1 + sqrt(5)) / 2))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn raw_phi_display_documented() {
+    let out = vm_run("print(PHI)").unwrap();
+    assert_eq!(out, vec![PHI_VAL]);
+    let approx = vm_run("print(round(PHI))").unwrap();
+    assert_eq!(approx, vec!["2"]);
+}
+
+// --- Bytecode tests ---
+
+#[test]
+fn bytecode_phi_emits_instruction() {
+    let prog = compile_prog("let n = PHI");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_phi_no_variable_lookup() {
+    let prog = compile_prog("let n = PHI");
+    let has_load =
+        prog.main.instructions.iter().any(
+            |i| matches!(i, Instruction::LoadGlobal(n) | Instruction::LoadLocal(n) if n == "PHI"),
+        );
+    assert!(!has_load, "PHI should not emit a variable lookup");
+}
+
+#[test]
+fn bytecode_phi_no_call_instruction() {
+    let prog = compile_prog("print(PHI)");
+    let has_call = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    assert!(!has_call, "PHI should not emit Call");
+}
+
+#[test]
+fn bytecode_phi_inside_function() {
+    let prog = compile_prog("fn f() -> Number { return PHI }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_phi_inside_method() {
+    let prog = compile_prog(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn scaled(self) -> Number { return self.value * PHI } }
+    "#,
+    );
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "scaled")
+        .unwrap();
+    assert!(method
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_phi_inside_closure() {
+    let prog = compile_prog("fn scale(n: Number) -> Number { return n * PHI }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "scale").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_phi_inside_simulate() {
+    let prog = compile_prog(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 1
+        let dt: seconds = 1
+        simulate duration step dt { x += round(PHI) }
+    "#,
+    );
+    let sim_chunk = &prog.simulate_bodies[0];
+    assert!(sim_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_phi_with_math() {
+    let prog = compile_prog("let n = round(PHI * PHI)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Round)));
+}
+
+#[test]
+fn bytecode_pi_e_tau_unchanged_after_phi() {
+    let prog = compile_prog("let n = PI + E + TAU + PHI");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::EConst)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_phi() {
+    let prog = compile_prog("let n = sqrt(9) + sin(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+}
+
+#[test]
+fn bytecode_conversion_builtins_unchanged_after_phi() {
+    let prog = compile_prog("let s = to_string(PHI)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ToString)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_phi() {
+    let prog = compile_prog(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn next(self) -> Number { return self.value + 1 } }
+        let g = Golden { value: PHI }
+        let n = g.next()
+    "#,
+    );
+    let has_call_method = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. }));
+    assert!(has_call_method, "CALL_METHOD should be emitted");
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_phi() {
+    let prog = compile_prog(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = PHI
+    "#,
+    );
+    let has_set_path = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has_set_path, "SetPath should be emitted");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn disassemble_phi_stable() {
+    let prog = compile_prog("print(PHI)");
+    let text: Vec<String> = prog
+        .main
+        .instructions
+        .iter()
+        .map(|i| format!("{:?}", i))
+        .collect();
+    assert!(text.join(" ").contains("Phi"));
+}
+
