@@ -1,0 +1,14 @@
+struct Golden {
+  value: Number
+}
+
+impl Golden {
+  fn next(self) -> Number {
+    return self.value + 1
+  }
+}
+
+let g = Golden { value: PHI }
+
+print(round(g.value))
+print(round(g.next()))

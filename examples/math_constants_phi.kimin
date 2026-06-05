@@ -1,0 +1,5 @@
+print(PHI)
+print(round(PHI))
+print(round(PHI * PHI))
+print(round(PHI + 1))
+print(round((1 + sqrt(5)) / 2))

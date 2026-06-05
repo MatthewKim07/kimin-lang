@@ -1,0 +1,5 @@
+let nums = [PI, E, TAU, PHI]
+print(round(nums[3]))
+
+let constants: Map<Text, Number> = {"phi": PHI}
+print(round(constants["phi"]))

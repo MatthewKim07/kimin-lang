@@ -1,0 +1,10 @@
+let mut x: Number = 0
+
+let duration: seconds = 3
+let dt: seconds = 1
+
+simulate duration step dt {
+  x += round(PHI)
+}
+
+print(x)

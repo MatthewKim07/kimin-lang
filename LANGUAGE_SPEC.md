@@ -1638,28 +1638,31 @@ print(round(tan(0.7853981633974483)))      // 1   (≈ tan(π/4))
 
 ---
 
-### 4.12C Math Constants (Milestones 18E, 19A)
+### 4.12C Math Constants (Milestones 18E, 19A, 19B)
 
-Three read-only builtin constants of type `Number`:
+Four read-only builtin constants of type `Number`:
 
 | Constant | Value | Source |
 |----------|-------|--------|
 | `PI` | 3.141592653589793 | `std::f64::consts::PI` |
 | `E` | 2.718281828459045 | `std::f64::consts::E` |
 | `TAU` | 6.283185307179586 | `std::f64::consts::TAU` (= 2π) |
+| `PHI` | 1.618033988749895 | (1 + √5) / 2 (golden ratio) |
 
 **Static type rules:**
-- All three always have type `Type::Number`.
+- All four always have type `Type::Number`.
 - Usable in any expression position.
-- Assignment `PI = 3`, compound assignment `TAU += 1`, shadowing `let TAU = 6`, function param `fn f(TAU: Number)`, method param, for-each var, and indexed for-each var are all `TypeError`.
-- Calling `TAU()` is `TypeError: 'TAU' is a builtin constant, not a function`.
+- Assignment, compound assignment, shadowing (`let PHI`), function/method param, for-each var, and indexed for-each var are all `TypeError`.
+- Calling `PHI()` is `TypeError: 'PHI' is a builtin constant, not a function`.
+- PHI golden ratio property: `PHI² ≈ PHI + 1` → `round(PHI * PHI) = 3`, `round(PHI + 1) = 3`.
 
 **Runtime rules:**
 - Interpreter: intercepted before env lookup; each returns its `Value::Number` directly.
-- `TAU = 2 * PI` — useful for full-rotation trig: `sin(TAU) ≈ 0`, `cos(TAU) ≈ 1`.
-- No PHI; no user-defined `const` declarations.
+- `TAU = 2 * PI` — full-rotation trig: `sin(TAU) ≈ 0`, `cos(TAU) ≈ 1`.
+- `PHI = (1.0 + 5.0_f64.sqrt()) / 2.0`
+- No user-defined `const` declarations.
 
-**Bytecode:** `PI`, `E_CONST`, `TAU` — each pushes its constant value, no env lookup.
+**Bytecode:** `PI`, `E_CONST`, `TAU`, `PHI` — each pushes its constant value, no env lookup.
 
 **Bytecode:**
 - `Instruction::Pi` → push `3.141592653589793`

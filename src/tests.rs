@@ -57544,3 +57544,612 @@ fn disassemble_phi_stable() {
     assert!(text.join(" ").contains("Phi"));
 }
 
+// --- VM tests ---
+
+#[test]
+fn vm_phi_value() {
+    let out = vm_run("print(PHI)").unwrap();
+    assert_eq!(out, vec![PHI_VAL]);
+}
+
+#[test]
+fn vm_phi_rounds_to_two() {
+    let out = vm_run("print(round(PHI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_phi_squared_rounds_to_three() {
+    let out = vm_run("print(round(PHI * PHI))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_phi_plus_one_rounds_to_three() {
+    let out = vm_run("print(round(PHI + 1))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_phi_inside_function() {
+    let out = vm_run(
+        r#"
+        fn golden() -> Number { return PHI }
+        print(round(golden()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn vm_phi_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn next(self) -> Number { return self.value + 1 } }
+        let g = Golden { value: PHI }
+        print(round(g.next()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_phi_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn scale(n: Number) -> Number { return n * PHI }
+        print(round(scale(2)))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn vm_phi_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt { x += round(PHI) }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_phi_stack_clean() {
+    let out = vm_run("print(PHI)\nprint(PI)\nprint(E)\nprint(TAU)").unwrap();
+    assert_eq!(
+        out,
+        vec![
+            PHI_VAL,
+            "3.141592653589793",
+            "2.718281828459045",
+            "6.283185307179586"
+        ]
+    );
+}
+
+#[test]
+fn vm_matches_tree_phi_basic() {
+    let cases = [
+        ("print(PHI)", vec![PHI_VAL]),
+        ("print(round(PHI))", vec!["2"]),
+        ("print(round(PHI * PHI))", vec!["3"]),
+        ("print(round(PHI + 1))", vec!["3"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_matches_tree_phi_math() {
+    let out = vm_run(
+        r#"
+        print(round(PHI))
+        print(round(PHI * PHI))
+        print(round(PHI + 1))
+        print(round((1 + sqrt(5)) / 2))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "3", "3", "2"]);
+}
+
+#[test]
+fn vm_matches_tree_phi_functions_methods_simulate() {
+    let out = vm_run(
+        r#"
+        fn golden() -> Number { return PHI }
+        struct Golden { value: Number }
+        impl Golden { fn next(self) -> Number { return self.value + 1 } }
+        let g = Golden { value: PHI }
+        print(round(golden()))
+        print(round(g.next()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "3"]);
+}
+
+// --- Math builtin interaction ---
+
+#[test]
+fn phi_with_round() {
+    let out = vm_run("print(round(PHI))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn phi_with_sqrt() {
+    // PHI matches definition via sqrt(5)
+    let out = vm_run("print(round((1 + sqrt(5)) / 2))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn phi_with_clamp() {
+    // clamp(PHI, 0, 2) = PHI since 0 < PHI < 2
+    let out = vm_run("print(clamp(PHI, 0, 2))").unwrap();
+    assert_eq!(out, vec![PHI_VAL]);
+}
+
+#[test]
+fn phi_with_min_max() {
+    let out = vm_run("print(round(max(PHI, PI)))\nprint(round(min(PHI, 1)))").unwrap();
+    assert_eq!(out, vec!["3", "1"]);
+}
+
+#[test]
+fn phi_with_pow() {
+    // pow(PHI, 2) ≈ 2.618 → round = 3
+    let out = vm_run("print(round(pow(PHI, 2)))").unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn phi_with_hypot_if_relevant() {
+    let out = vm_run("print(hypot(3, 4))").unwrap();
+    assert_eq!(out, vec!["5"]);
+}
+
+#[test]
+fn pi_e_tau_still_ok_after_phi() {
+    let out = vm_run("print(round(PI))\nprint(round(E))\nprint(round(TAU))").unwrap();
+    assert_eq!(out, vec!["3", "3", "6"]);
+}
+
+#[test]
+fn all_numeric_builtins_still_ok_after_phi() {
+    let out = vm_run("print(round(sin(0) + cos(0) + ln(1) + exp(0)))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+// --- Conversion builtin interaction ---
+
+#[test]
+fn to_string_phi() {
+    let out = vm_run("print(to_string(PHI))").unwrap();
+    assert_eq!(out, vec![PHI_VAL]);
+}
+
+#[test]
+fn to_number_to_string_phi_round() {
+    let out = vm_run("print(round(to_number(to_string(PHI))))").unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn conversion_builtins_still_ok_after_phi() {
+    let out = vm_run(
+        r#"
+        print(to_string(sin(0)))
+        print(to_number("42"))
+        print(to_bool("false"))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0", "42", "false"]);
+}
+
+#[test]
+fn to_bool_regression_after_phi() {
+    let out = vm_run("print(to_bool(\"true\"))").unwrap();
+    assert_eq!(out, vec!["true"]);
+}
+
+// --- Array / map / struct interaction ---
+
+#[test]
+fn phi_array_values() {
+    let out = vm_run(
+        r#"
+        let nums = [PI, E, TAU, PHI]
+        print(round(nums[3]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn phi_map_values() {
+    let out = vm_run(
+        r#"
+        let m: Map<Text, Number> = {"phi": PHI}
+        print(round(m["phi"]))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn phi_struct_field() {
+    let out = vm_run(
+        r#"
+        struct Golden { value: Number }
+        let g = Golden { value: PHI }
+        print(round(g.value))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn phi_method_value() {
+    let out = vm_run(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn next(self) -> Number { return self.value + 1 } }
+        let g = Golden { value: PHI }
+        print(round(g.next()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn phi_mut_self_method_if_relevant() {
+    let out = vm_run(
+        r#"
+        struct Golden { value: Number }
+        impl Golden {
+            fn scale(mut self) -> Golden {
+                self.value = self.value * PHI
+                return self
+            }
+        }
+        let mut g = Golden { value: 1 }
+        g = g.scale()
+        print(round(g.value))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn phi_with_path_mutated_number_field() {
+    let out = vm_run(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = PHI
+        print(round(arr[0].v))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn structs_methods_path_mutation_still_ok_after_phi() {
+    let out = vm_run(
+        r#"
+        struct Counter { value: Number }
+        impl Counter { fn inc(mut self) -> Counter { self.value += 1 return self } }
+        let mut arr: Array<Counter> = [Counter { value: 0 }]
+        arr[0] = arr[0].inc()
+        print(arr[0].value)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["1"]);
+}
+
+// --- Loop and simulate interaction ---
+
+#[test]
+fn phi_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 3 {
+            total += round(PHI)
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn phi_inside_for_range() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        for i in range(0, 3) {
+            total += round(PHI)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn phi_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [PHI, PHI]
+        let mut total: Number = 0
+        for n in nums {
+            total += round(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+#[test]
+fn phi_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [PHI, PHI, PHI]
+        let mut total: Number = 0
+        for i, n in nums {
+            total += round(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn phi_inside_function() {
+    let out = vm_run(
+        r#"
+        fn phi_n(times: Number) -> Number { return round(PHI) * times }
+        print(phi_n(3))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn phi_inside_method() {
+    let out = vm_run(
+        r#"
+        struct Golden { value: Number }
+        impl Golden { fn next(self) -> Number { return self.value + 1 } }
+        let g = Golden { value: PHI }
+        print(round(g.next()))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn phi_inside_simulate() {
+    let out = vm_run(
+        r#"
+        let mut x: Number = 0
+        let duration: seconds = 3
+        let dt: seconds = 1
+        simulate duration step dt {
+            x += round(PHI)
+        }
+        print(x)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn vm_matches_tree_phi_loops_simulate() {
+    let out = vm_run(
+        r#"
+        let nums = [PHI, PHI]
+        let mut total: Number = 0
+        for n in nums {
+            total += round(n)
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["4"]);
+}
+
+// --- Unit and state regression ---
+
+#[test]
+fn phi_unit_assignment_behavior_matches_existing_number_rules() {
+    assert!(check("let d: meters = PHI").is_ok());
+}
+
+#[test]
+fn unit_arithmetic_still_ok_after_phi() {
+    assert!(check(
+        r#"
+        let d: meters = 5
+        let t: seconds = 2
+        let v = d / t
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn state_machine_still_ok_after_phi() {
+    let out = vm_run(
+        r#"
+        state Door { closed open transition closed -> open }
+        let mut d = Door.closed
+        transition d -> open
+        print(d)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Door.open"]);
+}
+
+#[test]
+fn state_variant_syntax_still_ok_after_phi() {
+    let out = vm_run(
+        r#"
+        state Phase { start end transition start -> end }
+        let mut p = Phase.start
+        transition p -> end
+        print(p)
+        print(round(PHI))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Phase.end", "2"]);
+}
+
+#[test]
+fn state_variant_named_phi_if_supported_does_not_conflict_or_is_documented() {
+    // bare PHI = builtin constant; state variants are accessed via dot syntax
+    let out = vm_run(
+        r#"
+        state Light { dim bright transition dim -> bright }
+        let mut light = Light.dim
+        transition light -> bright
+        print(light)
+        print(round(PHI))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Light.bright", "2"]);
+}
+
+// --- Error message tests ---
+
+#[test]
+fn phi_assignment_error_message() {
+    let err = check("PHI = 1.6").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn phi_compound_assignment_error_message() {
+    let err = check("PHI += 1").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && err.contains("constant"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn let_phi_shadow_error_message() {
+    let err = check("let PHI = 1.6").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn param_phi_shadow_error_message() {
+    let err = check("fn f(PHI: Number) -> Number { return PHI }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn method_param_phi_shadow_error_message() {
+    let err = check(
+        r#"
+        struct S { v: Number }
+        impl S { fn f(self, PHI: Number) -> Number { return PHI } }
+    "#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("parameter") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn for_each_phi_shadow_error_message() {
+    let err = check("for PHI in [1, 2, 3] { print(PHI) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn indexed_for_each_phi_shadow_error_message() {
+    let err = check("for PHI, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn phi_call_error_message() {
+    let err = check("PHI()").unwrap_err().to_string();
+    assert!(
+        err.contains("PHI")
+            && (err.contains("constant") || err.contains("callable") || err.contains("function")),
+        "got: {}",
+        err
+    );
+}

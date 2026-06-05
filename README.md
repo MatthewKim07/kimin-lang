@@ -6,10 +6,10 @@
 
 *Physical units &nbsp;·&nbsp; State machines &nbsp;·&nbsp; Deterministic simulation — as first-class type system features*
 
-![Tests](https://img.shields.io/badge/tests-5420_passing-4caf50?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-5542_passing-4caf50?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
-![Milestone](https://img.shields.io/badge/milestone-19A-informational?style=flat-square)
+![Milestone](https://img.shields.io/badge/milestone-19B-informational?style=flat-square)
 
 </div>
 
@@ -44,7 +44,7 @@ simulate duration step dt {
 }
 ```
 
-This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5420 tests passing**.
+This is a from-scratch implementation: hand-written lexer, recursive-descent parser, static type checker, tree-walk interpreter, bytecode compiler, and stack-based VM — all in Rust, ~15k lines, **5542 tests passing**.
 
 ---
 
@@ -588,15 +588,16 @@ print(clamp(5, 5, 5))      // 5
 - `PI` — 3.141592653589793 (`std::f64::consts::PI`)
 - `E` — 2.718281828459045 (`std::f64::consts::E`)
 - `TAU` — 6.283185307179586 (`std::f64::consts::TAU` = 2π)
-- All three are read-only `Number` constants; assignment and shadowing are TypeError
-- No PHI; no user-defined constants yet
+- `PHI` — 1.618033988749895 (golden ratio = (1+√5)/2)
+- All four are read-only `Number` constants; assignment and shadowing are TypeError
+- No user-defined constants yet
 
 ```kimin
 print(PI)                              // 3.141592653589793
 print(TAU)                             // 6.283185307179586
+print(PHI)                             // 1.618033988749895
+print(round(PHI * PHI))               // 3  (PHI² = PHI + 1)
 print(round(TAU / PI))                // 2
-print(round(sin(TAU)))                // 0
-print(round(cos(TAU)))                // 1
 print(round(ln(E)))                   // 1
 ```
 
@@ -886,6 +887,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 | 18G | `hypot(a, b)` Euclidean magnitude using `f64::hypot`; complements `atan2` | ✅ |
 | 18H | `clamp(n, lo, hi)` clamps n to [lo, hi]; RuntimeError if lo > hi | ✅ |
 | 19A | `TAU` constant = 2π = 6.283185307179586; same read-only enforcement as PI/E | ✅ |
+| 19B | `PHI` constant = golden ratio = 1.618033988749895; same read-only enforcement | ✅ |
 
 ---
 
@@ -893,7 +895,7 @@ LexError  at line 3, col 7:  unexpected character '@'
 
 ```sh
 cargo test
-# 5420 passed, 0 failed
+# 5542 passed, 0 failed
 ```
 
 Tests cover every layer: lexer, parser, type checker, interpreter, bytecode compiler, and VM — for all language features including edge cases and error conditions.
@@ -920,7 +922,7 @@ src/
   disassemble.rs  Human-readable bytecode listing printer
   vm.rs           Stack-based VM — env-chain model, execute_chunk
   lib.rs          Module declarations
-  tests.rs        5420 unit tests
+  tests.rs        5542 unit tests
 examples/
   hello.kimin                       arithmetic.kimin
   variables.kimin                   conditionals.kimin
@@ -1031,6 +1033,9 @@ examples/
   math_constants_tau.kimin          math_constants_tau_geometry.kimin
   math_constants_tau_collections.kimin  math_constants_tau_simulate.kimin
   math_constants_tau_errors.kimin
+  math_constants_phi.kimin          math_constants_phi_structs.kimin
+  math_constants_phi_collections.kimin  math_constants_phi_simulate.kimin
+  math_constants_phi_errors.kimin
 ```
 
 <details>

@@ -1,0 +1,12 @@
+// Keep runnable by default.
+
+print(round(PHI))
+
+// Uncomment to test assignment error:
+// PHI = 1.6
+
+// Uncomment to test shadowing error:
+// let PHI = 1.6
+
+// Uncomment to test call error:
+// print(PHI())
