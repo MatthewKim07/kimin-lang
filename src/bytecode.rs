@@ -181,6 +181,8 @@ pub enum Instruction {
     EConst,
     /// Math constant τ = 2π (6.283185307179586). Stack: [...] → Number.
     Tau,
+    /// Math constant φ = golden ratio (1.618033988749895). Stack: [...] → Number.
+    Phi,
     /// Clamp n to [lo, hi]. Stack: [..., n, lo, hi] → clamp(n, lo, hi). RuntimeError if lo > hi or non-finite.
     Clamp,
     /// Euclidean magnitude. Stack: [..., a, b] → hypot(a, b). RuntimeError for non-finite input/result.

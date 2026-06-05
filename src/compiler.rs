@@ -948,6 +948,10 @@ impl BytecodeCompiler {
                     self.chunk.emit(Instruction::Tau);
                     return Ok(());
                 }
+                if name == "PHI" {
+                    self.chunk.emit(Instruction::Phi);
+                    return Ok(());
+                }
                 if self.is_local(name) {
                     self.chunk.emit(Instruction::LoadLocal(name.clone()));
                 } else {

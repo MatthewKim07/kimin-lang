@@ -1152,6 +1152,10 @@ impl Vm {
                     stack.push(Value::Number(std::f64::consts::TAU));
                 }
 
+                Instruction::Phi => {
+                    stack.push(Value::Number((1.0 + 5.0_f64.sqrt()) / 2.0));
+                }
+
                 Instruction::Sin => {
                     let val = pop(stack)?;
                     let n = match val {
