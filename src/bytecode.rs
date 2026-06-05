@@ -179,6 +179,8 @@ pub enum Instruction {
     Pi,
     /// Math constant e (2.718281828459045). Stack: [...] → Number.
     EConst,
+    /// Math constant τ = 2π (6.283185307179586). Stack: [...] → Number.
+    Tau,
     /// Clamp n to [lo, hi]. Stack: [..., n, lo, hi] → clamp(n, lo, hi). RuntimeError if lo > hi or non-finite.
     Clamp,
     /// Euclidean magnitude. Stack: [..., a, b] → hypot(a, b). RuntimeError for non-finite input/result.

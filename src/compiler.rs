@@ -944,6 +944,10 @@ impl BytecodeCompiler {
                     self.chunk.emit(Instruction::EConst);
                     return Ok(());
                 }
+                if name == "TAU" {
+                    self.chunk.emit(Instruction::Tau);
+                    return Ok(());
+                }
                 if self.is_local(name) {
                     self.chunk.emit(Instruction::LoadLocal(name.clone()));
                 } else {

@@ -1148,6 +1148,10 @@ impl Vm {
                     stack.push(Value::Number(std::f64::consts::E));
                 }
 
+                Instruction::Tau => {
+                    stack.push(Value::Number(std::f64::consts::TAU));
+                }
+
                 Instruction::Sin => {
                     let val = pop(stack)?;
                     let n = match val {
