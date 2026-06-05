@@ -58153,3 +58153,95 @@ fn phi_call_error_message() {
         err
     );
 }
+
+// --- M19B audit: missing tests ---
+
+#[test]
+fn parse_struct_field_named_phi_if_supported() {
+    // Struct field named PHI is allowed (field context, not expression)
+    let out = vm_run(
+        r#"
+        struct S { PHI: Number }
+        let s = S { PHI: 3 }
+        print(s.PHI)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn parse_state_variant_with_phi_if_supported() {
+    // State machines with unrelated variants work; bare PHI remains builtin constant
+    let out = vm_run(
+        r#"
+        state Ratio { low high transition low -> high }
+        let mut r = Ratio.low
+        transition r -> high
+        print(r)
+        print(round(PHI))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Ratio.high", "2"]);
+}
+
+#[test]
+fn type_phi_used_with_sqrt() {
+    // PHI relates to sqrt(5)
+    assert!(check("let n = (1 + sqrt(5)) / 2 + PHI").is_ok());
+}
+
+#[test]
+fn type_phi_used_with_clamp() {
+    assert!(check("let n = clamp(PHI, 0, 2)").is_ok());
+}
+
+#[test]
+fn type_indexed_for_each_phi_index_shadow_error() {
+    // for PHI, x in ... — PHI as index variable
+    let err = check("for PHI, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_indexed_for_each_phi_value_shadow_error() {
+    // for i, PHI in ... — PHI as value variable
+    let err = check("for i, PHI in [1, 2, 3] { print(i) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("PHI") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_phi_path_assignment_error_if_parseable() {
+    // PHI = 1.6 is caught as assignment to constant
+    assert!(check("PHI = 1.6").is_err());
+}
+
+#[test]
+fn vm_phi_in_array_map_struct() {
+    let out = vm_run(
+        r#"
+        let arr = [PI, E, TAU, PHI]
+        let m: Map<Text, Number> = {"phi": PHI}
+        struct Vals { phi: Number }
+        let v = Vals { phi: PHI }
+        print(round(arr[3]))
+        print(round(m["phi"]))
+        print(round(v.phi))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2", "2", "2"]);
+}
