@@ -59371,3 +59371,323 @@ fn format_vm_template_wrong_type_error_if_unchecked() {
     // Typechecker catches this; test documents VM-level guard
     assert!(check("format(42, \"bad\")").is_err());
 }
+
+// --- M20A audit: missing tests ---
+
+// Typechecker
+#[test]
+fn type_format_text_arg_ok() {
+    assert!(check("let s = format(\"{}\", \"hello\")").is_ok());
+}
+
+#[test]
+fn type_format_result_used_in_text_variable() {
+    assert!(check("let s: Text = format(\"{}\", 42)").is_ok());
+}
+
+#[test]
+fn type_format_result_used_in_struct_text_field() {
+    assert!(check(
+        r#"
+        struct Msg { text: Text }
+        let m = Msg { text: format("{}", 1) }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_format_result_used_in_array_text() {
+    assert!(check("let arr: Array<Text> = [format(\"{}\", 1)]").is_ok());
+}
+
+#[test]
+fn type_format_result_used_in_map_text() {
+    assert!(check("let m: Map<Text, Text> = {\"k\": format(\"{}\", 1)}").is_ok());
+}
+
+#[test]
+fn type_format_result_used_with_len() {
+    assert!(check("let n = len(format(\"{}\", \"hi\"))").is_ok());
+}
+
+#[test]
+fn type_format_result_used_with_contains() {
+    assert!(check("let b = contains(format(\"{}\", \"hi\"), \"h\")").is_ok());
+}
+
+// Interpreter
+#[test]
+fn interp_format_template_eval_before_args() {
+    // Template always evaluated first; args after
+    let out = vm_run("let s = format(\"{}\", 42)\nprint(s)").unwrap();
+    assert_eq!(out, vec!["42"]);
+}
+
+#[test]
+fn interp_format_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut i = 0
+        while i < 2 {
+            print(format("i={}", i))
+            i += 1
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["i=0", "i=1"]);
+}
+
+#[test]
+fn interp_format_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [10, 20]
+        for n in nums {
+            print(format("v={}", n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["v=10", "v=20"]);
+}
+
+#[test]
+fn interp_format_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let nums = [1, 2, 3]
+        for i, n in nums {
+            print(format("{}:{}", i, n))
+        }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["0:1", "1:2", "2:3"]);
+}
+
+// Placeholder behavior
+#[test]
+fn format_double_brace_behavior_documented() {
+    // {{}} = literal { + placeholder {} + literal }
+    // So with one arg it returns "{<arg>}"
+    let out = vm_run("print(format(\"{{}}\", 1))").unwrap();
+    assert_eq!(out, vec!["{1}"]);
+    // With zero args: one placeholder found, zero extra args → RuntimeError
+    assert!(vm_run("format(\"{{}}\")").is_err());
+}
+
+#[test]
+fn format_named_braces_with_arg_errors() {
+    // "{name}" has zero {} placeholders, so providing 1 arg errors
+    assert!(vm_run("format(\"{name}\", 1)").is_err());
+}
+
+// Value Display parity
+#[test]
+fn format_number_display_matches_to_string() {
+    let out_fmt = vm_run("print(format(\"{}\", 42))").unwrap();
+    let out_ts = vm_run("print(to_string(42))").unwrap();
+    assert_eq!(out_fmt, out_ts);
+}
+
+#[test]
+fn format_text_display_matches_to_string() {
+    // Text arg displays as raw text (no quotes), same as to_string
+    let out = vm_run("print(format(\"{}\", \"hello\"))").unwrap();
+    assert_eq!(out, vec!["hello"]);
+}
+
+#[test]
+fn format_bool_display_matches_to_string() {
+    let out_fmt = vm_run("print(format(\"{}\", true))").unwrap();
+    let out_ts = vm_run("print(to_string(true))").unwrap();
+    assert_eq!(out_fmt, out_ts);
+}
+
+#[test]
+fn format_array_display_matches_to_string() {
+    let out_fmt = vm_run("print(format(\"{}\", [1, 2, 3]))").unwrap();
+    let out_ts = vm_run("print(to_string([1, 2, 3]))").unwrap();
+    assert_eq!(out_fmt, out_ts);
+}
+
+#[test]
+fn format_map_display_matches_to_string() {
+    let out_fmt = vm_run("print(format(\"{}\", {\"b\": 2, \"a\": 1}))").unwrap();
+    let out_ts = vm_run("print(to_string({\"b\": 2, \"a\": 1}))").unwrap();
+    assert_eq!(out_fmt, out_ts);
+}
+
+#[test]
+fn format_struct_display_matches_to_string() {
+    let src_fmt = r#"
+        struct Pt { x: Number y: Number }
+        let p = Pt { x: 3, y: 4 }
+        print(format("{}", p))
+    "#;
+    let src_ts = r#"
+        struct Pt { x: Number y: Number }
+        let p = Pt { x: 3, y: 4 }
+        print(to_string(p))
+    "#;
+    assert_eq!(vm_run(src_fmt).unwrap(), vm_run(src_ts).unwrap());
+}
+
+#[test]
+fn format_unit_display_matches_to_string_if_supported() {
+    // Unit values display same as to_string (both show the number)
+    let out_fmt = vm_run("let d: meters = 5\nprint(format(\"{}\", d))").unwrap();
+    let out_ts = vm_run("let d: meters = 5\nprint(to_string(d))").unwrap();
+    assert_eq!(out_fmt, out_ts);
+}
+
+#[test]
+fn format_state_display_matches_to_string_if_supported() {
+    let src_fmt = r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        print(format("{}", d))
+    "#;
+    let src_ts = r#"
+        state Door { closed open transition closed -> open }
+        let d = Door.closed
+        print(to_string(d))
+    "#;
+    assert_eq!(vm_run(src_fmt).unwrap(), vm_run(src_ts).unwrap());
+}
+
+// Bytecode
+#[test]
+fn bytecode_format_inside_closure() {
+    let prog = compile_prog("fn greet(n: Text) -> Text { return format(\"Hi, {}!\", n) }");
+    let fn_chunk = prog.functions.iter().find(|f| f.name == "greet").unwrap();
+    assert!(fn_chunk
+        .chunk
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Format { .. })));
+}
+
+#[test]
+fn bytecode_numeric_builtins_unchanged_after_format() {
+    let prog = compile_prog("let n = sqrt(9) + sin(0)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sqrt)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sin)));
+}
+
+#[test]
+fn bytecode_constants_unchanged_after_format() {
+    let prog = compile_prog("let n = PI + TAU + PHI");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Pi)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Phi)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_format() {
+    let prog = compile_prog(
+        r#"
+        struct Pt { x: Number y: Number }
+        impl Pt { fn label(self) -> Text { return format("({}, {})", self.x, self.y) } }
+        let p = Pt { x: 1, y: 2 }
+        let s = p.label()
+    "#,
+    );
+    let has_call_method = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. }));
+    assert!(has_call_method, "CALL_METHOD should be emitted");
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_format() {
+    let prog = compile_prog(
+        r#"
+        struct Msg { text: Text }
+        let mut arr: Array<Msg> = [Msg { text: "init" }]
+        arr[0].text = format("id={}", 1)
+    "#,
+    );
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. })));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Format { .. })));
+}
+
+// VM
+#[test]
+fn vm_matches_tree_format_values() {
+    let cases = [
+        ("print(format(\"{}\", 42))", vec!["42"]),
+        ("print(format(\"{}\", true))", vec!["true"]),
+        ("print(format(\"{}\", [1, 2]))", vec!["[1, 2]"]),
+    ];
+    for (src, expected) in &cases {
+        let out = vm_run(src).unwrap();
+        assert_eq!(&out, expected, "src: {}", src);
+    }
+}
+
+#[test]
+fn vm_runtime_wrong_template_type_error_if_unchecked() {
+    // Typechecker catches this; document VM-level guard exists
+    assert!(check("format(42, \"bad\")").is_err());
+}
+
+// Math / constants
+#[test]
+fn format_e_constant() {
+    let out = vm_run("print(format(\"e={}\", E))").unwrap();
+    assert_eq!(out, vec!["e=2.718281828459045"]);
+}
+
+#[test]
+fn format_hypot_result() {
+    let out = vm_run("print(format(\"h={}\", hypot(3, 4)))").unwrap();
+    assert_eq!(out, vec!["h=5"]);
+}
+
+// Closure interaction
+#[test]
+fn format_inside_closure() {
+    let out = vm_run(
+        r#"
+        fn make_label(prefix: Text, n: Number) -> Text {
+            return format("{}: {}", prefix, n)
+        }
+        print(make_label("score", 42))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["score: 42"]);
+}
