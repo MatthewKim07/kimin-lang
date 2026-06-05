@@ -870,6 +870,9 @@ impl Interpreter {
                 if name == "TAU" {
                     return Ok(Value::Number(std::f64::consts::TAU));
                 }
+                if name == "PHI" {
+                    return Ok(Value::Number((1.0 + 5.0_f64.sqrt()) / 2.0));
+                }
                 self.env.borrow().get(name).ok_or_else(|| RuntimeError {
                     msg: format!("undefined variable '{}'", name),
                 })

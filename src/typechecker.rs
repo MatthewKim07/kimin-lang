@@ -577,7 +577,11 @@ impl TypeChecker {
                         );
                         // Remaining params (skip self at index 0)
                         for param in params.iter().skip(1) {
-                            if param.name == "PI" || param.name == "E" || param.name == "TAU" {
+                            if param.name == "PI"
+                                || param.name == "E"
+                                || param.name == "TAU"
+                                || param.name == "PHI"
+                            {
                                 return Err(TypeError {
                                     msg: format!(
                                         "cannot use builtin constant name '{}' as parameter",
@@ -677,7 +681,7 @@ impl TypeChecker {
                 span,
             } => {
                 // Reject shadowing of builtin constants PI/E.
-                if name == "PI" || name == "E" || name == "TAU" {
+                if name == "PI" || name == "E" || name == "TAU" || name == "PHI" {
                     return Err(TypeError {
                         msg: format!("cannot shadow builtin constant '{}'", name),
                         line: span.line,
@@ -743,7 +747,7 @@ impl TypeChecker {
 
             Stmt::Assign { name, value, span } => {
                 // Reject assignment to builtin constants.
-                if name == "PI" || name == "E" || name == "TAU" {
+                if name == "PI" || name == "E" || name == "TAU" || name == "PHI" {
                     return Err(TypeError {
                         msg: format!("cannot assign to builtin constant '{}'", name),
                         line: span.line,
@@ -808,7 +812,7 @@ impl TypeChecker {
                 span,
             } => {
                 // Reject compound assignment to builtin constants.
-                if name == "PI" || name == "E" || name == "TAU" {
+                if name == "PI" || name == "E" || name == "TAU" || name == "PHI" {
                     return Err(TypeError {
                         msg: format!("cannot assign to builtin constant '{}'", name),
                         line: span.line,
@@ -1136,7 +1140,11 @@ impl TypeChecker {
 
                 self.env.push_scope();
                 for param in params {
-                    if param.name == "PI" || param.name == "E" || param.name == "TAU" {
+                    if param.name == "PI"
+                        || param.name == "E"
+                        || param.name == "TAU"
+                        || param.name == "PHI"
+                    {
                         return Err(TypeError {
                             msg: format!(
                                 "cannot use builtin constant name '{}' as parameter",
@@ -1293,7 +1301,7 @@ impl TypeChecker {
                         })
                     }
                 };
-                if var_name == "PI" || var_name == "E" || var_name == "TAU" {
+                if var_name == "PI" || var_name == "E" || var_name == "TAU" || var_name == "PHI" {
                     return Err(TypeError {
                         msg: format!("cannot shadow builtin constant '{}'", var_name),
                         line: span.line,
@@ -1336,14 +1344,18 @@ impl TypeChecker {
                         })
                     }
                 };
-                if index_name == "PI" || index_name == "E" || index_name == "TAU" {
+                if index_name == "PI"
+                    || index_name == "E"
+                    || index_name == "TAU"
+                    || index_name == "PHI"
+                {
                     return Err(TypeError {
                         msg: format!("cannot shadow builtin constant '{}'", index_name),
                         line: span.line,
                         col: span.col,
                     });
                 }
-                if var_name == "PI" || var_name == "E" || var_name == "TAU" {
+                if var_name == "PI" || var_name == "E" || var_name == "TAU" || var_name == "PHI" {
                     return Err(TypeError {
                         msg: format!("cannot shadow builtin constant '{}'", var_name),
                         line: span.line,
@@ -1606,7 +1618,7 @@ impl TypeChecker {
 
             Expr::Variable { name, span } => {
                 // Builtin constants: PI and E are always Number.
-                if name == "PI" || name == "E" || name == "TAU" {
+                if name == "PI" || name == "E" || name == "TAU" || name == "PHI" {
                     return Ok(Type::Number);
                 }
                 self.env
@@ -2058,7 +2070,7 @@ impl TypeChecker {
             Expr::Call { callee, args, span } => {
                 // Builtin constants PI/E are not callable.
                 if let Expr::Variable { name, .. } = callee.as_ref() {
-                    if name == "PI" || name == "E" || name == "TAU" {
+                    if name == "PI" || name == "E" || name == "TAU" || name == "PHI" {
                         return Err(TypeError {
                             msg: format!("'{}' is a builtin constant, not a function", name),
                             line: span.line,
