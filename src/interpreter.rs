@@ -867,6 +867,9 @@ impl Interpreter {
                 if name == "E" {
                     return Ok(Value::Number(std::f64::consts::E));
                 }
+                if name == "TAU" {
+                    return Ok(Value::Number(std::f64::consts::TAU));
+                }
                 self.env.borrow().get(name).ok_or_else(|| RuntimeError {
                     msg: format!("undefined variable '{}'", name),
                 })
