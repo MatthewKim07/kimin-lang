@@ -56517,3 +56517,328 @@ fn tau_call_error_message() {
         err
     );
 }
+
+// --- M19A audit: missing tests ---
+
+// Parser
+#[test]
+fn parse_normal_identifier_taurus_still_ok() {
+    // "taurus" is not TAU; normal identifier
+    assert!(check("let taurus = 5").is_ok());
+}
+
+#[test]
+fn parse_normal_identifier_taupe_still_ok() {
+    assert!(check("let taupe = 5").is_ok());
+}
+
+#[test]
+fn parse_struct_field_named_tau_if_supported() {
+    // Struct field named TAU is allowed (field context, not expression)
+    let out = vm_run(
+        r#"
+        struct S { TAU: Number }
+        let s = S { TAU: 3 }
+        print(s.TAU)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["3"]);
+}
+
+#[test]
+fn parse_state_variant_with_tau_if_supported() {
+    // State machine with variant unrelated to TAU works; bare TAU is still builtin constant
+    let out = vm_run(
+        r#"
+        state Phase { zero full transition zero -> full }
+        let mut p = Phase.zero
+        transition p -> full
+        print(p)
+        print(round(TAU))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Phase.full", "6"]);
+}
+
+#[test]
+fn parse_pi_e_still_ok_after_tau() {
+    assert!(check("let n = PI + E + TAU").is_ok());
+}
+
+// Typechecker
+#[test]
+fn type_tau_used_with_tan() {
+    assert!(check("let n = tan(TAU)").is_ok());
+}
+
+#[test]
+fn type_tau_used_with_clamp() {
+    assert!(check("let n = clamp(TAU, 0, 10)").is_ok());
+}
+
+#[test]
+fn type_tau_used_as_function_arg() {
+    assert!(check("fn f(n: Number) -> Number { return n }\nlet x = f(TAU)").is_ok());
+}
+
+#[test]
+fn type_tau_used_in_method_body() {
+    assert!(check(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+    "#
+    )
+    .is_ok());
+}
+
+#[test]
+fn type_tau_result_is_number() {
+    assert!(check("let n: Number = TAU").is_ok());
+}
+
+#[test]
+fn type_pi_e_still_ok_after_tau() {
+    assert!(check("let n = PI + E + TAU").is_ok());
+    assert!(check("let n: Number = PI").is_ok());
+    assert!(check("let n: Number = E").is_ok());
+}
+
+#[test]
+fn type_indexed_for_each_tau_index_shadow_error() {
+    // for TAU, x in ... — TAU as index variable
+    let err = check("for TAU, x in [1, 2, 3] { print(x) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_indexed_for_each_tau_value_shadow_error() {
+    // for i, TAU in ... — TAU as value variable
+    let err = check("for i, TAU in [1, 2, 3] { print(i) }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("TAU") && (err.contains("shadow") || err.contains("constant")),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn type_tau_path_assignment_error_if_parseable() {
+    // TAU = 6 is caught as assignment to constant
+    assert!(check("TAU = 6").is_err());
+}
+
+// Interpreter
+#[test]
+fn interp_tan_tau_rounds_to_zero() {
+    // tan(TAU) ≈ 0 (same as tan(0) modulo period)
+    let out = vm_run("print(round(tan(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_tau_inside_block() {
+    let out = vm_run(
+        r#"
+        let mut n: Number = 0
+        {
+            let x = round(TAU)
+            n = x
+        }
+        print(n)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn interp_tau_inside_while() {
+    let out = vm_run(
+        r#"
+        let mut total: Number = 0
+        let mut i = 0
+        while i < 2 {
+            total += round(cos(TAU))
+            i += 1
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_tau_inside_for_each() {
+    let out = vm_run(
+        r#"
+        let angles = [0, TAU]
+        let mut total: Number = 0
+        for a in angles {
+            total += round(cos(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["2"]);
+}
+
+#[test]
+fn interp_tau_inside_indexed_for_each() {
+    let out = vm_run(
+        r#"
+        let angles = [PI, TAU]
+        let mut total: Number = 0
+        for i, a in angles {
+            total += round(cos(a))
+        }
+        print(total)
+    "#,
+    )
+    .unwrap();
+    // cos(PI)=-1, cos(TAU)=1 → 0
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn interp_normal_identifier_taurus_env_lookup() {
+    let out = vm_run("let taurus = 99\nprint(taurus)").unwrap();
+    assert_eq!(out, vec!["99"]);
+}
+
+// Bytecode
+#[test]
+fn bytecode_tau_with_clamp() {
+    let prog = compile_prog("let n = clamp(TAU, 0, 10)");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Clamp)));
+}
+
+#[test]
+fn bytecode_methods_unchanged_after_tau() {
+    let prog = compile_prog(
+        r#"
+        struct Rotation { angle: Number }
+        impl Rotation { fn turns(self) -> Number { return self.angle / TAU } }
+        let r = Rotation { angle: TAU }
+        let n = r.turns()
+    "#,
+    );
+    let has_call_method = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallMethod { .. }));
+    assert!(has_call_method, "CALL_METHOD should be emitted");
+    let method = prog
+        .methods
+        .iter()
+        .find(|m| m.method_name == "turns")
+        .unwrap();
+    assert!(
+        method
+            .chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Tau)),
+        "Tau should be inside method chunk"
+    );
+}
+
+#[test]
+fn bytecode_path_mutation_unchanged_after_tau() {
+    let prog = compile_prog(
+        r#"
+        struct S { v: Number }
+        let mut arr: Array<S> = [S { v: 0 }]
+        arr[0].v = TAU
+    "#,
+    );
+    let has_set_path = prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::SetPath { .. }));
+    assert!(has_set_path, "SetPath should be emitted");
+    assert!(prog
+        .main
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Tau)));
+}
+
+// VM
+#[test]
+fn vm_tan_tau_rounds_to_zero() {
+    let out = vm_run("print(round(tan(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+#[test]
+fn vm_tau_in_array_map_struct() {
+    let out = vm_run(
+        r#"
+        let arr = [PI, TAU, E]
+        let m: Map<Text, Number> = {"tau": TAU}
+        struct Vals { tau: Number }
+        let v = Vals { tau: TAU }
+        print(round(arr[1]))
+        print(round(m["tau"]))
+        print(round(v.tau))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["6", "6", "6"]);
+}
+
+// Display
+#[test]
+fn round_tan_tau() {
+    let out = vm_run("print(round(tan(TAU)))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+// Interaction
+#[test]
+fn tau_with_atan2_if_relevant() {
+    // atan2(sin(TAU), cos(TAU)) = atan2(≈0, ≈1) = 0
+    let out = vm_run("print(round(atan2(sin(TAU), cos(TAU))))").unwrap();
+    assert_eq!(out, vec!["0"]);
+}
+
+// State variant
+#[test]
+fn state_variant_named_tau_if_supported_does_not_conflict_or_is_documented() {
+    // State machine with variant names unrelated to TAU; bare TAU = builtin constant
+    let out = vm_run(
+        r#"
+        state Cycle { start end transition start -> end }
+        let mut c = Cycle.start
+        transition c -> end
+        print(c)
+        print(round(TAU))
+    "#,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["Cycle.end", "6"]);
+}
