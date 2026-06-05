@@ -178,3 +178,46 @@ pub fn parse_number_from_text(s: &str) -> Result<f64, String> {
     }
     Ok(n)
 }
+
+/// Apply `{}` placeholder substitution.
+///
+/// Counts non-overlapping `{}` substrings in `template`; each is replaced
+/// left-to-right with the display of the corresponding arg.  Returns an error
+/// string if the placeholder count does not equal `args.len()`.
+pub fn format_template(template: &str, args: &[Value]) -> Result<String, String> {
+    // Count {} placeholders first
+    let chars: Vec<char> = template.chars().collect();
+    let mut placeholder_count = 0usize;
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 1 < chars.len() && chars[i] == '{' && chars[i + 1] == '}' {
+            placeholder_count += 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if placeholder_count != args.len() {
+        return Err(format!(
+            "format expected {} value{} for placeholders, got {}",
+            placeholder_count,
+            if placeholder_count == 1 { "" } else { "s" },
+            args.len()
+        ));
+    }
+    // Build result string
+    let mut result = String::new();
+    let mut arg_idx = 0usize;
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 1 < chars.len() && chars[i] == '{' && chars[i + 1] == '}' {
+            result.push_str(&format!("{}", args[arg_idx]));
+            arg_idx += 1;
+            i += 2;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    Ok(result)
+}

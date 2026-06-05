@@ -1389,6 +1389,34 @@ impl Interpreter {
                         return Ok(Value::Array(parts));
                     }
 
+                    // format: format(Text, ...Any) -> Text
+                    if name == "format" {
+                        if args.is_empty() {
+                            return Err(RuntimeError {
+                                msg: "format() expects at least 1 argument".into(),
+                            });
+                        }
+                        let tmpl_val = self.eval_expr(&args[0])?;
+                        let template = match tmpl_val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(RuntimeError {
+                                    msg: format!(
+                                        "format() expects template Text, got {}",
+                                        other.type_name()
+                                    ),
+                                })
+                            }
+                        };
+                        let mut fmt_args: Vec<Value> = Vec::with_capacity(args.len() - 1);
+                        for arg_expr in args.iter().skip(1) {
+                            fmt_args.push(self.eval_expr(arg_expr)?);
+                        }
+                        let result = crate::value::format_template(&template, &fmt_args)
+                            .map_err(|msg| RuntimeError { msg })?;
+                        return Ok(Value::Str(result));
+                    }
+
                     if name == "join" {
                         if args.len() != 2 {
                             return Err(RuntimeError {

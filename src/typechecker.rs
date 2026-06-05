@@ -2453,6 +2453,33 @@ impl TypeChecker {
                         return Ok(Type::Text);
                     }
 
+                    // format: format(Text, ...Any) -> Text
+                    if name == "format" {
+                        if args.is_empty() {
+                            return Err(TypeError {
+                                msg: "format() expects at least 1 argument".into(),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        let tmpl_ty = self.check_expr(&args[0], *span)?;
+                        if !tmpl_ty.is_unknown() && tmpl_ty != Type::Text {
+                            return Err(TypeError {
+                                msg: format!(
+                                    "format() expects first argument to be Text, got {}",
+                                    tmpl_ty.name()
+                                ),
+                                line: span.line,
+                                col: span.col,
+                            });
+                        }
+                        // Remaining args: any type — just type-check each
+                        for arg in args.iter().skip(1) {
+                            self.check_expr(arg, *span)?;
+                        }
+                        return Ok(Type::Text);
+                    }
+
                     // `has_key` builtin: has_key(Map<Text,V>, Text) -> Bool
                     if name == "has_key" {
                         if args.len() != 2 {
